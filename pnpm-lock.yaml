@@ -146,6 +146,9 @@ importers:
       qs:
         specifier: catalog:utilities
         version: 6.15.0
+      zod:
+        specifier: catalog:utilities
+        version: 4.3.6
     devDependencies:
       '@tsconfig/node20':
         specifier: catalog:build
@@ -159,6 +162,9 @@ importers:
       '@types/qs':
         specifier: catalog:types
         version: 6.15.0
+      '@vitest/coverage-v8':
+        specifier: catalog:build
+        version: 2.1.9(vitest@2.1.9(@types/node@22.19.15))
       aws-cdk-lib:
         specifier: catalog:cdk
         version: 2.135.0(constructs@10.6.0)

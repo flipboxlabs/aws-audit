@@ -1,0 +1,23 @@
+import type { CDKConfig } from "@nateiler/aws-audit-cdk";
+import { EventBridge } from "@nateiler/aws-audit-sdk";
+import * as events from "aws-cdk-lib/aws-events";
+import { Construct } from "constructs";
+
+export default class extends Construct {
+	readonly eventBus: events.IEventBus;
+
+	constructor(
+		scope: Construct,
+		id: string,
+		props: {
+			config: CDKConfig;
+		},
+	) {
+		super(scope, id);
+
+		// Our audit event bus
+		this.eventBus = new events.EventBus(this, "EventBus", {
+			eventBusName: EventBridge.Bus.Name(props.config),
+		});
+	}
+}

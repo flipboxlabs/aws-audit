@@ -1,12 +1,15 @@
 {
-	"name": "@nateiler/aws-audit-sdk",
+	"name": "@nateiler/aws-audit-cdk",
+	"version": "1.0.0",
 	"type": "module",
 	"private": true,
 	"exports": {
 		".": "./src/index.ts",
-		"./batch": "./src/batch/index.ts",
-		"./config": "./src/config.ts",
-		"./middleware": "./src/middleware/middy.ts"
+		"./lib": "./lib/index.ts",
+		"./cloudwatch": "./src/cloudwatch/construct.ts",
+		"./dynamodb": "./src/dynamodb/construct.ts",
+		"./eventbridge": "./src/eventbridge/construct.ts",
+		"./rest-api": "./src/rest-api/construct.ts"
 	},
 	"scripts": {
 		"build": "tsc -p ./tsconfig.json",
@@ -18,25 +21,29 @@
 		"pre-commit": "pnpm run check-types && pnpm run format && pnpm run lint",
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"test:coverage": "vitest run --coverage"
+		"test:coverage": "vitest run --coverage",
+		"cdk:synth": "cdk synth --app 'npx tsx bin/app.ts'",
+		"cdk:deploy": "cdk deploy --app 'npx tsx bin/app.ts' --require-approval never"
 	},
 	"dependencies": {
-		"@aws-lambda-powertools/batch": "catalog:aws-powertools",
-		"@aws-lambda-powertools/commons": "catalog:aws-powertools",
+		"@nateiler/aws-audit-sdk": "workspace:^",
+		"@aws-lambda-powertools/event-handler": "catalog:aws-powertools",
+		"@aws-lambda-powertools/jmespath": "catalog:aws-powertools",
 		"@aws-lambda-powertools/logger": "catalog:aws-powertools",
-		"@aws-sdk/client-dynamodb": "catalog:aws-sdk",
 		"@aws-sdk/client-eventbridge": "catalog:aws-sdk",
-		"@aws-sdk/util-dynamodb": "catalog:aws-sdk",
-		"ksuid": "catalog:utilities",
-		"lodash.merge": "catalog:utilities",
+		"@middy/core": "catalog:middleware",
+		"qs": "catalog:utilities",
 		"zod": "catalog:utilities"
 	},
 	"devDependencies": {
 		"@tsconfig/node20": "catalog:build",
 		"@types/aws-lambda": "catalog:types",
-		"@types/lodash.merge": "catalog:types",
 		"@types/node": "catalog:types",
+		"@types/qs": "catalog:types",
 		"@vitest/coverage-v8": "catalog:build",
+		"aws-cdk-lib": "catalog:cdk",
+		"constructs": "catalog:cdk",
+		"esbuild": "catalog:build",
 		"ts-node": "catalog:build",
 		"typescript": "catalog:build",
 		"vitest": "catalog:build"
