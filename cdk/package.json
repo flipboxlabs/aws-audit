@@ -9,7 +9,7 @@
 		"./cloudwatch": "./src/cloudwatch/construct.ts",
 		"./dynamodb": "./src/dynamodb/construct.ts",
 		"./eventbridge": "./src/eventbridge/construct.ts",
-		"./rest-api": "./src/rest-api/construct.ts"
+		"./rest-api": "./src/rest-api/index.ts"
 	},
 	"scripts": {
 		"build": "tsc -p ./tsconfig.json",

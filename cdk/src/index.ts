@@ -11,10 +11,10 @@
  * import type { CDKConfig } from "@nateiler/aws-audit-cdk";
  *
  * // Import constructs from the bootstrap directory
- * import CloudWatch from "@nateiler/aws-audit-cdk/bootstrap/cloudwatch/construct";
- * import DynamoDB from "@nateiler/aws-audit-cdk/bootstrap/dynamodb/construct";
- * import EventBridge from "@nateiler/aws-audit-cdk/bootstrap/eventbridge/construct";
- * import RestAPI from "@nateiler/aws-audit-cdk/bootstrap/rest-api/construct";
+ * import { CloudWatchConstruct as CloudWatch } from "@nateiler/aws-audit-cdk/cloudwatch";
+ * import { DynamoDBConstruct as DynamoDB } from "@nateiler/aws-audit-cdk/dynamodb";
+ * import { EventBridgeConstruct as EventBridge } from "@nateiler/aws-audit-cdk/eventbridge";
+ * import { RestApiConstruct as RestAPI } from "@nateiler/aws-audit-cdk/rest-api";
  *
  * interface Props {
  *   config: CDKConfig;

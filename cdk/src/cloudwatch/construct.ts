@@ -8,16 +8,21 @@ import { ServicePrincipal } from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
 
-export default class extends Construct {
-	constructor(
-		scope: Construct,
-		id: string,
-		props: {
-			config: CDKConfig;
-			table: dynamodb.ITable;
-			eventBus: events.IEventBus;
-		},
-	) {
+type Props = {
+	config: CDKConfig;
+	table: dynamodb.ITable;
+	eventBus: events.IEventBus;
+
+	subscriptionFilter?: {
+		/** Scope of the subscription filter policy. Defaults to "ALL". */
+		scope?: string;
+		/** Selection criteria for log groups. Defaults to excluding the subscription lambda's log group. */
+		selectionCriteria?: string;
+	};
+};
+
+export class CloudWatchConstruct extends Construct {
+	constructor(scope: Construct, id: string, props: Props) {
 		super(scope, id);
 
 		const ref = `${[props.config.env.toUpperCase(), "Account", "CloudWatch", "Subscription"].join("-")}`;
@@ -59,8 +64,10 @@ export default class extends Construct {
 					Distribution: "Random",
 					FilterPattern: `{ $.${AUDIT_LOG_IDENTIFIER}.operation = * }`,
 				}),
-				scope: "ALL", // Applies to all log groups in the account
-				selectionCriteria: `LogGroupName NOT IN ["/aws/lambda/${lambda.functionName}"]`, // Filter logs
+				scope: props.subscriptionFilter?.scope ?? "ALL",
+				selectionCriteria:
+					props.subscriptionFilter?.selectionCriteria ??
+					`LogGroupName NOT IN ["/aws/lambda/${lambda.functionName}"]`,
 			},
 		);
 

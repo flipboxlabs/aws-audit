@@ -16,7 +16,7 @@ interface Props {
 	};
 }
 
-export default class extends Construct {
+export class RestApiResourcesConstruct extends Construct {
 	constructor(scope: Construct, id: string, props: Props) {
 		super(scope, id);
 

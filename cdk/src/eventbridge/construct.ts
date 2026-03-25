@@ -3,8 +3,8 @@ import { EventBridge } from "@nateiler/aws-audit-sdk";
 import * as events from "aws-cdk-lib/aws-events";
 import { Construct } from "constructs";
 
-export default class extends Construct {
-	readonly eventBus: events.IEventBus;
+export class EventBridgeConstruct extends Construct {
+	public readonly eventBus: events.IEventBus;
 
 	constructor(
 		scope: Construct,

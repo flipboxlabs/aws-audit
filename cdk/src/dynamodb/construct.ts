@@ -4,8 +4,8 @@ import { Construct } from "constructs";
 
 import AuditTable from "./audit.js";
 
-export default class extends Construct {
-	readonly table: dynamodb.ITable;
+export class DynamoDBConstruct extends Construct {
+	public readonly table: dynamodb.ITable;
 
 	constructor(
 		scope: Construct,
@@ -16,8 +16,8 @@ export default class extends Construct {
 	) {
 		super(scope, id);
 
-		// Our audit table (w/ 365 day retention)
 		const { table } = new AuditTable(scope, "AuditTable", props);
+
 		this.table = table;
 	}
 }
