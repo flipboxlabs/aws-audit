@@ -1,5 +1,5 @@
 import * as z from "zod/v4";
-import { BaseSchema } from "./common.js";
+import { BaseSchema, DateTimeObjectSchema } from "./common.js";
 
 /**
  * Schema for fully-hydrated audit records retrieved from storage.
@@ -29,15 +29,9 @@ import { BaseSchema } from "./common.js";
 export const AuditSchema = z.object({
 	...BaseSchema.shape,
 	/** Last update timestamp - ISO string transformed to Date */
-	updatedAt: z.iso
-		.datetime()
-		.optional()
-		.pipe(z.transform((val) => (val ? new Date(val) : undefined))),
+	updatedAt: DateTimeObjectSchema,
 	/** Creation timestamp - ISO string transformed to Date */
-	createdAt: z.iso
-		.datetime()
-		.optional()
-		.pipe(z.transform((val) => (val ? new Date(val) : undefined))),
+	createdAt: DateTimeObjectSchema,
 });
 
 /**

@@ -1,5 +1,9 @@
 import { EventType } from "@aws-lambda-powertools/batch";
-import type { SQSRecord } from "aws-lambda";
+import type {
+	DynamoDBRecord,
+	KinesisStreamRecord,
+	SQSRecord,
+} from "aws-lambda";
 import { describe, expect, it, vi } from "vitest";
 import type { LogAuditInput } from "./schema/log.js";
 import { App, ResourceType } from "./test-config.js";
@@ -9,7 +13,10 @@ import {
 	extractOverridesFromBatchProcessor,
 	generateAuditId,
 	generateTraceId,
+	getReceiveCount,
+	getRecordId,
 	getTraceParts,
+	isRetry,
 	normalizeEventBridgetEventBody,
 	normalizeEventBridgetInput,
 	normalizeSQSEventBody,
@@ -462,6 +469,143 @@ describe("utils", () => {
 			// Only splits on first colon
 			expect(result.id).toBe("id");
 			expect(result.stage).toBe(NaN); // "with:colons:5" is not a number
+		});
+	});
+
+	describe("getRecordId", () => {
+		it("should return messageId for SQS records", () => {
+			const sqsRecord = createMockSQSRecord({});
+
+			const result = getRecordId(EventType.SQS, sqsRecord);
+
+			expect(result).toBe("test-message-id");
+		});
+
+		it("should return eventID for Kinesis records", () => {
+			const kinesisRecord: KinesisStreamRecord = {
+				eventID: "kinesis-event-123",
+				eventVersion: "1.0",
+				kinesis: {
+					partitionKey: "partition-1",
+					data: "",
+					kinesisSchemaVersion: "1.0",
+					sequenceNumber: "12345",
+				},
+				invokeIdentityArn: "arn:aws:lambda:...",
+				eventName: "aws:kinesis:record",
+				eventSourceARN: "arn:aws:kinesis:...",
+				eventSource: "aws:kinesis",
+				awsRegion: "us-east-1",
+			};
+
+			const result = getRecordId(EventType.KinesisDataStreams, kinesisRecord);
+
+			expect(result).toBe("kinesis-event-123");
+		});
+
+		it("should return eventID for DynamoDB Streams records", () => {
+			const dynamoRecord: DynamoDBRecord = {
+				eventID: "dynamodb-event-456",
+				eventVersion: "1.0",
+				dynamodb: {
+					Keys: {},
+					StreamViewType: "NEW_AND_OLD_IMAGES",
+				},
+				eventSourceARN: "arn:aws:dynamodb:...",
+				eventSource: "aws:dynamodb",
+				awsRegion: "us-east-1",
+			};
+
+			const result = getRecordId(EventType.DynamoDBStreams, dynamoRecord);
+
+			expect(result).toBe("dynamodb-event-456");
+		});
+
+		it("should return undefined for unknown event type", () => {
+			const sqsRecord = createMockSQSRecord({});
+
+			const result = getRecordId(
+				"Unknown" as keyof typeof EventType,
+				sqsRecord,
+			);
+
+			expect(result).toBeUndefined();
+		});
+	});
+
+	describe("getReceiveCount", () => {
+		it("should return 1 for first delivery", () => {
+			const sqsRecord = createMockSQSRecord({});
+
+			const result = getReceiveCount(sqsRecord);
+
+			expect(result).toBe(1);
+		});
+
+		it("should return 2 for first retry", () => {
+			const sqsRecord: SQSRecord = {
+				...createMockSQSRecord({}),
+				attributes: {
+					...createMockSQSRecord({}).attributes,
+					ApproximateReceiveCount: "2",
+				},
+			};
+
+			const result = getReceiveCount(sqsRecord);
+
+			expect(result).toBe(2);
+		});
+
+		it("should return 5 for fourth retry", () => {
+			const sqsRecord: SQSRecord = {
+				...createMockSQSRecord({}),
+				attributes: {
+					...createMockSQSRecord({}).attributes,
+					ApproximateReceiveCount: "5",
+				},
+			};
+
+			const result = getReceiveCount(sqsRecord);
+
+			expect(result).toBe(5);
+		});
+	});
+
+	describe("isRetry", () => {
+		it("should return false for first delivery (count = 1)", () => {
+			const sqsRecord = createMockSQSRecord({});
+
+			const result = isRetry(sqsRecord);
+
+			expect(result).toBe(false);
+		});
+
+		it("should return true for first retry (count = 2)", () => {
+			const sqsRecord: SQSRecord = {
+				...createMockSQSRecord({}),
+				attributes: {
+					...createMockSQSRecord({}).attributes,
+					ApproximateReceiveCount: "2",
+				},
+			};
+
+			const result = isRetry(sqsRecord);
+
+			expect(result).toBe(true);
+		});
+
+		it("should return true for subsequent retries (count > 2)", () => {
+			const sqsRecord: SQSRecord = {
+				...createMockSQSRecord({}),
+				attributes: {
+					...createMockSQSRecord({}).attributes,
+					ApproximateReceiveCount: "10",
+				},
+			};
+
+			const result = isRetry(sqsRecord);
+
+			expect(result).toBe(true);
 		});
 	});
 });

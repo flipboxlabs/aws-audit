@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { EventType } from "@aws-lambda-powertools/batch";
 import type { EventSourceDataClassTypes } from "@aws-lambda-powertools/batch/types";
 import type { PutEventsRequestEntry } from "@aws-sdk/client-eventbridge";
-import type { SQSRecord } from "aws-lambda";
+import type {
+	DynamoDBRecord,
+	KinesisStreamRecord,
+	SQSRecord,
+} from "aws-lambda";
 import KSUID from "ksuid";
 import merge from "lodash.merge";
 import type { MessageWithAuditOverride } from "./batch/batch-processor.js";
@@ -284,4 +288,84 @@ export function getTraceParts(traceId: string): { id: string; stage: number } {
 		id,
 		stage: Number(stage == null ? 0 : stage),
 	};
+}
+
+/**
+ * Extracts the unique record ID for audit correlation based on event type.
+ *
+ * Each event source has a stable unique identifier that persists across retries:
+ * - SQS: `messageId` - unique per message, stable across retry deliveries
+ * - Kinesis: `eventID` - unique per record in the stream
+ * - DynamoDB Streams: `eventID` - unique per stream record
+ *
+ * @param eventType - The type of event source (SQS, KinesisDataStreams, DynamoDBStreams)
+ * @param record - The event source record
+ * @returns The unique record ID, or undefined for unsupported event types
+ *
+ * @example
+ * ```typescript
+ * // SQS record
+ * const id = getRecordId("SQS", sqsRecord);
+ * // Returns: sqsRecord.messageId
+ *
+ * // Kinesis record
+ * const id = getRecordId("KinesisDataStreams", kinesisRecord);
+ * // Returns: kinesisRecord.eventID
+ * ```
+ */
+export function getRecordId(
+	eventType: keyof typeof EventType,
+	record: SQSRecord | KinesisStreamRecord | DynamoDBRecord,
+): string | undefined {
+	switch (eventType) {
+		case EventType.SQS:
+			return (record as SQSRecord).messageId;
+		case EventType.KinesisDataStreams:
+			return (record as KinesisStreamRecord).eventID;
+		case EventType.DynamoDBStreams:
+			return (record as DynamoDBRecord).eventID;
+		default:
+			return undefined;
+	}
+}
+
+/**
+ * Gets the approximate receive count from an SQS record.
+ *
+ * The receive count indicates how many times the message has been delivered:
+ * - 1 = First delivery (not a retry)
+ * - 2+ = Retry delivery
+ *
+ * @param record - The SQS record
+ * @returns The receive count as a number
+ *
+ * @example
+ * ```typescript
+ * const count = getReceiveCount(sqsRecord);
+ * if (count > 1) {
+ *   console.log(`This is retry attempt ${count - 1}`);
+ * }
+ * ```
+ */
+export function getReceiveCount(record: SQSRecord): number {
+	return Number(record.attributes.ApproximateReceiveCount);
+}
+
+/**
+ * Checks if an SQS message is being retried.
+ *
+ * A message is considered a retry if it has been received more than once.
+ *
+ * @param record - The SQS record
+ * @returns True if this is a retry delivery, false if first delivery
+ *
+ * @example
+ * ```typescript
+ * if (isRetry(sqsRecord)) {
+ *   console.log("Processing retry...");
+ * }
+ * ```
+ */
+export function isRetry(record: SQSRecord): boolean {
+	return getReceiveCount(record) > 1;
 }

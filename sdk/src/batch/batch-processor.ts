@@ -4,10 +4,16 @@ import type {
 	FailureResponse,
 	SuccessResponse,
 } from "@aws-lambda-powertools/batch/types";
+import type {
+	DynamoDBRecord,
+	KinesisStreamRecord,
+	SQSRecord,
+} from "aws-lambda";
 import type { Audits } from "../audits.js";
 import { type LogAuditInput, Status } from "../schema/log.js";
 import {
 	extractOverridesFromBatchProcessor,
+	getRecordId,
 	normalizeEventBridgetEventBody,
 } from "../utils.js";
 
@@ -73,6 +79,9 @@ export class AuditBatchProcessor<
 	 * without throwing an error. Creates an audit entry with SUCCESS status
 	 * and excludes the original event data to reduce storage costs.
 	 *
+	 * The audit ID is automatically set from the record's unique identifier
+	 * (messageId for SQS, eventID for Kinesis/DynamoDB) to enable retry correlation.
+	 *
 	 * @param record - The successfully processed record
 	 * @param result - The result returned by the record handler, may include audit overrides
 	 * @returns The success response from the parent BatchProcessor
@@ -81,11 +90,22 @@ export class AuditBatchProcessor<
 		record: Record,
 		result: unknown | MessageWithAuditOverride,
 	): SuccessResponse {
+		const auditItem = this.createAuditItem(record, {
+			status: Status.SUCCESS,
+			...extractOverridesFromBatchProcessor(result),
+		});
+
+		// Auto-set ID for retry correlation using event record ID
+		const recordId = getRecordId(
+			this.eventType,
+			record as SQSRecord | KinesisStreamRecord | DynamoDBRecord,
+		);
+		if (recordId && !auditItem.id) {
+			auditItem.id = recordId;
+		}
+
 		this.audit.addAudit({
-			...this.createAuditItem(record, {
-				status: Status.SUCCESS,
-				...extractOverridesFromBatchProcessor(result),
-			}),
+			...auditItem,
 			event: undefined, // Don't store event when successful
 		});
 
@@ -99,17 +119,31 @@ export class AuditBatchProcessor<
 	 * throws an error. Creates an audit entry with FAIL status, includes
 	 * the original event data for debugging, and captures the error details.
 	 *
+	 * The audit ID is automatically set from the record's unique identifier
+	 * (messageId for SQS, eventID for Kinesis/DynamoDB) to enable retry correlation.
+	 *
 	 * @param record - The record that failed processing
 	 * @param error - The error thrown during processing
 	 * @returns The failure response from the parent BatchProcessor
 	 */
 	public failureHandler(record: Record, error: Error): FailureResponse {
+		const auditItem = this.createAuditItem(record, {
+			status: Status.FAIL,
+			event: normalizeEventBridgetEventBody(this.eventType, record),
+			message: error.message,
+		});
+
+		// Auto-set ID for retry correlation using event record ID
+		const recordId = getRecordId(
+			this.eventType,
+			record as SQSRecord | KinesisStreamRecord | DynamoDBRecord,
+		);
+		if (recordId && !auditItem.id) {
+			auditItem.id = recordId;
+		}
+
 		this.audit.addAudit({
-			...this.createAuditItem(record, {
-				status: Status.FAIL,
-				event: normalizeEventBridgetEventBody(this.eventType, record),
-				message: error.message,
-			}),
+			...auditItem,
 			error,
 		});
 

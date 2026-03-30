@@ -23,7 +23,7 @@ const TierSchema = z.number().int().gte(1).lte(3);
 /**
  * Schema for audit status values (success, warn, fail, skip)
  */
-const StatusSchema = z.enum(Object.values(Status));
+export const StatusSchema = z.enum(Object.values(Status));
 
 /**
  * Schema for application identifiers.
@@ -80,6 +80,62 @@ const RecursiveContextValueSchema: z.ZodType<ContextValue> = z.union([
 const ContextSchema = z.record(z.string(), RecursiveContextValueSchema);
 
 /**
+ * Schema for error details in audits and attempts.
+ * Handles string errors (with optional JSON parsing), Error instances, and plain objects.
+ */
+const ErrorSchema = z
+	.union([
+		z.string().transform((error) => {
+			try {
+				return JSON.parse(error);
+			} catch {
+				return error;
+			}
+		}),
+		z
+			.instanceof(Error)
+			.transform((error) =>
+				JSON.parse(JSON.stringify(error, Object.getOwnPropertyNames(error))),
+			),
+		z.record(z.any(), z.any()),
+	])
+	.optional();
+
+export const DateTimeObjectSchema = z
+	.union([z.iso.datetime(), z.instanceof(Date)])
+	.transform((val) => new Date(val));
+
+/**
+ * Schema for datetime fields that accept ISO strings or Date objects.
+ * Transforms Date objects to ISO strings for storage compatibility.
+ *
+ * @example
+ * ```typescript
+ * DateTimeSchema.parse("2024-01-01T12:00:00.000Z"); // "2024-01-01T12:00:00.000Z"
+ * DateTimeSchema.parse(new Date()); // "2024-01-15T10:30:00.000Z"
+ * ```
+ */
+export const DateTimeStringSchema = z
+	.union([z.iso.datetime(), z.instanceof(Date)])
+	.transform((val) => (val instanceof Date ? val.toISOString() : val));
+
+/**
+ * Schema for tracking individual retry attempts
+ * Each attempt records the outcome and timing of a single execution
+ */
+export const AttemptSchema = z.object({
+	/** Sequential attempt number (1-indexed) */
+	number: z.number().int().min(1),
+	/** Outcome of this attempt */
+	status: StatusSchema,
+	/** Error details if the attempt failed */
+	error: ErrorSchema,
+	/** ISO timestamp when this attempt occurred */
+	at: DateTimeStringSchema.default(() => new Date().toISOString()),
+});
+export type Attempt = z.output<typeof AttemptSchema>;
+
+/**
  * Base schema for audit records
  * Internal use only within the schema directory - not exported from index
  *
@@ -111,21 +167,7 @@ export const BaseSchema = z.object({
 	/** Original EventBridge event that triggered this audit */
 	event: EventBridgeEventSchema.optional(),
 	/** Error details if the operation failed */
-	error: z
-		.union([
-			z.string().transform((error) => {
-				try {
-					return JSON.parse(error);
-				} catch {
-					return error;
-				}
-			}),
-			z
-				.instanceof(Error)
-				.transform((error) =>
-					JSON.parse(JSON.stringify(error, Object.getOwnPropertyNames(error))),
-				),
-			z.record(z.any(), z.any()),
-		])
-		.optional(),
+	error: ErrorSchema,
+	/** History of all execution attempts for retry tracking */
+	attempts: z.array(AttemptSchema).optional(),
 });

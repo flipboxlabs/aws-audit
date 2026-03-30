@@ -13,5 +13,8 @@ export * from "./types.js";
 export {
 	buildAudit,
 	buildAuditFromSQSRecord,
+	getReceiveCount,
+	getRecordId,
+	isRetry,
 	normalizeEventBridgetInput,
 } from "./utils.js";

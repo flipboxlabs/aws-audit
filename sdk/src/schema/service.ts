@@ -1,4 +1,5 @@
 import * as z from "zod/v4";
+import { AttemptSchema, DateTimeStringSchema } from "./common.js";
 import { LogAuditSchema } from "./log.js";
 
 /**
@@ -7,6 +8,8 @@ import { LogAuditSchema } from "./log.js";
  * Extends LogAuditSchema with additional fields for service-layer operations:
  * - `id`: Optional identifier (auto-generated if not provided)
  * - `rerunable`: Flag indicating if the audit's operation can be retried
+ * - `attempts`: History of execution attempts for retry tracking
+ * - `createdAt`: Original creation timestamp (preserved on retries)
  *
  * This schema is used by {@link AuditService.upsertItem} for validating
  * audit entries before storage and event emission.
@@ -43,6 +46,10 @@ export const UpsertAuditSchema = z.object({
 	id: z.string().optional(),
 	/** Whether the audited operation can be re-run/retried */
 	rerunable: z.boolean().optional(),
+	/** History of execution attempts for retry tracking */
+	attempts: z.array(AttemptSchema).optional(),
+	/** Original creation timestamp (preserved on retries) */
+	createdAt: DateTimeStringSchema.optional(),
 });
 
 /**

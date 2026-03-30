@@ -6,7 +6,6 @@ import type { Audit } from "./schema/audit.js";
 import type { Pagination } from "./schema/model.js";
 import { type UpsertAuditInput, UpsertAuditSchema } from "./schema/service.js";
 import type { InferApp, InferResourceType } from "./types.js";
-import { generateAuditId } from "./utils.js";
 
 /**
  * Typed identifiers for locating audit records.
@@ -167,6 +166,11 @@ export class AuditService<C extends AuditConfig> {
 	 * - Sets the original target as the source
 	 * - Inherits rerunable status from the parent or event presence
 	 *
+	 * When an audit with the same ID already exists (retry scenario):
+	 * - Appends the current execution to the `attempts` array
+	 * - Preserves the original `createdAt` timestamp
+	 * - Increments the attempt number automatically
+	 *
 	 * After storage, publishes an "Upserted" event to EventBridge (if events is configured).
 	 *
 	 * @param input - The audit data to upsert
@@ -186,6 +190,43 @@ export class AuditService<C extends AuditConfig> {
 	 */
 	public async upsertItem(input: UpsertAuditInput): Promise<void> {
 		const item = UpsertAuditSchema.parse(input);
+		const now = new Date().toISOString();
+
+		// Build current attempt record
+		const currentAttempt = {
+			number: 1,
+			status: item.status,
+			error: item.error,
+			at: now,
+		};
+
+		// Check for existing audit to handle retry tracking
+		if (item.id) {
+			try {
+				const existing = await this.storage.getItem({
+					id: item.id,
+					app: item.target.app as InferApp<C>,
+					resourceType: item.target.type as InferResourceType<C>,
+					tenantId: item.tenantId,
+				});
+
+				if (existing) {
+					// Append to existing attempts array
+					const existingAttempts = existing.attempts ?? [];
+					currentAttempt.number = existingAttempts.length + 1;
+					item.attempts = [...existingAttempts, currentAttempt];
+					// Preserve original createdAt
+					item.createdAt = existing.createdAt.toISOString();
+				} else {
+					item.attempts = [currentAttempt];
+				}
+			} catch {
+				// Audit doesn't exist, this is the first attempt
+				item.attempts = [currentAttempt];
+			}
+		} else {
+			item.attempts = [currentAttempt];
+		}
 
 		const batch: Array<UpsertAuditInput> = Array.from(item.resources || [])
 			.filter((resource) => !!resource.id)
@@ -193,7 +234,7 @@ export class AuditService<C extends AuditConfig> {
 				...item,
 				...resource,
 
-				id: `${generateAuditId()}#${item.id}`, // generate a new id based on the original
+				id: `${item.id}#${resource.app}.${resource.type}#${resource.id}`, // deterministic ID for retry correlation
 
 				// Source
 				source: item.target,
@@ -204,6 +245,7 @@ export class AuditService<C extends AuditConfig> {
 				event: undefined,
 				result: undefined,
 				error: undefined,
+				attempts: undefined,
 			}));
 
 		await this.storage.upsertBatch([item, ...batch]);

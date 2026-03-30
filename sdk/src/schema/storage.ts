@@ -1,6 +1,6 @@
 import * as z from "zod/v4";
 import { generateAuditId } from "../utils.js";
-import { BaseSchema } from "./common.js";
+import { BaseSchema, DateTimeStringSchema } from "./common.js";
 
 /**
  * Schema for audit records being written to DynamoDB storage.
@@ -54,25 +54,13 @@ export const AuditStorageSchema = z.object({
 	 * Accepts ISO string or Date, outputs ISO string.
 	 * Defaults to current time.
 	 */
-	updatedAt: z
-		.union([z.iso.datetime(), z.instanceof(Date)])
-		.optional()
-		.default(new Date())
-		.pipe(
-			z.transform((val) => (val instanceof Date ? val.toISOString() : val)),
-		),
+	updatedAt: DateTimeStringSchema.default(() => new Date().toISOString()),
 	/**
 	 * Creation timestamp.
 	 * Accepts ISO string or Date, outputs ISO string.
 	 * Defaults to current time.
 	 */
-	createdAt: z
-		.union([z.iso.datetime(), z.instanceof(Date)])
-		.optional()
-		.default(new Date())
-		.pipe(
-			z.transform((val) => (val instanceof Date ? val.toISOString() : val)),
-		),
+	createdAt: DateTimeStringSchema.default(() => new Date().toISOString()),
 });
 
 /**

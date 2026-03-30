@@ -40,6 +40,18 @@ vi.mock("../utils.js", () => ({
 		}
 		return undefined;
 	}),
+	getRecordId: vi.fn((eventType, record) => {
+		if (eventType === EventType.SQS) {
+			return (record as SQSRecord).messageId;
+		}
+		if (eventType === EventType.KinesisDataStreams) {
+			return (record as { eventID: string }).eventID;
+		}
+		if (eventType === EventType.DynamoDBStreams) {
+			return (record as { eventID: string }).eventID;
+		}
+		return undefined;
+	}),
 }));
 
 describe("AuditBatchProcessor", () => {
@@ -301,6 +313,112 @@ describe("AuditBatchProcessor", () => {
 
 			expect(createAuditItem).toHaveBeenCalledTimes(3);
 			expect(mockAudits.addAudit).toHaveBeenCalledTimes(3);
+		});
+	});
+
+	describe("auto-correlation with record ID", () => {
+		it("should auto-set audit id from SQS messageId on success", () => {
+			const record = createMockSQSRecord({});
+
+			processor.successHandler(record, "Success");
+
+			const auditCall = (mockAudits.addAudit as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+			expect(auditCall.id).toBe("test-message-id");
+		});
+
+		it("should auto-set audit id from SQS messageId on failure", () => {
+			const record = createMockSQSRecord({});
+			const error = new Error("Failed");
+
+			processor.failureHandler(record, error);
+
+			const auditCall = (mockAudits.addAudit as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+			expect(auditCall.id).toBe("test-message-id");
+		});
+
+		it("should not override existing audit id on success", () => {
+			// Create a processor with createAuditItem that sets an id
+			const createAuditItemWithId = vi.fn(
+				(record: SQSRecord, overrides?: Partial<LogAuditInput>) => ({
+					id: "custom-audit-id",
+					operation: "processMessage",
+					target: {
+						app: App.App1,
+						type: ResourceType.UNKNOWN,
+						id: record.messageId,
+					},
+					...overrides,
+				}),
+			) as (
+				record: SQSRecord,
+				overrides?: Partial<LogAuditInput>,
+			) => LogAuditInput;
+
+			const processorWithId = new AuditBatchProcessor(
+				EventType.SQS,
+				mockAudits,
+				createAuditItemWithId,
+			);
+
+			const record = createMockSQSRecord({});
+			processorWithId.successHandler(record, "Success");
+
+			const auditCall = (mockAudits.addAudit as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+			expect(auditCall.id).toBe("custom-audit-id");
+		});
+
+		it("should not override existing audit id on failure", () => {
+			// Create a processor with createAuditItem that sets an id
+			const createAuditItemWithId = vi.fn(
+				(record: SQSRecord, overrides?: Partial<LogAuditInput>) => ({
+					id: "custom-audit-id",
+					operation: "processMessage",
+					target: {
+						app: App.App1,
+						type: ResourceType.UNKNOWN,
+						id: record.messageId,
+					},
+					...overrides,
+				}),
+			) as (
+				record: SQSRecord,
+				overrides?: Partial<LogAuditInput>,
+			) => LogAuditInput;
+
+			const processorWithId = new AuditBatchProcessor(
+				EventType.SQS,
+				mockAudits,
+				createAuditItemWithId,
+			);
+
+			const record = createMockSQSRecord({});
+			const error = new Error("Failed");
+			processorWithId.failureHandler(record, error);
+
+			const auditCall = (mockAudits.addAudit as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+			expect(auditCall.id).toBe("custom-audit-id");
+		});
+
+		it("should use same messageId for retry correlation", () => {
+			const record1 = createMockSQSRecord({});
+			const record2 = {
+				...createMockSQSRecord({}),
+				messageId: "test-message-id",
+			}; // Same messageId simulating retry
+			const error = new Error("Failed");
+
+			processor.failureHandler(record1, error);
+			processor.successHandler(record2, "Success on retry");
+
+			const [failCall, successCall] = (
+				mockAudits.addAudit as ReturnType<typeof vi.fn>
+			).mock.calls;
+			expect(failCall[0].id).toBe("test-message-id");
+			expect(successCall[0].id).toBe("test-message-id");
 		});
 	});
 });

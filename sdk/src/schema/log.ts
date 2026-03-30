@@ -136,6 +136,8 @@ const ContextSchema = z.record(z.string(), recursiveValueSchema);
  * ```
  */
 export const LogAuditSchema = z.object({
+	/** Optional audit ID for retry correlation. If provided, retries with the same ID are correlated. */
+	id: z.string().optional(),
 	/** Name of the operation being audited (required) */
 	operation: z.string(),
 	/** Tenant identifier for multi-tenancy support (optional) */

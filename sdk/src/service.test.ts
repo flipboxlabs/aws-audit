@@ -21,11 +21,6 @@ vi.mock("./eventbridge.js", () => ({
 	})),
 }));
 
-// Mock generateAuditId to return predictable values
-vi.mock("./utils.js", () => ({
-	generateAuditId: vi.fn(() => "generated-id"),
-}));
-
 describe("AuditService", () => {
 	let service: AuditService<typeof testConfig>;
 	let mockLogger: {
@@ -229,13 +224,13 @@ describe("AuditService", () => {
 			expect(mockStorage.upsertBatch).toHaveBeenCalledWith([
 				expect.objectContaining({ operation: "createUser" }),
 				expect.objectContaining({
-					id: "generated-id#parent-id",
+					id: "parent-id#App1.Unknown#resource-1",
 					app: App.App1,
 					type: ResourceType.UNKNOWN,
 					source: baseInput.target,
 				}),
 				expect.objectContaining({
-					id: "generated-id#parent-id",
+					id: "parent-id#App1.Unknown#resource-2",
 					app: App.App1,
 					type: ResourceType.UNKNOWN,
 					source: baseInput.target,
@@ -259,7 +254,7 @@ describe("AuditService", () => {
 			expect(mockStorage.upsertBatch).toHaveBeenCalledWith(
 				expect.arrayContaining([
 					expect.objectContaining({ operation: "createUser" }),
-					expect.objectContaining({ id: "generated-id#parent-id" }),
+					expect.objectContaining({ id: "parent-id#App1.Unknown#has-id" }),
 				]),
 			);
 			const batchArg = mockStorage.upsertBatch.mock.calls[0][0];
@@ -352,6 +347,167 @@ describe("AuditService", () => {
 			expect(mockStorage.upsertBatch).toHaveBeenCalledWith([
 				expect.objectContaining({ operation: "createUser" }),
 			]);
+		});
+
+		describe("attempt tracking", () => {
+			it("should create attempts array with first attempt on new audit", async () => {
+				mockStorage.getItem.mockResolvedValue(null);
+
+				await service.upsertItem({
+					...baseInput,
+					id: "new-audit-id",
+				});
+
+				const batchArg = mockStorage.upsertBatch.mock.calls[0][0];
+				expect(batchArg[0].attempts).toHaveLength(1);
+				expect(batchArg[0].attempts[0]).toMatchObject({
+					number: 1,
+					status: "success",
+				});
+				expect(batchArg[0].attempts[0].at).toBeDefined();
+			});
+
+			it("should append to attempts array on retry", async () => {
+				const existingAudit = {
+					id: "existing-audit-id",
+					operation: "createUser",
+					status: "fail",
+					target: baseInput.target,
+					createdAt: new Date("2024-01-01T00:00:00Z"),
+					attempts: [
+						{
+							number: 1,
+							status: "fail",
+							error: "Connection timeout",
+							at: "2024-01-01T00:00:00Z",
+						},
+					],
+				};
+				mockStorage.getItem.mockResolvedValue(existingAudit);
+
+				await service.upsertItem({
+					...baseInput,
+					id: "existing-audit-id",
+					status: "success",
+				});
+
+				const batchArg = mockStorage.upsertBatch.mock.calls[0][0];
+				expect(batchArg[0].attempts).toHaveLength(2);
+				expect(batchArg[0].attempts[0]).toMatchObject({
+					number: 1,
+					status: "fail",
+					error: "Connection timeout",
+				});
+				expect(batchArg[0].attempts[1]).toMatchObject({
+					number: 2,
+					status: "success",
+				});
+			});
+
+			it("should preserve createdAt from original audit on retry", async () => {
+				const originalCreatedAt = new Date("2024-01-01T00:00:00Z");
+				const existingAudit = {
+					id: "existing-audit-id",
+					operation: "createUser",
+					status: "fail",
+					target: baseInput.target,
+					createdAt: originalCreatedAt,
+					attempts: [{ number: 1, status: "fail", at: "2024-01-01T00:00:00Z" }],
+				};
+				mockStorage.getItem.mockResolvedValue(existingAudit);
+
+				await service.upsertItem({
+					...baseInput,
+					id: "existing-audit-id",
+					status: "success",
+				});
+
+				const batchArg = mockStorage.upsertBatch.mock.calls[0][0];
+				expect(batchArg[0].createdAt).toEqual(originalCreatedAt.toISOString());
+			});
+
+			it("should capture error in attempt record when status is fail", async () => {
+				mockStorage.getItem.mockResolvedValue(null);
+
+				await service.upsertItem({
+					...baseInput,
+					id: "new-audit-id",
+					status: "fail",
+					error: "Connection refused",
+				});
+
+				const batchArg = mockStorage.upsertBatch.mock.calls[0][0];
+				expect(batchArg[0].attempts[0]).toMatchObject({
+					number: 1,
+					status: "fail",
+					error: "Connection refused",
+				});
+			});
+
+			it("should handle existing audit without attempts array", async () => {
+				const existingAuditWithoutAttempts = {
+					id: "old-audit-id",
+					operation: "createUser",
+					status: "fail",
+					target: baseInput.target,
+					createdAt: new Date("2024-01-01T00:00:00Z"),
+					// No attempts array - legacy audit
+				};
+				mockStorage.getItem.mockResolvedValue(existingAuditWithoutAttempts);
+
+				await service.upsertItem({
+					...baseInput,
+					id: "old-audit-id",
+					status: "success",
+				});
+
+				const batchArg = mockStorage.upsertBatch.mock.calls[0][0];
+				expect(batchArg[0].attempts).toHaveLength(1);
+				expect(batchArg[0].attempts[0].number).toBe(1);
+			});
+
+			it("should not copy attempts to related resources", async () => {
+				mockStorage.getItem.mockResolvedValue(null);
+
+				await service.upsertItem({
+					...baseInput,
+					id: "parent-id",
+					resources: [
+						{ app: App.App1, type: ResourceType.UNKNOWN, id: "res-1" },
+					],
+				});
+
+				const batchArg = mockStorage.upsertBatch.mock.calls[0][0];
+				// Parent should have attempts
+				expect(batchArg[0].attempts).toHaveLength(1);
+				// Child resource should not have attempts
+				expect(batchArg[1].attempts).toBeUndefined();
+			});
+
+			it("should create attempts array when no id provided", async () => {
+				await service.upsertItem({
+					...baseInput,
+					// No id - will be auto-generated
+				});
+
+				const batchArg = mockStorage.upsertBatch.mock.calls[0][0];
+				expect(batchArg[0].attempts).toHaveLength(1);
+				expect(batchArg[0].attempts[0].number).toBe(1);
+			});
+
+			it("should handle storage.getItem throwing an error", async () => {
+				mockStorage.getItem.mockRejectedValue(new Error("DynamoDB error"));
+
+				await service.upsertItem({
+					...baseInput,
+					id: "some-id",
+				});
+
+				// Should still create the audit with first attempt
+				const batchArg = mockStorage.upsertBatch.mock.calls[0][0];
+				expect(batchArg[0].attempts).toHaveLength(1);
+				expect(batchArg[0].attempts[0].number).toBe(1);
+			});
 		});
 	});
 

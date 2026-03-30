@@ -377,9 +377,9 @@ export class AuditRepository<C extends AuditConfig> {
 		const Items: WriteRequest[] = await Promise.all(
 			items.map((item): WriteRequest => {
 				const payload = AuditStorageSchema.parse({
+					createdAt: updatedAt,
 					...item,
 					updatedAt: updatedAt,
-					createdAt: updatedAt,
 				});
 
 				return {
