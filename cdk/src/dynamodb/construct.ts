@@ -16,7 +16,7 @@ export class DynamoDBConstruct extends Construct {
 	) {
 		super(scope, id);
 
-		const { table } = new AuditTable(scope, "AuditTable", props);
+		const { table } = new AuditTable(this, "AuditTable", props);
 
 		this.table = table;
 	}
