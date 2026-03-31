@@ -72,7 +72,7 @@
 		"zod": "catalog:utilities"
 	},
 	"devDependencies": {
-		"@tsconfig/node20": "catalog:build",
+		"@tsconfig/node22": "catalog:build",
 		"@types/aws-lambda": "catalog:types",
 		"@types/node": "catalog:types",
 		"@types/qs": "catalog:types",
@@ -85,7 +85,7 @@
 		"vitest": "catalog:build"
 	},
 	"engines": {
-		"node": ">=20"
+		"node": ">=24"
 	},
 	"repository": {
 		"type": "git",
