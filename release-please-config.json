@@ -14,9 +14,7 @@
 			"release-type": "node"
 		}
 	},
-	"separate-pull-requests": false,
-	"group-pull-request-title-pattern": "chore: release ${version}",
-	"pull-request-title-pattern": "chore: release${component} ${version}",
+	"separate-pull-requests": true,
 	"include-component-in-tag": true,
 	"include-v-in-tag": true
 }
