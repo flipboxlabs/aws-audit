@@ -5,7 +5,7 @@ import * as nodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as logs from "aws-cdk-lib/aws-logs";
 import type { Construct } from "constructs";
 import type { CDKConfig } from "../constants.js";
-import { AUDIT_CONFIG_LAYER_PATH } from "./audit-config-layer.js";
+import { AUDIT_CONFIG_LAYER_PATH } from "./construct.js";
 
 /**
  * Factory function that creates ESM Node.js Lambda functions with standard configuration.
