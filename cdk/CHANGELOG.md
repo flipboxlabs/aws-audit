@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.4](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.1.3...cdk-v1.1.4) (2026-04-02)
+
+
+### Bug Fixes
+
+* simplify export ([4f8b726](https://github.com/flipboxlabs/aws-audit/commit/4f8b72669f7ea2cd7401e8e5e855c9a06a2673f2))
+
 ## [1.1.3](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.1.2...cdk-v1.1.3) (2026-04-02)
 
 
