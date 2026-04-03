@@ -105,7 +105,7 @@ export class BatchHandler {
 			);
 
 			if (output.Entries) {
-				result.concat(output.Entries);
+				result.push(...output.Entries);
 			}
 		}
 

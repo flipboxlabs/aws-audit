@@ -58,7 +58,7 @@ describe("BatchHandler", () => {
 					events: expect.any(Array),
 				},
 			);
-			expect(result).toEqual([]);
+			expect(result).toEqual([{ EventId: "event-1" }, { EventId: "event-2" }]);
 		});
 
 		it("should chunk events into batches of specified size", async () => {
