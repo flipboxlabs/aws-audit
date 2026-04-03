@@ -54,7 +54,7 @@ export default class extends Construct {
 			},
 		});
 
-		// List by Resource
+		// List by Trace Id
 		this.table.addGlobalSecondaryIndex({
 			indexName: DynamoDB.Indexes.GSI1_SN,
 			partitionKey: {
@@ -77,7 +77,7 @@ export default class extends Construct {
 			],
 		});
 
-		// List by Trace Id
+		// List by Resource
 		this.table.addGlobalSecondaryIndex({
 			indexName: DynamoDB.Indexes.GSI1_SS,
 			partitionKey: {
