@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/v4";
 
 /**
  * Input configuration for defining audit apps and resource types.
