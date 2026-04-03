@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.1.1...sdk-v1.1.2) (2026-04-03)
+
+
+### Bug Fixes
+
+* drop get check for items with an id ([f680b08](https://github.com/flipboxlabs/aws-audit/commit/f680b082ff0462ef8b0aa457cf64cfdda8a91463))
+
 ## [1.1.1](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.1.0...sdk-v1.1.1) (2026-03-31)
 
 
