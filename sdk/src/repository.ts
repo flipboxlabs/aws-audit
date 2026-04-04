@@ -25,12 +25,6 @@ import type { AnyApp, AnyResourceType, InferApp, InferResourceType } from "./typ
 import { getTraceParts } from "./utils.js";
 
 /**
- * Default TTL for audit records in seconds (90 days).
- * Records will be automatically deleted by DynamoDB after this period.
- */
-const DEFAULT_TTL = 60 * 60 * 24 * 90; // 90 days
-
-/**
  * DynamoDB TTL attribute structure.
  */
 export interface TTLAttribute {
@@ -380,7 +374,7 @@ export class AuditRepository<C extends AuditConfig> {
                   app: payload.target.app,
                 }),
                 ...this.constructSecondaryKeys(payload),
-                ...this.constructTTLAttribute(DEFAULT_TTL),
+                ...this.constructTTLAttribute(this.config.ttlSeconds),
                 ...payload,
               },
               {
@@ -463,7 +457,7 @@ export class AuditRepository<C extends AuditConfig> {
     });
 
     const secondaryKeys = this.constructSecondaryKeys(payload);
-    const ttlAttribute = this.constructTTLAttribute(DEFAULT_TTL);
+    const ttlAttribute = this.constructTTLAttribute(this.config.ttlSeconds);
 
     const expressionAttributeNames: Record<string, string> = {};
     const expressionAttributeValues: Record<string, unknown> = {

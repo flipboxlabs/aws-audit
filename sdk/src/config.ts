@@ -1,12 +1,23 @@
 import * as z from "zod/v4";
 
 /**
+ * Default TTL for audit records in seconds (90 days).
+ */
+export const DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 90;
+
+/**
  * Input configuration for defining audit apps and resource types.
  */
 export interface AuditConfigInput {
   readonly apps: readonly string[];
   readonly resourceTypes: readonly string[];
   readonly service?: string;
+  /**
+   * Time-to-live for audit records in seconds.
+   * DynamoDB will automatically delete records after this period.
+   * @default 7776000 (90 days)
+   */
+  readonly ttlSeconds?: number;
 }
 
 /**
@@ -52,6 +63,7 @@ export function defineAuditConfig<const C extends AuditConfigInput>(input: C) {
   return {
     service: process.env.SERVICE,
     ...input,
+    ttlSeconds: input.ttlSeconds ?? DEFAULT_TTL_SECONDS,
     schemas,
     _types: {} as {
       App: App;
