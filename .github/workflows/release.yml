@@ -46,9 +46,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Vite+
-        run: curl -fsSL https://vite.plus | bash
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
@@ -62,7 +59,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run checks (lint, format, type-check)
-        run: vp check
+        run: pnpm exec vp check
 
       - name: Run tests
         run: pnpm test
