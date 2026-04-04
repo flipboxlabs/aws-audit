@@ -12,7 +12,6 @@ import {
 	buildAuditFromSQSRecord,
 	extractOverridesFromBatchProcessor,
 	generateAuditId,
-	generateTraceId,
 	getReceiveCount,
 	getRecordId,
 	getTraceParts,
@@ -58,23 +57,6 @@ function createMockSQSRecord(body: object = {}): SQSRecord {
 }
 
 describe("utils", () => {
-	describe("generateTraceId", () => {
-		it("should generate a valid UUID", () => {
-			const traceId = generateTraceId();
-
-			expect(traceId).toMatch(
-				/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
-			);
-		});
-
-		it("should generate unique IDs", () => {
-			const id1 = generateTraceId();
-			const id2 = generateTraceId();
-
-			expect(id1).not.toBe(id2);
-		});
-	});
-
 	describe("generateAuditId", () => {
 		it("should generate a valid KSUID", () => {
 			const auditId = generateAuditId();

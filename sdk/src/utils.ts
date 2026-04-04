@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { EventType } from "@aws-lambda-powertools/batch";
 import type { EventSourceDataClassTypes } from "@aws-lambda-powertools/batch/types";
 import type { PutEventsRequestEntry } from "@aws-sdk/client-eventbridge";
@@ -12,16 +11,6 @@ import merge from "lodash.merge";
 import type { MessageWithAuditOverride } from "./batch/batch-processor.js";
 import type { LogAuditInput } from "./schema/log.js";
 import type { EventBridgeEvent } from "./schema/model.js";
-
-/**
- * Generates a random UUID for use as a trace identifier.
- *
- * @returns A random UUID string
- * @deprecated Not currently used - consider using X-Ray trace IDs instead
- */
-export function generateTraceId(): string {
-	return randomUUID();
-}
 
 /**
  * Generates a unique, time-sortable audit ID using KSUID.
