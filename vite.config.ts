@@ -21,6 +21,6 @@ export default defineConfig({
     },
   },
   fmt: {
-    ignorePatterns: ["**/dist/**", "**/coverage/**", "**/node_modules/**"],
+    ignorePatterns: ["**/dist/**", "**/coverage/**", "**/node_modules/**", "**/CHANGELOG.md"],
   },
 });
