@@ -50,8 +50,10 @@ export function defineAuditConfig<const C extends AuditConfigInput>(input: C) {
   };
 
   return {
-    service: process.env.SERVICE,
     ...input,
+    get service() {
+      return input.service ?? process.env.SERVICE;
+    },
     schemas,
     _types: {} as {
       App: App;
