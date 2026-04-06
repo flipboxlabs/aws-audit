@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.1](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.2.0...sdk-v1.2.1) (2026-04-06)
+
+
+### Bug Fixes
+
+* format CHANGELOG.md to pass vp check ([cb634de](https://github.com/flipboxlabs/aws-audit/commit/cb634de7fc81caf27a511166204afdfffbd6b7d0))
+* **repository:** retry BatchWriteItem UnprocessedItems with exponential backoff ([7130a17](https://github.com/flipboxlabs/aws-audit/commit/7130a179b83fc7ef6edc800b317d333f7951e587))
+* **repository:** retry BatchWriteItem UnprocessedItems with exponential backoff ([5a95440](https://github.com/flipboxlabs/aws-audit/commit/5a95440a911b7f6559534c9066e75b12995f9ee1)), closes [#18](https://github.com/flipboxlabs/aws-audit/issues/18)
+
 ## [1.2.0](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.1.3...sdk-v1.2.0) (2026-04-04)
 
 

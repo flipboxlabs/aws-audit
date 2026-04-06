@@ -1,6 +1,6 @@
 {
   "name": "@flipboxlabs/aws-audit-cdk",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "AWS Audit CDK - CDK constructs for AWS audit infrastructure",
   "keywords": [
     "audit",

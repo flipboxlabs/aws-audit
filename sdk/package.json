@@ -1,6 +1,6 @@
 {
   "name": "@flipboxlabs/aws-audit-sdk",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "AWS Audit SDK - Core SDK for audit logging and event management",
   "keywords": [
     "audit",
