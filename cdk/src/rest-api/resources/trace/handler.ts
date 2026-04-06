@@ -7,7 +7,7 @@ import { API_RESOURCE } from "./constants.js";
 import { PathSchema, QuerySchema, ResponseSchema } from "./schema.js";
 
 const logger = new Logger({
-	logRecordOrder: ["level", "message"],
+  logRecordOrder: ["level", "message"],
 });
 
 const app = new Router();
@@ -15,41 +15,39 @@ const app = new Router();
 const audits = new AuditService(logger, auditConfig);
 
 app.get(
-	`/${API_RESOURCE.RESOURCE}/:${API_RESOURCE.RESOURCE}`,
-	async (reqCtx) => {
-		const { [API_RESOURCE.RESOURCE]: traceId } = reqCtx.valid.req.path;
-		const query = reqCtx.valid.req.query;
+  `/${API_RESOURCE.RESOURCE}/:${API_RESOURCE.RESOURCE}`,
+  async (reqCtx) => {
+    const { [API_RESOURCE.RESOURCE]: traceId } = reqCtx.valid.req.path;
+    const query = reqCtx.valid.req.query;
 
-		const pagination =
-			query["pagination[pageSize]"] || query["pagination[nextToken]"]
-				? {
-						pageSize: query["pagination[pageSize]"],
-						nextToken: query["pagination[nextToken]"],
-					}
-				: undefined;
+    const pagination =
+      query["pagination[pageSize]"] || query["pagination[nextToken]"]
+        ? {
+            pageSize: query["pagination[pageSize]"],
+            nextToken: query["pagination[nextToken]"],
+          }
+        : undefined;
 
-		return audits.listTraceItems(
-			{
-				trace: traceId,
-				app: query["filter[app]"] as App | undefined,
-			},
-			pagination,
-		);
-	},
-	{
-		validation: {
-			req: {
-				path: PathSchema,
-				query: QuerySchema,
-			},
-			res: {
-				body: ResponseSchema,
-			},
-		},
-	},
+    return audits.listTraceItems(
+      {
+        trace: traceId,
+        app: query["filter[app]"] as App | undefined,
+      },
+      pagination,
+    );
+  },
+  {
+    validation: {
+      req: {
+        path: PathSchema,
+        query: QuerySchema,
+      },
+      res: {
+        body: ResponseSchema,
+      },
+    },
+  },
 );
 
-export const handler = async (
-	event: unknown,
-	context: Context,
-): Promise<unknown> => app.resolve(event, context);
+export const handler = async (event: unknown, context: Context): Promise<unknown> =>
+  app.resolve(event, context);

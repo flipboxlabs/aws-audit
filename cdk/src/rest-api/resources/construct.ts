@@ -8,26 +8,26 @@ import App from "./app/construct.js";
 import Trace from "./trace/construct.js";
 
 interface Props {
-	config: CDKConfig;
-	table: dynamodb.ITable;
-	eventBus: events.IEventBus;
-	/** Lambda configuration */
-	lambda: {
-		/** Lambda layers to attach to the function */
-		layers: lambda.ILayerVersion[];
-	};
-	restApi: {
-		resource: apigateway.IResource;
-		// authorizer: apigateway.IAuthorizer;
-	};
+  config: CDKConfig;
+  table: dynamodb.ITable;
+  eventBus: events.IEventBus;
+  /** Lambda configuration */
+  lambda: {
+    /** Lambda layers to attach to the function */
+    layers: lambda.ILayerVersion[];
+  };
+  restApi: {
+    resource: apigateway.IResource;
+    // authorizer: apigateway.IAuthorizer;
+  };
 }
 
 export class RestApiResourcesConstruct extends Construct {
-	constructor(scope: Construct, id: string, props: Props) {
-		super(scope, id);
+  constructor(scope: Construct, id: string, props: Props) {
+    super(scope, id);
 
-		new Trace(this, "Trace", props);
+    new Trace(this, "Trace", props);
 
-		new App(this, "App", props);
-	}
+    new App(this, "App", props);
+  }
 }

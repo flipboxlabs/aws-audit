@@ -30,6 +30,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Auto-merge will only succeed if branch protection requires CI to pass
       - name: Enable auto-merge for release PR
         if: ${{ steps.release.outputs.pr }}
         run: gh pr merge --auto --squash --delete-branch "${{ fromJson(steps.release.outputs.pr).number }}"
@@ -37,10 +38,36 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
 
+  # Run CI checks on main branch pushes
+  ci:
+    name: CI Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run checks (lint, format, type-check)
+        run: pnpm exec vp check
+
+      - name: Run tests
+        run: pnpm test
+
   publish:
     name: Publish to npm
     runs-on: ubuntu-latest
-    needs: release-please
+    needs: [release-please, ci]
     if: ${{ needs.release-please.outputs.releases_created == 'true' }}
 
     steps:
@@ -60,11 +87,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run tests
-        run: pnpm test
-
       - name: Build packages
-        run: pnpm -r run build
+        run: pnpm build
 
       - name: Publish SDK to npm
         if: ${{ contains(needs.release-please.outputs.paths_released, 'sdk') }}

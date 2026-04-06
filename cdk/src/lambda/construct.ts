@@ -9,10 +9,10 @@ import { Construct } from "constructs";
  * Contains the apps and resource types that will be available to Lambda handlers.
  */
 export interface AuditConfigLayerProps {
-	/** List of valid application identifiers */
-	readonly apps: readonly string[];
-	/** List of valid resource type identifiers */
-	readonly resourceTypes: readonly string[];
+  /** List of valid application identifiers */
+  readonly apps: readonly string[];
+  /** List of valid resource type identifiers */
+  readonly resourceTypes: readonly string[];
 }
 
 /**
@@ -40,29 +40,28 @@ export const AUDIT_CONFIG_LAYER_PATH = "/opt/nodejs/audit-config.js";
  * ```
  */
 export class ConfigLayerConstruct extends Construct {
-	public readonly layer: lambda.LayerVersion;
+  public readonly layer: lambda.LayerVersion;
 
-	constructor(scope: Construct, id: string, props: AuditConfigLayerProps) {
-		super(scope, id);
+  constructor(scope: Construct, id: string, props: AuditConfigLayerProps) {
+    super(scope, id);
 
-		// Generate config file content - exports raw data
-		// Handlers will call defineAuditConfig themselves
-		const configCode = `// Auto-generated audit configuration
+    // Generate config file content - exports raw data
+    // Handlers will call defineAuditConfig themselves
+    const configCode = `// Auto-generated audit configuration
 export const apps = ${JSON.stringify(props.apps)};
 export const resourceTypes = ${JSON.stringify(props.resourceTypes)};
 `;
 
-		// Create temp directory with proper layer structure
-		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "audit-config-"));
-		const nodejsDir = path.join(tempDir, "nodejs");
-		fs.mkdirSync(nodejsDir);
-		fs.writeFileSync(path.join(nodejsDir, "audit-config.js"), configCode);
+    // Create temp directory with proper layer structure
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "audit-config-"));
+    const nodejsDir = path.join(tempDir, "nodejs");
+    fs.mkdirSync(nodejsDir);
+    fs.writeFileSync(path.join(nodejsDir, "audit-config.js"), configCode);
 
-		this.layer = new lambda.LayerVersion(this, "Layer", {
-			code: lambda.Code.fromAsset(tempDir),
-			compatibleRuntimes: [lambda.Runtime.NODEJS_20_X],
-			description:
-				"Audit configuration layer containing apps and resourceTypes",
-		});
-	}
+    this.layer = new lambda.LayerVersion(this, "Layer", {
+      code: lambda.Code.fromAsset(tempDir),
+      compatibleRuntimes: [lambda.Runtime.NODEJS_20_X],
+      description: "Audit configuration layer containing apps and resourceTypes",
+    });
+  }
 }

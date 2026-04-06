@@ -1,11 +1,7 @@
 import { EventType } from "@aws-lambda-powertools/batch";
 import type { EventSourceDataClassTypes } from "@aws-lambda-powertools/batch/types";
 import type { PutEventsRequestEntry } from "@aws-sdk/client-eventbridge";
-import type {
-	DynamoDBRecord,
-	KinesisStreamRecord,
-	SQSRecord,
-} from "aws-lambda";
+import type { DynamoDBRecord, KinesisStreamRecord, SQSRecord } from "aws-lambda";
 import KSUID from "ksuid";
 import merge from "lodash.merge";
 import type { MessageWithAuditOverride } from "./batch/batch-processor.js";
@@ -27,7 +23,7 @@ import type { EventBridgeEvent } from "./schema/model.js";
  * ```
  */
 export function generateAuditId(): string {
-	return `${KSUID.randomSync().string}`;
+  return `${KSUID.randomSync().string}`;
 }
 
 /**
@@ -42,11 +38,11 @@ export function generateAuditId(): string {
  * @internal
  */
 function incrementTraceStage(traceId: string): string {
-	const [id, stage] = traceId.split(":");
+  const [id, stage] = traceId.split(":");
 
-	const nextStage = Number(stage == null ? 1 : stage) + 1;
+  const nextStage = Number(stage == null ? 1 : stage) + 1;
 
-	return [id, nextStage].join(":");
+  return [id, nextStage].join(":");
 }
 
 /**
@@ -69,20 +65,20 @@ function incrementTraceStage(traceId: string): string {
  * ```
  */
 export function buildAuditFromSQSRecord(
-	sqsRecord: SQSRecord,
-	audit: LogAuditInput,
-	overrides?: Partial<LogAuditInput>,
+  sqsRecord: SQSRecord,
+  audit: LogAuditInput,
+  overrides?: Partial<LogAuditInput>,
 ): LogAuditInput {
-	// If a trace isn't set, try to set it from the sqs record
-	if (!audit.trace) {
-		const { detail } = JSON.parse(sqsRecord.body);
+  // If a trace isn't set, try to set it from the sqs record
+  if (!audit.trace) {
+    const { detail } = JSON.parse(sqsRecord.body);
 
-		if (detail.transaction?.trace) {
-			audit.trace = incrementTraceStage(detail.transaction.trace);
-		}
-	}
+    if (detail.transaction?.trace) {
+      audit.trace = incrementTraceStage(detail.transaction.trace);
+    }
+  }
 
-	return buildAudit(audit, overrides);
+  return buildAudit(audit, overrides);
 }
 
 /**
@@ -105,12 +101,12 @@ export function buildAuditFromSQSRecord(
  * ```
  */
 export function buildAudit(
-	audit: LogAuditInput,
-	overrides?: Partial<LogAuditInput>,
+  audit: LogAuditInput,
+  overrides?: Partial<LogAuditInput>,
 ): LogAuditInput {
-	const message = [audit.message, overrides?.message].filter(Boolean).join(" ");
+  const message = [audit.message, overrides?.message].filter(Boolean).join(" ");
 
-	return merge(audit, overrides || {}, { message });
+  return merge(audit, overrides || {}, { message });
 }
 
 /**
@@ -138,11 +134,11 @@ type Input = Pick<PutEventsRequestEntry, "Detail" | "DetailType" | "Source">;
  * ```
  */
 export function normalizeEventBridgetInput(input: Input): EventBridgeEvent {
-	return {
-		detail: input.Detail,
-		"detail-type": input.DetailType,
-		source: input.Source,
-	};
+  return {
+    detail: input.Detail,
+    "detail-type": input.DetailType,
+    source: input.Source,
+  };
 }
 
 /**
@@ -178,36 +174,30 @@ export function normalizeEventBridgetInput(input: Input): EventBridgeEvent {
  * ```
  */
 export function extractOverridesFromBatchProcessor(
-	message: unknown | MessageWithAuditOverride,
+  message: unknown | MessageWithAuditOverride,
 ): Partial<LogAuditInput> {
-	if (message && typeof message === "object") {
-		// Get the root message
-		const rootMessage =
-			"message" in message && typeof message.message === "string"
-				? message.message
-				: undefined;
+  if (message && typeof message === "object") {
+    // Get the root message
+    const rootMessage =
+      "message" in message && typeof message.message === "string" ? message.message : undefined;
 
-		// Is there an audit override?
-		if ("_audit" in message) {
-			const auditOverrides: Partial<LogAuditInput> =
-				message._audit && typeof message._audit === "object"
-					? message._audit
-					: {};
+    // Is there an audit override?
+    if ("_audit" in message) {
+      const auditOverrides: Partial<LogAuditInput> =
+        message._audit && typeof message._audit === "object" ? message._audit : {};
 
-			return {
-				...auditOverrides,
-				message: [rootMessage, auditOverrides?.message]
-					.filter(Boolean)
-					.join(" "),
-			};
-		}
+      return {
+        ...auditOverrides,
+        message: [rootMessage, auditOverrides?.message].filter(Boolean).join(" "),
+      };
+    }
 
-		if (rootMessage) {
-			return { message: rootMessage };
-		}
-	}
+    if (rootMessage) {
+      return { message: rootMessage };
+    }
+  }
 
-	return {};
+  return {};
 }
 
 /**
@@ -221,13 +211,13 @@ export function extractOverridesFromBatchProcessor(
  * @returns The normalized EventBridge event, or undefined for unsupported types
  */
 export function normalizeEventBridgetEventBody(
-	eventType: keyof typeof EventType,
-	record: EventSourceDataClassTypes,
+  eventType: keyof typeof EventType,
+  record: EventSourceDataClassTypes,
 ): EventBridgeEvent | undefined {
-	switch (eventType) {
-		case EventType.SQS:
-			return normalizeSQSEventBody(record as SQSRecord);
-	}
+  switch (eventType) {
+    case EventType.SQS:
+      return normalizeSQSEventBody(record as SQSRecord);
+  }
 }
 
 /**
@@ -239,16 +229,14 @@ export function normalizeEventBridgetEventBody(
  * @param record - The SQS record containing the message
  * @returns The extracted EventBridge event data
  */
-export function normalizeSQSEventBody(
-	record: SQSRecord,
-): EventBridgeEvent | undefined {
-	const bodyObject = JSON.parse(record.body);
+export function normalizeSQSEventBody(record: SQSRecord): EventBridgeEvent | undefined {
+  const bodyObject = JSON.parse(record.body);
 
-	return {
-		detail: bodyObject?.detail,
-		"detail-type": bodyObject?.["detail-type"],
-		source: bodyObject?.source,
-	};
+  return {
+    detail: bodyObject?.detail,
+    "detail-type": bodyObject?.["detail-type"],
+    source: bodyObject?.source,
+  };
 }
 
 /**
@@ -271,12 +259,12 @@ export function normalizeSQSEventBody(
  * ```
  */
 export function getTraceParts(traceId: string): { id: string; stage: number } {
-	const [id, stage] = traceId.split(":");
+  const [id, stage] = traceId.split(":");
 
-	return {
-		id,
-		stage: Number(stage == null ? 0 : stage),
-	};
+  return {
+    id,
+    stage: Number(stage == null ? 0 : stage),
+  };
 }
 
 /**
@@ -303,19 +291,19 @@ export function getTraceParts(traceId: string): { id: string; stage: number } {
  * ```
  */
 export function getRecordId(
-	eventType: keyof typeof EventType,
-	record: SQSRecord | KinesisStreamRecord | DynamoDBRecord,
+  eventType: keyof typeof EventType,
+  record: SQSRecord | KinesisStreamRecord | DynamoDBRecord,
 ): string | undefined {
-	switch (eventType) {
-		case EventType.SQS:
-			return (record as SQSRecord).messageId;
-		case EventType.KinesisDataStreams:
-			return (record as KinesisStreamRecord).eventID;
-		case EventType.DynamoDBStreams:
-			return (record as DynamoDBRecord).eventID;
-		default:
-			return undefined;
-	}
+  switch (eventType) {
+    case EventType.SQS:
+      return (record as SQSRecord).messageId;
+    case EventType.KinesisDataStreams:
+      return (record as KinesisStreamRecord).eventID;
+    case EventType.DynamoDBStreams:
+      return (record as DynamoDBRecord).eventID;
+    default:
+      return undefined;
+  }
 }
 
 /**
@@ -337,7 +325,7 @@ export function getRecordId(
  * ```
  */
 export function getReceiveCount(record: SQSRecord): number {
-	return Number(record.attributes.ApproximateReceiveCount);
+  return Number(record.attributes.ApproximateReceiveCount);
 }
 
 /**
@@ -356,5 +344,5 @@ export function getReceiveCount(record: SQSRecord): number {
  * ```
  */
 export function isRetry(record: SQSRecord): boolean {
-	return getReceiveCount(record) > 1;
+  return getReceiveCount(record) > 1;
 }

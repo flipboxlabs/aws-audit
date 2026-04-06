@@ -1,114 +1,107 @@
 {
-	"name": "@flipboxlabs/aws-audit-cdk",
-	"version": "1.1.5",
-	"description": "AWS Audit CDK - CDK constructs for AWS audit infrastructure",
-	"type": "module",
-	"main": "./src/index.ts",
-	"exports": {
-		".": "./src/index.ts",
-		"./lambda": "./src/lambda/construct.ts",
-		"./cloudwatch": "./src/cloudwatch/construct.ts",
-		"./dynamodb": "./src/dynamodb/construct.ts",
-		"./eventbridge": "./src/eventbridge/construct.ts",
-		"./rest-api": "./src/rest-api/index.ts"
-	},
-	"publishConfig": {
-		"main": "./dist/index.js",
-		"types": "./dist/index.d.ts",
-		"exports": {
-			".": {
-				"types": "./dist/index.d.ts",
-				"import": "./dist/index.js"
-			},
-			"./lambda": {
-				"types": "./dist/lambda/construct.d.ts",
-				"import": "./dist/lambda/construct.js"
-			},
-			"./cloudwatch": {
-				"types": "./dist/cloudwatch/construct.d.ts",
-				"import": "./dist/cloudwatch/construct.js"
-			},
-			"./dynamodb": {
-				"types": "./dist/dynamodb/construct.d.ts",
-				"import": "./dist/dynamodb/construct.js"
-			},
-			"./eventbridge": {
-				"types": "./dist/eventbridge/construct.d.ts",
-				"import": "./dist/eventbridge/construct.js"
-			},
-			"./rest-api": {
-				"types": "./dist/rest-api/index.d.ts",
-				"import": "./dist/rest-api/index.js"
-			}
-		}
-	},
-	"files": [
-		"dist",
-		"README.md"
-	],
-	"scripts": {
-		"build": "tsc -p ./tsconfig.build.json",
-		"prepublishOnly": "pnpm run build",
-		"check-types": "tsc --noEmit -p ./tsconfig.json",
-		"lint": "npx biome lint",
-		"lint:fix": "npx biome lint --fix",
-		"format": "npx biome format",
-		"format:fix": "npx biome format --fix",
-		"pre-commit": "pnpm run check-types && pnpm run format && pnpm run lint",
-		"test": "vitest run",
-		"test:watch": "vitest",
-		"test:coverage": "vitest run --coverage",
-		"cdk:synth": "cdk synth --app 'npx tsx bin/app.ts'",
-		"cdk:deploy": "cdk deploy --app 'npx tsx bin/app.ts' --require-approval never"
-	},
-	"dependencies": {
-		"@flipboxlabs/aws-audit-sdk": "workspace:^",
-		"@aws-lambda-powertools/event-handler": "catalog:aws-powertools",
-		"@aws-lambda-powertools/jmespath": "catalog:aws-powertools",
-		"@aws-lambda-powertools/logger": "catalog:aws-powertools",
-		"@aws-sdk/client-eventbridge": "catalog:aws-sdk",
-		"@middy/core": "catalog:middleware",
-		"qs": "catalog:utilities",
-		"zod": "catalog:utilities"
-	},
-	"devDependencies": {
-		"@tsconfig/node22": "catalog:build",
-		"@types/aws-lambda": "catalog:types",
-		"@types/node": "catalog:types",
-		"@types/qs": "catalog:types",
-		"@vitest/coverage-v8": "catalog:build",
-		"aws-cdk-lib": "catalog:cdk",
-		"constructs": "catalog:cdk",
-		"esbuild": "catalog:build",
-		"ts-node": "catalog:build",
-		"typescript": "catalog:build",
-		"vitest": "catalog:build"
-	},
-	"engines": {
-		"node": ">=24"
-	},
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/flipboxlabs/aws-audit.git",
-		"directory": "cdk"
-	},
-	"bugs": {
-		"url": "https://github.com/flipboxlabs/aws-audit/issues"
-	},
-	"homepage": "https://github.com/flipboxlabs/aws-audit#readme",
-	"license": "MIT",
-	"keywords": [
-		"aws",
-		"audit",
-		"cdk",
-		"infrastructure",
-		"cloudwatch",
-		"dynamodb",
-		"eventbridge",
-		"serverless"
-	],
-	"peerDependencies": {
-		"aws-cdk-lib": "^2.135.0",
-		"constructs": "^10.3.0"
-	}
+  "name": "@flipboxlabs/aws-audit-cdk",
+  "version": "1.2.0",
+  "description": "AWS Audit CDK - CDK constructs for AWS audit infrastructure",
+  "keywords": [
+    "audit",
+    "aws",
+    "cdk",
+    "cloudwatch",
+    "dynamodb",
+    "eventbridge",
+    "infrastructure",
+    "serverless"
+  ],
+  "homepage": "https://github.com/flipboxlabs/aws-audit#readme",
+  "bugs": {
+    "url": "https://github.com/flipboxlabs/aws-audit/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flipboxlabs/aws-audit.git",
+    "directory": "cdk"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./lambda": "./src/lambda/construct.ts",
+    "./cloudwatch": "./src/cloudwatch/construct.ts",
+    "./dynamodb": "./src/dynamodb/construct.ts",
+    "./eventbridge": "./src/eventbridge/construct.ts",
+    "./rest-api": "./src/rest-api/index.ts"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./lambda": {
+        "types": "./dist/lambda/construct.d.ts",
+        "import": "./dist/lambda/construct.js"
+      },
+      "./cloudwatch": {
+        "types": "./dist/cloudwatch/construct.d.ts",
+        "import": "./dist/cloudwatch/construct.js"
+      },
+      "./dynamodb": {
+        "types": "./dist/dynamodb/construct.d.ts",
+        "import": "./dist/dynamodb/construct.js"
+      },
+      "./eventbridge": {
+        "types": "./dist/eventbridge/construct.d.ts",
+        "import": "./dist/eventbridge/construct.js"
+      },
+      "./rest-api": {
+        "types": "./dist/rest-api/index.d.ts",
+        "import": "./dist/rest-api/index.js"
+      }
+    },
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts"
+  },
+  "scripts": {
+    "build": "tsc -p ./tsconfig.build.json",
+    "prepublishOnly": "pnpm run build",
+    "test": "vp test run",
+    "test:watch": "vp test",
+    "test:coverage": "vp test run --coverage",
+    "cdk:synth": "cdk synth --app 'npx tsx bin/app.ts'",
+    "cdk:deploy": "cdk deploy --app 'npx tsx bin/app.ts' --require-approval never"
+  },
+  "dependencies": {
+    "@aws-lambda-powertools/event-handler": "catalog:aws-powertools",
+    "@aws-lambda-powertools/jmespath": "catalog:aws-powertools",
+    "@aws-lambda-powertools/logger": "catalog:aws-powertools",
+    "@aws-sdk/client-eventbridge": "catalog:aws-sdk",
+    "@flipboxlabs/aws-audit-sdk": "workspace:^",
+    "@middy/core": "catalog:middleware",
+    "qs": "catalog:utilities",
+    "zod": "catalog:utilities"
+  },
+  "devDependencies": {
+    "@tsconfig/node22": "catalog:build",
+    "@types/aws-lambda": "catalog:types",
+    "@types/node": "catalog:types",
+    "@types/qs": "catalog:types",
+    "aws-cdk-lib": "catalog:cdk",
+    "constructs": "catalog:cdk",
+    "esbuild": "catalog:build",
+    "ts-node": "catalog:build",
+    "typescript": "catalog:build",
+    "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "aws-cdk-lib": "^2.135.0",
+    "constructs": "^10.3.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
 }

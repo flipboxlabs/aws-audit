@@ -11,10 +11,10 @@ import { EventBridgeEventSchema } from "./model.js";
  * - `SKIP`: Operation was skipped
  */
 export const Status = {
-	SUCCESS: "success",
-	WARN: "warn",
-	FAIL: "fail",
-	SKIP: "skip",
+  SUCCESS: "success",
+  WARN: "warn",
+  FAIL: "fail",
+  SKIP: "skip",
 } as const;
 
 /**
@@ -55,12 +55,12 @@ export const ResourceTypeSchema = z.string();
  * @internal
  */
 export const ResourceReferenceSchema = z.object({
-	/** Application that owns this resource */
-	app: AppSchema,
-	/** Unique identifier within the resource type (optional) */
-	id: z.union([z.string(), z.number()]).optional(),
-	/** Type/category of the resource */
-	type: ResourceTypeSchema,
+  /** Application that owns this resource */
+  app: AppSchema,
+  /** Unique identifier within the resource type (optional) */
+  id: z.union([z.string(), z.number()]).optional(),
+  /** Type/category of the resource */
+  type: ResourceTypeSchema,
 });
 
 /**
@@ -71,7 +71,7 @@ export const ResourceReferenceSchema = z.object({
  * @internal
  */
 export const AdditionalResourceSchema = ResourceReferenceSchema.extend({
-	id: z.union([z.string(), z.number()]).optional(),
+  id: z.union([z.string(), z.number()]).optional(),
 });
 
 /**
@@ -89,10 +89,10 @@ type ContextValue = string | number | boolean | { [key: string]: ContextValue };
  * @internal
  */
 const recursiveValueSchema: z.ZodType<ContextValue> = z.union([
-	z.string(),
-	z.number(),
-	z.boolean(),
-	z.lazy(() => z.record(z.string(), recursiveValueSchema)),
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.lazy(() => z.record(z.string(), recursiveValueSchema)),
 ]);
 
 /**
@@ -117,44 +117,42 @@ export const ContextSchema = z.record(z.string(), recursiveValueSchema);
  * - `status`: Defaults to 'success' if not provided
  */
 export const _BaseLogAuditSchema = z.object({
-	/** Optional audit ID for retry correlation. If provided, retries with the same ID are correlated. */
-	id: z.string().optional(),
-	/** Name of the operation being audited (required) */
-	operation: z.string(),
-	/** Tenant identifier for multi-tenancy support (optional) */
-	tenantId: z.string().optional(),
-	/** Escalation tier for visibility (1=internal, 2=info, 3=public). Defaults to 2. */
-	tier: TierSchema.default(2),
-	/** Outcome status of the operation. Defaults to 'success'. */
-	status: StatusSchema.default(Status.SUCCESS),
-	/** The primary resource being audited (required) */
-	target: ResourceReferenceSchema,
-	/** The resource that initiated the operation (optional) */
-	source: ResourceReferenceSchema.optional(),
-	/** Additional metadata as key-value pairs (optional) */
-	context: ContextSchema.optional(),
-	/** Additional resources affected by this operation. Set is converted to Array. */
-	resources: z
-		.union([z.array(AdditionalResourceSchema), z.set(AdditionalResourceSchema)])
-		.optional()
-		.pipe(z.transform((val) => (val instanceof Set ? Array.from(val) : val))),
-	/** Human-readable description of the audit (optional) */
-	message: z.string().optional(),
-	/** Trace identifier for distributed tracing (optional) */
-	trace: z.string().optional(),
-	/** Original EventBridge event that triggered this audit (optional) */
-	event: EventBridgeEventSchema.optional(),
-	/** Error details if the operation failed. Error instances are JSON serialized. */
-	error: z
-		.union([z.string(), z.instanceof(Error)])
-		.optional()
-		.pipe(
-			z.transform((e) =>
-				e instanceof Error
-					? JSON.stringify(e, Object.getOwnPropertyNames(e))
-					: e,
-			),
-		),
+  /** Optional audit ID for retry correlation. If provided, retries with the same ID are correlated. */
+  id: z.string().optional(),
+  /** Name of the operation being audited (required) */
+  operation: z.string(),
+  /** Tenant identifier for multi-tenancy support (optional) */
+  tenantId: z.string().optional(),
+  /** Escalation tier for visibility (1=internal, 2=info, 3=public). Defaults to 2. */
+  tier: TierSchema.default(2),
+  /** Outcome status of the operation. Defaults to 'success'. */
+  status: StatusSchema.default(Status.SUCCESS),
+  /** The primary resource being audited (required) */
+  target: ResourceReferenceSchema,
+  /** The resource that initiated the operation (optional) */
+  source: ResourceReferenceSchema.optional(),
+  /** Additional metadata as key-value pairs (optional) */
+  context: ContextSchema.optional(),
+  /** Additional resources affected by this operation. Set is converted to Array. */
+  resources: z
+    .union([z.array(AdditionalResourceSchema), z.set(AdditionalResourceSchema)])
+    .optional()
+    .pipe(z.transform((val) => (val instanceof Set ? Array.from(val) : val))),
+  /** Human-readable description of the audit (optional) */
+  message: z.string().optional(),
+  /** Trace identifier for distributed tracing (optional) */
+  trace: z.string().optional(),
+  /** Original EventBridge event that triggered this audit (optional) */
+  event: EventBridgeEventSchema.optional(),
+  /** Error details if the operation failed. Error instances are JSON serialized. */
+  error: z
+    .union([z.string(), z.instanceof(Error)])
+    .optional()
+    .pipe(
+      z.transform((e) =>
+        e instanceof Error ? JSON.stringify(e, Object.getOwnPropertyNames(e)) : e,
+      ),
+    ),
 });
 
 /**
@@ -189,37 +187,35 @@ export type LogAuditInput = z.input<typeof _BaseLogAuditSchema>;
  * ```
  */
 export function createTypedLogAuditSchema<
-	T extends z.ZodObject<{
-		app: z.ZodTypeAny;
-		type: z.ZodTypeAny;
-		id: z.ZodTypeAny;
-	}>,
+  T extends z.ZodObject<{
+    app: z.ZodTypeAny;
+    type: z.ZodTypeAny;
+    id: z.ZodTypeAny;
+  }>,
 >(resourceReferenceSchema: T) {
-	return z.object({
-		id: z.string().optional(),
-		operation: z.string(),
-		tenantId: z.string().optional(),
-		tier: TierSchema.default(2),
-		status: StatusSchema.default(Status.SUCCESS),
-		target: resourceReferenceSchema,
-		source: resourceReferenceSchema.optional(),
-		context: ContextSchema.optional(),
-		resources: z
-			.union([z.array(resourceReferenceSchema), z.set(resourceReferenceSchema)])
-			.optional()
-			.pipe(z.transform((val) => (val instanceof Set ? Array.from(val) : val))),
-		message: z.string().optional(),
-		trace: z.string().optional(),
-		event: EventBridgeEventSchema.optional(),
-		error: z
-			.union([z.string(), z.instanceof(Error)])
-			.optional()
-			.pipe(
-				z.transform((e) =>
-					e instanceof Error
-						? JSON.stringify(e, Object.getOwnPropertyNames(e))
-						: e,
-				),
-			),
-	});
+  return z.object({
+    id: z.string().optional(),
+    operation: z.string(),
+    tenantId: z.string().optional(),
+    tier: TierSchema.default(2),
+    status: StatusSchema.default(Status.SUCCESS),
+    target: resourceReferenceSchema,
+    source: resourceReferenceSchema.optional(),
+    context: ContextSchema.optional(),
+    resources: z
+      .union([z.array(resourceReferenceSchema), z.set(resourceReferenceSchema)])
+      .optional()
+      .pipe(z.transform((val) => (val instanceof Set ? Array.from(val) : val))),
+    message: z.string().optional(),
+    trace: z.string().optional(),
+    event: EventBridgeEventSchema.optional(),
+    error: z
+      .union([z.string(), z.instanceof(Error)])
+      .optional()
+      .pipe(
+        z.transform((e) =>
+          e instanceof Error ? JSON.stringify(e, Object.getOwnPropertyNames(e)) : e,
+        ),
+      ),
+  });
 }

@@ -5,8 +5,8 @@ import { defineAuditConfig } from "@flipboxlabs/aws-audit-sdk";
  * Provides sample apps and resource types for testing.
  */
 export const testConfig = defineAuditConfig({
-	apps: ["App1", "TestApp"] as const,
-	resourceTypes: ["Unknown", "User", "Order"] as const,
+  apps: ["App1", "TestApp"] as const,
+  resourceTypes: ["Unknown", "User", "Order"] as const,
 });
 
 /**
@@ -23,15 +23,15 @@ export type ResourceType = (typeof testConfig)["_types"]["ResourceType"];
  * Enum-like object for App values in tests.
  */
 export const App = {
-	App1: "App1",
-	TestApp: "TestApp",
+  App1: "App1",
+  TestApp: "TestApp",
 } as const;
 
 /**
  * Enum-like object for ResourceType values in tests.
  */
 export const ResourceType = {
-	UNKNOWN: "Unknown",
-	USER: "User",
-	ORDER: "Order",
+  UNKNOWN: "Unknown",
+  USER: "User",
+  ORDER: "Order",
 } as const;

@@ -9,64 +9,58 @@ import { ESMNodeFunctionFactory } from "../../../../../../../lambda/nodejs.funct
 import { API_RESOURCE } from "./constants.js";
 
 type Props = {
-	config: CDKConfig;
-	table: dynamodb.ITable;
-	eventBus: events.IEventBus;
-	/** Lambda configuration */
-	lambda: {
-		/** Lambda layers to attach to the function */
-		layers: lambda.ILayerVersion[];
-	};
-	restApi: {
-		resource: apigateway.IResource;
-	};
+  config: CDKConfig;
+  table: dynamodb.ITable;
+  eventBus: events.IEventBus;
+  /** Lambda configuration */
+  lambda: {
+    /** Lambda layers to attach to the function */
+    layers: lambda.ILayerVersion[];
+  };
+  restApi: {
+    resource: apigateway.IResource;
+  };
 };
 
 export default class extends Construct {
-	constructor(scope: Construct, id: string, props: Props) {
-		super(scope, id);
+  constructor(scope: Construct, id: string, props: Props) {
+    super(scope, id);
 
-		const ref = [
-			props.config.env.toUpperCase(),
-			"REST-API",
-			props.config.service,
-			"Resource-Rerun",
-		].join("-");
+    const ref = [
+      props.config.env.toUpperCase(),
+      "REST-API",
+      props.config.service,
+      "Resource-Rerun",
+    ].join("-");
 
-		// Lambda
-		const lambdaFn = ESMNodeFunctionFactory(props.config)(
-			this,
-			"NodeFunction",
-			{
-				functionName: ref,
-				entry: url.fileURLToPath(
-					new URL("handler.js", import.meta.url).toString(),
-				),
-				layers: props.lambda.layers,
-				currentVersionOptions: {
-					retryAttempts: 1,
-				},
-			},
-		);
+    // Lambda
+    const lambdaFn = ESMNodeFunctionFactory(props.config)(this, "NodeFunction", {
+      functionName: ref,
+      entry: url.fileURLToPath(new URL("handler.js", import.meta.url).toString()),
+      layers: props.lambda.layers,
+      currentVersionOptions: {
+        retryAttempts: 1,
+      },
+    });
 
-		// Logger / Metrics / Tracing
-		lambdaFn.addEnvironment("POWERTOOLS_SERVICE_NAME", "ResourceRerun");
+    // Logger / Metrics / Tracing
+    lambdaFn.addEnvironment("POWERTOOLS_SERVICE_NAME", "ResourceRerun");
 
-		// Audit
-		props.table.grantReadWriteData(lambdaFn);
+    // Audit
+    props.table.grantReadWriteData(lambdaFn);
 
-		// Put events
-		props.eventBus.grantPutEventsTo(lambdaFn);
+    // Put events
+    props.eventBus.grantPutEventsTo(lambdaFn);
 
-		// Integration
-		const integration = new apigateway.LambdaIntegration(lambdaFn);
+    // Integration
+    const integration = new apigateway.LambdaIntegration(lambdaFn);
 
-		const RESOURCE = props.restApi.resource.addResource(API_RESOURCE.RESOURCE);
+    const RESOURCE = props.restApi.resource.addResource(API_RESOURCE.RESOURCE);
 
-		// /apps/{app}/objects/{object}/{item}/{audit}/rerun
-		RESOURCE.addMethod("POST", integration, {
-			apiKeyRequired: true,
-			operationName: "Rerun the event",
-		});
-	}
+    // /apps/{app}/objects/{object}/{item}/{audit}/rerun
+    RESOURCE.addMethod("POST", integration, {
+      apiKeyRequired: true,
+      operationName: "Rerun the event",
+    });
+  }
 }

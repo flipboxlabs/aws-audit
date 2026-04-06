@@ -41,15 +41,15 @@ import { _BaseLogAuditSchema, createTypedLogAuditSchema } from "./log.js";
  * ```
  */
 export const UpsertAuditSchema = z.object({
-	..._BaseLogAuditSchema.shape,
-	/** Optional audit ID - auto-generated if not provided */
-	id: z.string().optional(),
-	/** Whether the audited operation can be re-run/retried */
-	rerunable: z.boolean().optional(),
-	/** History of execution attempts for retry tracking */
-	attempts: z.array(AttemptSchema).optional(),
-	/** Original creation timestamp (preserved on retries) */
-	createdAt: DateTimeStringSchema.optional(),
+  ..._BaseLogAuditSchema.shape,
+  /** Optional audit ID - auto-generated if not provided */
+  id: z.string().optional(),
+  /** Whether the audited operation can be re-run/retried */
+  rerunable: z.boolean().optional(),
+  /** History of execution attempts for retry tracking */
+  attempts: z.array(AttemptSchema).optional(),
+  /** Original creation timestamp (preserved on retries) */
+  createdAt: DateTimeStringSchema.optional(),
 });
 
 /**
@@ -90,23 +90,23 @@ export type UpsertAudit = z.output<typeof UpsertAuditSchema>;
  * ```
  */
 export function createTypedUpsertAuditSchema<
-	T extends z.ZodObject<{
-		app: z.ZodTypeAny;
-		type: z.ZodTypeAny;
-		id: z.ZodTypeAny;
-	}>,
+  T extends z.ZodObject<{
+    app: z.ZodTypeAny;
+    type: z.ZodTypeAny;
+    id: z.ZodTypeAny;
+  }>,
 >(resourceReferenceSchema: T) {
-	const typedLogSchema = createTypedLogAuditSchema(resourceReferenceSchema);
+  const typedLogSchema = createTypedLogAuditSchema(resourceReferenceSchema);
 
-	return z.object({
-		...typedLogSchema.shape,
-		/** Optional audit ID - auto-generated if not provided */
-		id: z.string().optional(),
-		/** Whether the audited operation can be re-run/retried */
-		rerunable: z.boolean().optional(),
-		/** History of execution attempts for retry tracking */
-		attempts: z.array(AttemptSchema).optional(),
-		/** Original creation timestamp (preserved on retries) */
-		createdAt: DateTimeStringSchema.optional(),
-	});
+  return z.object({
+    ...typedLogSchema.shape,
+    /** Optional audit ID - auto-generated if not provided */
+    id: z.string().optional(),
+    /** Whether the audited operation can be re-run/retried */
+    rerunable: z.boolean().optional(),
+    /** History of execution attempts for retry tracking */
+    attempts: z.array(AttemptSchema).optional(),
+    /** Original creation timestamp (preserved on retries) */
+    createdAt: DateTimeStringSchema.optional(),
+  });
 }

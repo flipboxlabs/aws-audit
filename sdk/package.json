@@ -1,95 +1,88 @@
 {
-	"name": "@flipboxlabs/aws-audit-sdk",
-	"version": "1.1.3",
-	"description": "AWS Audit SDK - Core SDK for audit logging and event management",
-	"type": "module",
-	"main": "./src/index.ts",
-	"exports": {
-		".": "./src/index.ts",
-		"./batch": "./src/batch/index.ts",
-		"./config": "./src/config.ts",
-		"./middleware": "./src/middleware/middy.ts"
-	},
-	"publishConfig": {
-		"main": "./dist/index.js",
-		"types": "./dist/index.d.ts",
-		"exports": {
-			".": {
-				"types": "./dist/index.d.ts",
-				"import": "./dist/index.js"
-			},
-			"./batch": {
-				"types": "./dist/batch/index.d.ts",
-				"import": "./dist/batch/index.js"
-			},
-			"./config": {
-				"types": "./dist/config.d.ts",
-				"import": "./dist/config.js"
-			},
-			"./middleware": {
-				"types": "./dist/middleware/middy.d.ts",
-				"import": "./dist/middleware/middy.js"
-			}
-		}
-	},
-	"files": [
-		"dist",
-		"README.md"
-	],
-	"scripts": {
-		"build": "tsc -p ./tsconfig.build.json",
-		"prepublishOnly": "pnpm run build",
-		"check-types": "tsc --noEmit -p ./tsconfig.json",
-		"lint": "npx biome lint",
-		"lint:fix": "npx biome lint --fix",
-		"format": "npx biome format",
-		"format:fix": "npx biome format --fix",
-		"pre-commit": "pnpm run check-types && pnpm run format && pnpm run lint",
-		"test": "vitest run",
-		"test:watch": "vitest",
-		"test:coverage": "vitest run --coverage"
-	},
-	"dependencies": {
-		"@aws-lambda-powertools/batch": "catalog:aws-powertools",
-		"@aws-lambda-powertools/commons": "catalog:aws-powertools",
-		"@aws-lambda-powertools/logger": "catalog:aws-powertools",
-		"@aws-sdk/client-dynamodb": "catalog:aws-sdk",
-		"@aws-sdk/client-eventbridge": "catalog:aws-sdk",
-		"@aws-sdk/util-dynamodb": "catalog:aws-sdk",
-		"ksuid": "catalog:utilities",
-		"lodash.merge": "catalog:utilities",
-		"zod": "catalog:utilities"
-	},
-	"devDependencies": {
-		"@tsconfig/node22": "catalog:build",
-		"@types/aws-lambda": "catalog:types",
-		"@types/lodash.merge": "catalog:types",
-		"@types/node": "catalog:types",
-		"@vitest/coverage-v8": "catalog:build",
-		"ts-node": "catalog:build",
-		"typescript": "catalog:build",
-		"vitest": "catalog:build"
-	},
-	"engines": {
-		"node": ">=24"
-	},
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/flipboxlabs/aws-audit.git",
-		"directory": "sdk"
-	},
-	"bugs": {
-		"url": "https://github.com/flipboxlabs/aws-audit/issues"
-	},
-	"homepage": "https://github.com/flipboxlabs/aws-audit#readme",
-	"license": "MIT",
-	"keywords": [
-		"aws",
-		"audit",
-		"logging",
-		"eventbridge",
-		"dynamodb",
-		"lambda",
-		"serverless"
-	]
+  "name": "@flipboxlabs/aws-audit-sdk",
+  "version": "1.2.0",
+  "description": "AWS Audit SDK - Core SDK for audit logging and event management",
+  "keywords": [
+    "audit",
+    "aws",
+    "dynamodb",
+    "eventbridge",
+    "lambda",
+    "logging",
+    "serverless"
+  ],
+  "homepage": "https://github.com/flipboxlabs/aws-audit#readme",
+  "bugs": {
+    "url": "https://github.com/flipboxlabs/aws-audit/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flipboxlabs/aws-audit.git",
+    "directory": "sdk"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./batch": "./src/batch/index.ts",
+    "./config": "./src/config.ts",
+    "./middleware": "./src/middleware/middy.ts"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./batch": {
+        "types": "./dist/batch/index.d.ts",
+        "import": "./dist/batch/index.js"
+      },
+      "./config": {
+        "types": "./dist/config.d.ts",
+        "import": "./dist/config.js"
+      },
+      "./middleware": {
+        "types": "./dist/middleware/middy.d.ts",
+        "import": "./dist/middleware/middy.js"
+      }
+    },
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts"
+  },
+  "scripts": {
+    "build": "tsc -p ./tsconfig.build.json",
+    "prepublishOnly": "pnpm run build",
+    "test": "vp test run",
+    "test:watch": "vp test",
+    "test:coverage": "vp test run --coverage"
+  },
+  "dependencies": {
+    "@aws-lambda-powertools/batch": "catalog:aws-powertools",
+    "@aws-lambda-powertools/commons": "catalog:aws-powertools",
+    "@aws-lambda-powertools/logger": "catalog:aws-powertools",
+    "@aws-sdk/client-dynamodb": "catalog:aws-sdk",
+    "@aws-sdk/client-eventbridge": "catalog:aws-sdk",
+    "@aws-sdk/util-dynamodb": "catalog:aws-sdk",
+    "ksuid": "catalog:utilities",
+    "lodash.merge": "catalog:utilities",
+    "zod": "catalog:utilities"
+  },
+  "devDependencies": {
+    "@tsconfig/node22": "catalog:build",
+    "@types/aws-lambda": "catalog:types",
+    "@types/lodash.merge": "catalog:types",
+    "@types/node": "catalog:types",
+    "ts-node": "catalog:build",
+    "typescript": "catalog:build",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": ">=24"
+  }
 }

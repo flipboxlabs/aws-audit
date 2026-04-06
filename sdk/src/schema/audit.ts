@@ -27,11 +27,11 @@ import { BaseSchema, DateTimeObjectSchema } from "./common.js";
  * ```
  */
 export const AuditSchema = z.object({
-	...BaseSchema.shape,
-	/** Last update timestamp - ISO string transformed to Date */
-	updatedAt: DateTimeObjectSchema,
-	/** Creation timestamp - ISO string transformed to Date */
-	createdAt: DateTimeObjectSchema,
+  ...BaseSchema.shape,
+  /** Last update timestamp - ISO string transformed to Date */
+  updatedAt: DateTimeObjectSchema,
+  /** Creation timestamp - ISO string transformed to Date */
+  createdAt: DateTimeObjectSchema,
 });
 
 /**
@@ -72,6 +72,4 @@ export const AuditListItemPayloadSchema = BaseSchema;
 /**
  * Output type for audit list item payloads.
  */
-export type AuditAuditListItemPayload = z.output<
-	typeof AuditListItemPayloadSchema
->;
+export type AuditAuditListItemPayload = z.output<typeof AuditListItemPayloadSchema>;

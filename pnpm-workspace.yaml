@@ -32,11 +32,6 @@ catalogs:
     "@tsconfig/node22": ^22.0.1
     ts-node: ^10.9.2
     esbuild: ^0.23.1
-    vitest: ^2.1.1
-    "@vitest/coverage-v8": ^2.1.1
-    husky: ^9.1.7
-    lint-staged: ^15.5.1
-    "@biomejs/biome": ^2.2.6
     "@commitlint/cli": ^19.8.1
     "@commitlint/config-conventional": ^19.8.1
 
@@ -49,3 +44,17 @@ catalogs:
   cdk:
     aws-cdk-lib: 2.135.0
     constructs: ^10.3.0
+catalog:
+  vite: npm:@voidzero-dev/vite-plus-core@latest
+  vitest: npm:@voidzero-dev/vite-plus-test@latest
+  vite-plus: latest
+overrides:
+  vite: "catalog:"
+  vitest: "catalog:"
+peerDependencyRules:
+  allowAny:
+    - vite
+    - vitest
+  allowedVersions:
+    vite: "*"
+    vitest: "*"

@@ -100,12 +100,12 @@ The `CDKConfig` type defines the configuration passed to constructs:
 
 ```typescript
 type CDKConfig = {
-  env: string;           // Environment name (e.g., "prod", "staging")
+  env: string; // Environment name (e.g., "prod", "staging")
   aws: {
-    account: string;     // AWS account ID
-    region: string;      // AWS region
+    account: string; // AWS account ID
+    region: string; // AWS region
   };
-  service?: string;      // Optional service name
+  service?: string; // Optional service name
 };
 ```
 

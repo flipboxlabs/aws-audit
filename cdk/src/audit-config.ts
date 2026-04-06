@@ -24,8 +24,8 @@ import { apps, resourceTypes } from "/opt/nodejs/audit-config.js";
  * ```
  */
 export const auditConfig = defineAuditConfig({
-	apps: apps as readonly string[],
-	resourceTypes: resourceTypes as readonly string[],
+  apps: apps as readonly string[],
+  resourceTypes: resourceTypes as readonly string[],
 });
 
 /**

@@ -13,8 +13,8 @@ pnpm add @flipboxlabs/aws-audit-sdk
 ## Usage
 
 ```typescript
-import { Audits, defineAuditConfig } from '@flipboxlabs/aws-audit-sdk';
-import { logAudits } from '@flipboxlabs/aws-audit-sdk/middleware';
+import { Audits, defineAuditConfig } from "@flipboxlabs/aws-audit-sdk";
+import { logAudits } from "@flipboxlabs/aws-audit-sdk/middleware";
 ```
 
 ## Features

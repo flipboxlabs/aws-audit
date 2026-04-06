@@ -43,24 +43,24 @@ import { BaseSchema, DateTimeStringSchema } from "./common.js";
  * ```
  */
 export const AuditStorageSchema = z.object({
-	...BaseSchema.shape,
-	/**
-	 * Unique audit identifier.
-	 * Auto-generates a KSUID if not provided.
-	 */
-	id: z.string().default(generateAuditId()),
-	/**
-	 * Last update timestamp.
-	 * Accepts ISO string or Date, outputs ISO string.
-	 * Defaults to current time.
-	 */
-	updatedAt: DateTimeStringSchema.default(() => new Date().toISOString()),
-	/**
-	 * Creation timestamp.
-	 * Accepts ISO string or Date, outputs ISO string.
-	 * Defaults to current time.
-	 */
-	createdAt: DateTimeStringSchema.default(() => new Date().toISOString()),
+  ...BaseSchema.shape,
+  /**
+   * Unique audit identifier.
+   * Auto-generates a KSUID if not provided.
+   */
+  id: z.string().default(generateAuditId()),
+  /**
+   * Last update timestamp.
+   * Accepts ISO string or Date, outputs ISO string.
+   * Defaults to current time.
+   */
+  updatedAt: DateTimeStringSchema.default(() => new Date().toISOString()),
+  /**
+   * Creation timestamp.
+   * Accepts ISO string or Date, outputs ISO string.
+   * Defaults to current time.
+   */
+  createdAt: DateTimeStringSchema.default(() => new Date().toISOString()),
 });
 
 /**

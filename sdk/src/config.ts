@@ -4,9 +4,9 @@ import * as z from "zod/v4";
  * Input configuration for defining audit apps and resource types.
  */
 export interface AuditConfigInput {
-	readonly apps: readonly string[];
-	readonly resourceTypes: readonly string[];
-	readonly service?: string;
+  readonly apps: readonly string[];
+  readonly resourceTypes: readonly string[];
+  readonly service?: string;
 }
 
 /**
@@ -36,28 +36,28 @@ export interface AuditConfigInput {
  * ```
  */
 export function defineAuditConfig<const C extends AuditConfigInput>(input: C) {
-	type App = C["apps"][number];
-	type ResourceType = C["resourceTypes"][number];
+  type App = C["apps"][number];
+  type ResourceType = C["resourceTypes"][number];
 
-	const schemas = {
-		app: z.enum(input.apps as [string, ...string[]]),
-		resourceType: z.enum(input.resourceTypes as [string, ...string[]]),
-		resourceReference: z.object({
-			app: z.enum(input.apps as [string, ...string[]]),
-			type: z.enum(input.resourceTypes as [string, ...string[]]),
-			id: z.union([z.string(), z.number()]).optional(),
-		}),
-	};
+  const schemas = {
+    app: z.enum(input.apps as [string, ...string[]]),
+    resourceType: z.enum(input.resourceTypes as [string, ...string[]]),
+    resourceReference: z.object({
+      app: z.enum(input.apps as [string, ...string[]]),
+      type: z.enum(input.resourceTypes as [string, ...string[]]),
+      id: z.union([z.string(), z.number()]).optional(),
+    }),
+  };
 
-	return {
-		service: process.env.SERVICE,
-		...input,
-		schemas,
-		_types: {} as {
-			App: App;
-			ResourceType: ResourceType;
-		},
-	};
+  return {
+    service: process.env.SERVICE,
+    ...input,
+    schemas,
+    _types: {} as {
+      App: App;
+      ResourceType: ResourceType;
+    },
+  };
 }
 
 /**

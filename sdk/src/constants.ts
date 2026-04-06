@@ -19,11 +19,11 @@ export const AUDIT_LOG_IDENTIFIER = "_audit";
  * Configuration for generating resource names.
  */
 type NameConfig = {
-	/** Environment name (e.g., 'dev', 'staging', 'prod') */
-	env: string;
+  /** Environment name (e.g., 'dev', 'staging', 'prod') */
+  env: string;
 
-	/** Service name used in naming resources */
-	service?: string;
+  /** Service name used in naming resources */
+  service?: string;
 };
 
 /**
@@ -31,13 +31,13 @@ type NameConfig = {
  * Extends NameConfig with AWS-specific identifiers.
  */
 type ARNConfig = NameConfig & {
-	/** AWS account and region information */
-	aws: {
-		/** AWS region (e.g., 'us-east-1') */
-		region: string;
-		/** AWS account ID */
-		account: string;
-	};
+  /** AWS account and region information */
+  aws: {
+    /** AWS region (e.g., 'us-east-1') */
+    region: string;
+    /** AWS account ID */
+    account: string;
+  };
 };
 
 /**
@@ -58,52 +58,52 @@ type ARNConfig = NameConfig & {
  * ```
  */
 export const DynamoDB = {
-	/** Table name and ARN generators */
-	Table: {
-		/** Generates the DynamoDB table name based on environment */
-		Name: (config?: NameConfig) => buildDynamoDBName(config),
-		/** Generates the full DynamoDB table ARN */
-		ARN: (config?: ARNConfig) => buildDynamoDBArn(config),
-	},
-	/** DynamoDB key attribute names */
-	Keys: {
-		/** Primary partition key */
-		PARTITION_KEY: "PK",
-		/** Primary sort key */
-		SORT_KEY: "SK",
+  /** Table name and ARN generators */
+  Table: {
+    /** Generates the DynamoDB table name based on environment */
+    Name: (config?: NameConfig) => buildDynamoDBName(config),
+    /** Generates the full DynamoDB table ARN */
+    ARN: (config?: ARNConfig) => buildDynamoDBArn(config),
+  },
+  /** DynamoDB key attribute names */
+  Keys: {
+    /** Primary partition key */
+    PARTITION_KEY: "PK",
+    /** Primary sort key */
+    SORT_KEY: "SK",
 
-		/** GSI1 (String-String) partition key */
-		GSI1_SS_PARTITION_KEY: "GSI1_SS_PK",
-		/** GSI1 (String-String) sort key */
-		GSI1_SS_SORT_KEY: "GSI1_SS_SK",
+    /** GSI1 (String-String) partition key */
+    GSI1_SS_PARTITION_KEY: "GSI1_SS_PK",
+    /** GSI1 (String-String) sort key */
+    GSI1_SS_SORT_KEY: "GSI1_SS_SK",
 
-		/** GSI1 (String-Number) partition key */
-		GSI1_SN_PARTITION_KEY: "GSI1_SN_PK",
-		/** GSI1 (String-Number) sort key */
-		GSI1_SN_SORT_KEY: "GSI1_SN_SK",
+    /** GSI1 (String-Number) partition key */
+    GSI1_SN_PARTITION_KEY: "GSI1_SN_PK",
+    /** GSI1 (String-Number) sort key */
+    GSI1_SN_SORT_KEY: "GSI1_SN_SK",
 
-		/** LSI1 (String) sort key */
-		LSI1_S_SORT_KEY: "LSI1_S_SK",
-		/** LSI1 (Numeric) sort key */
-		LSI1_N_SORT_KEY: "LSI1_N_SK",
-	},
-	/** Secondary index names */
-	Indexes: {
-		/** Global Secondary Index 1 - String partition, String sort */
-		GSI1_SS: "GSI1_SS",
-		/** Global Secondary Index 1 - String partition, Numeric sort */
-		GSI1_SN: "GSI1_SN",
+    /** LSI1 (String) sort key */
+    LSI1_S_SORT_KEY: "LSI1_S_SK",
+    /** LSI1 (Numeric) sort key */
+    LSI1_N_SORT_KEY: "LSI1_N_SK",
+  },
+  /** Secondary index names */
+  Indexes: {
+    /** Global Secondary Index 1 - String partition, String sort */
+    GSI1_SS: "GSI1_SS",
+    /** Global Secondary Index 1 - String partition, Numeric sort */
+    GSI1_SN: "GSI1_SN",
 
-		/** Local Secondary Index 1 - String sort key */
-		LSI1_S: "LSI1_S",
-		/** Local Secondary Index 1 - Numeric sort key */
-		LSI1_N: "LSI1_N",
-	},
-	/** Special attribute names */
-	Attributes: {
-		/** Time-to-live attribute for automatic item expiration */
-		TTL: "ttl",
-	},
+    /** Local Secondary Index 1 - String sort key */
+    LSI1_S: "LSI1_S",
+    /** Local Secondary Index 1 - Numeric sort key */
+    LSI1_N: "LSI1_N",
+  },
+  /** Special attribute names */
+  Attributes: {
+    /** Time-to-live attribute for automatic item expiration */
+    TTL: "ttl",
+  },
 } as const;
 
 /**
@@ -117,14 +117,12 @@ export const DynamoDB = {
  * @internal
  */
 function buildDynamoDBName(
-	config: NameConfig = {
-		env: String(process.env.ENVIRONMENT),
-		service: process.env.SERVICE,
-	},
+  config: NameConfig = {
+    env: String(process.env.ENVIRONMENT),
+    service: process.env.SERVICE,
+  },
 ): string {
-	return [`${config.env.toUpperCase()}`, config.service, "Audit"]
-		.filter(Boolean)
-		.join("-");
+  return [`${config.env.toUpperCase()}`, config.service, "Audit"].filter(Boolean).join("-");
 }
 
 /**
@@ -136,16 +134,16 @@ function buildDynamoDBName(
  * @internal
  */
 function buildDynamoDBArn(
-	config: ARNConfig = {
-		aws: {
-			region: String(process.env.AWS_REGION),
-			account: String(process.env.AWS_ACCOUNT),
-		},
-		env: String(process.env.ENVIRONMENT),
-		service: process.env.SERVICE,
-	},
+  config: ARNConfig = {
+    aws: {
+      region: String(process.env.AWS_REGION),
+      account: String(process.env.AWS_ACCOUNT),
+    },
+    env: String(process.env.ENVIRONMENT),
+    service: process.env.SERVICE,
+  },
 ): string {
-	return `arn:aws:dynamodb:${config.aws.region}:${config.aws.account}:table/${buildDynamoDBName({ env: config.env, service: config.service })}`;
+  return `arn:aws:dynamodb:${config.aws.region}:${config.aws.account}:table/${buildDynamoDBName({ env: config.env, service: config.service })}`;
 }
 
 /**
@@ -169,29 +167,29 @@ function buildDynamoDBArn(
  * ```
  */
 export const EventBridge = {
-	/** Event bus name and ARN generators */
-	Bus: {
-		/** Generates the EventBridge bus name based on environment */
-		Name: (config?: NameConfig) => buildEventBridgeName(config),
-		/** Generates the full EventBridge bus ARN */
-		ARN: (config?: ARNConfig) => buildEventBridgeArn(config),
-	},
-	/** Source identifier for audit events */
-	Source: "Audit",
-	/** Event detail types for different audit operations */
-	DetailType: {
-		/** Emitted when an audit record is created or updated */
-		UPSERTED: "Upserted",
-		/** Emitted when an audit record is deleted */
-		DELETED: "Deleted",
-	},
+  /** Event bus name and ARN generators */
+  Bus: {
+    /** Generates the EventBridge bus name based on environment */
+    Name: (config?: NameConfig) => buildEventBridgeName(config),
+    /** Generates the full EventBridge bus ARN */
+    ARN: (config?: ARNConfig) => buildEventBridgeArn(config),
+  },
+  /** Source identifier for audit events */
+  Source: "Audit",
+  /** Event detail types for different audit operations */
+  DetailType: {
+    /** Emitted when an audit record is created or updated */
+    UPSERTED: "Upserted",
+    /** Emitted when an audit record is deleted */
+    DELETED: "Deleted",
+  },
 } as const;
 
 /**
  * Union type of all valid EventBridge detail types.
  */
 export type AnyEventBridgeDetailType =
-	(typeof EventBridge.DetailType)[keyof typeof EventBridge.DetailType];
+  (typeof EventBridge.DetailType)[keyof typeof EventBridge.DetailType];
 
 /**
  * Builds an EventBridge bus name from service name and configuration.
@@ -204,14 +202,12 @@ export type AnyEventBridgeDetailType =
  * @internal
  */
 function buildEventBridgeName(
-	config: NameConfig = {
-		env: String(process.env.ENVIRONMENT),
-		service: process.env.SERVICE,
-	},
+  config: NameConfig = {
+    env: String(process.env.ENVIRONMENT),
+    service: process.env.SERVICE,
+  },
 ): string {
-	return [`${config.env.toUpperCase()}`, config.service, "Audit"]
-		.filter(Boolean)
-		.join("-");
+  return [`${config.env.toUpperCase()}`, config.service, "Audit"].filter(Boolean).join("-");
 }
 
 /**
@@ -223,14 +219,14 @@ function buildEventBridgeName(
  * @internal
  */
 function buildEventBridgeArn(
-	config: ARNConfig = {
-		aws: {
-			region: process.env.AWS_REGION ?? "us-east-1",
-			account: String(process.env.AWS_ACCOUNT),
-		},
-		env: String(process.env.ENVIRONMENT),
-		service: process.env.SERVICE,
-	},
+  config: ARNConfig = {
+    aws: {
+      region: process.env.AWS_REGION ?? "us-east-1",
+      account: String(process.env.AWS_ACCOUNT),
+    },
+    env: String(process.env.ENVIRONMENT),
+    service: process.env.SERVICE,
+  },
 ): string {
-	return `arn:aws:events:${config.aws.region}:${config.aws.account}:event-bus/${buildEventBridgeName({ env: config.env, service: config.service })}`;
+  return `arn:aws:events:${config.aws.region}:${config.aws.account}:event-bus/${buildEventBridgeName({ env: config.env, service: config.service })}`;
 }

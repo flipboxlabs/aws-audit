@@ -29,24 +29,22 @@ const KEY_SIZE = 32;
  * // Returns something like: "a1b2c3d4...:e5f6g7h8..."
  * ```
  */
-export function encodeNextPageToken(
-	nextPageObject?: Record<string, string>,
-): string | undefined {
-	if (nextPageObject == null) {
-		return undefined;
-	}
+export function encodeNextPageToken(nextPageObject?: Record<string, string>): string | undefined {
+  if (nextPageObject == null) {
+    return undefined;
+  }
 
-	const nextPageString = JSON.stringify(nextPageObject);
+  const nextPageString = JSON.stringify(nextPageObject);
 
-	const iv = crypto.randomBytes(16);
-	const cipher = crypto.createCipheriv(
-		ENCRYPTION_ALGORITHM,
-		Buffer.concat([Buffer.alloc(KEY_SIZE)], KEY_SIZE),
-		iv,
-	);
-	const encrypted = cipher.update(nextPageString);
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv(
+    ENCRYPTION_ALGORITHM,
+    Buffer.concat([Buffer.alloc(KEY_SIZE)], KEY_SIZE),
+    iv,
+  );
+  const encrypted = cipher.update(nextPageString);
 
-	return [iv.toString("hex"), encrypted.toString("hex")].join(":");
+  return [iv.toString("hex"), encrypted.toString("hex")].join(":");
 }
 
 /**
@@ -66,28 +64,28 @@ export function encodeNextPageToken(
  * ```
  */
 export function decodeNextPageToken(
-	nextPageString?: string | null | undefined,
+  nextPageString?: string | null | undefined,
 ): Record<string, string> | undefined {
-	if (nextPageString == null) {
-		return undefined;
-	}
+  if (nextPageString == null) {
+    return undefined;
+  }
 
-	const textParts = nextPageString.split(":");
-	const iv = textParts.shift();
-	if (!iv) {
-		return undefined;
-	}
+  const textParts = nextPageString.split(":");
+  const iv = textParts.shift();
+  if (!iv) {
+    return undefined;
+  }
 
-	const decipher = crypto.createDecipheriv(
-		ENCRYPTION_ALGORITHM,
-		Buffer.concat([Buffer.alloc(KEY_SIZE)], KEY_SIZE),
-		Buffer.from(iv, "hex"),
-	);
+  const decipher = crypto.createDecipheriv(
+    ENCRYPTION_ALGORITHM,
+    Buffer.concat([Buffer.alloc(KEY_SIZE)], KEY_SIZE),
+    Buffer.from(iv, "hex"),
+  );
 
-	const decrypted = Buffer.concat([
-		decipher.update(Buffer.from(textParts.join(":"), "hex")),
-		decipher.final(),
-	]);
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(textParts.join(":"), "hex")),
+    decipher.final(),
+  ]);
 
-	return JSON.parse(decrypted.toString());
+  return JSON.parse(decrypted.toString());
 }

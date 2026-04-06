@@ -11,9 +11,11 @@ disable-model-invocation: true
 ### 1. Platform Check
 
 agent-browser requires **Linux, WSL, or macOS**. Check the platform:
+
 ```bash
 uname -s
 ```
+
 - `Linux` or `Darwin` → proceed
 - Anything else (e.g., `MINGW`, `CYGWIN`, or native Windows) → stop with:
 
@@ -24,11 +26,13 @@ Stop execution if the platform is unsupported.
 ### 2. Frontend Check
 
 Verify the application has a browser-accessible frontend. Check for:
+
 - A `package.json` with a dev/start script serving a UI
 - Frontend framework files (pages/, app/, src/components/, index.html, etc.)
 - Web server configuration
 
 If no frontend is detected:
+
 > "This application doesn't appear to have a browser-accessible frontend. E2E browser testing requires a UI to visit. For backend-only or API testing, a different approach is needed."
 
 Stop execution if no frontend is found.
@@ -36,16 +40,19 @@ Stop execution if no frontend is found.
 ### 3. agent-browser Installation
 
 Check if agent-browser is installed:
+
 ```bash
 agent-browser --version
 ```
 
 If the command is not found, install it automatically:
+
 ```bash
 npm install -g agent-browser
 ```
 
 After installation (or if it was already installed), ensure the browser engine is set up:
+
 ```bash
 agent-browser install --with-deps
 ```
@@ -53,11 +60,13 @@ agent-browser install --with-deps
 The `--with-deps` flag installs system-level Chromium dependencies on Linux/WSL. On macOS it is harmless.
 
 Verify installation succeeded:
+
 ```bash
 agent-browser --version
 ```
 
 If installation fails, stop with:
+
 > "Failed to install agent-browser. Please install it manually with `npm install -g agent-browser && agent-browser install --with-deps`, then re-run this command."
 
 ## Phase 1: Parallel Research
@@ -195,6 +204,7 @@ After completing each journey, mark its task as `completed` with TaskUpdate.
 ## Phase 5: Cleanup
 
 After all testing is complete:
+
 1. Stop the dev server background process
 2. Close the browser session: `agent-browser close`
 
@@ -231,6 +241,7 @@ After the text summary, ask the user:
 > "Would you like me to export the full testing report to a markdown file? It includes per-journey breakdowns, all screenshot references, database validation results, and detailed findings — useful as context for follow-up fixes or GitHub issues."
 
 If yes, write a detailed report to `e2e-test-report.md` in the project root containing:
+
 - Full summary with stats
 - Per-journey breakdown: steps taken, screenshots, database checks, issues found
 - All issues with full details, fix status, and file references

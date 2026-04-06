@@ -1,7 +1,4 @@
-import type {
-	MiddlewareLikeObj,
-	MiddyLikeRequest,
-} from "@aws-lambda-powertools/commons/types";
+import type { MiddlewareLikeObj, MiddyLikeRequest } from "@aws-lambda-powertools/commons/types";
 import type { Audits } from "../audits.js";
 import type { AuditConfig } from "../config.js";
 
@@ -67,57 +64,57 @@ type AnyAudits = Audits<AuditConfig>;
  * ```
  */
 const logAudits = (handler: AnyAudits): MiddlewareLikeObj => {
-	const instance = handler;
+  const instance = handler;
 
-	/**
-	 * Registers the cleanup function on the request's internal state.
-	 *
-	 * This allows other middlewares to invoke the audit flush if they
-	 * need to return early, following the Powertools middleware pattern.
-	 *
-	 * @param request - The Middy request object
-	 * @internal
-	 */
-	const setCleanupFunction = (request: MiddyLikeRequest): void => {
-		request.internal = {
-			...request.internal,
-			["audits"]: afterOrError,
-		};
-	};
+  /**
+   * Registers the cleanup function on the request's internal state.
+   *
+   * This allows other middlewares to invoke the audit flush if they
+   * need to return early, following the Powertools middleware pattern.
+   *
+   * @param request - The Middy request object
+   * @internal
+   */
+  const setCleanupFunction = (request: MiddyLikeRequest): void => {
+    request.internal = {
+      ...request.internal,
+      ["audits"]: afterOrError,
+    };
+  };
 
-	/**
-	 * Before hook - runs before the Lambda handler.
-	 *
-	 * Registers the cleanup function for middleware coordination.
-	 *
-	 * @param request - The Middy request object
-	 * @internal
-	 */
-	const before = async (request: MiddyLikeRequest): Promise<void> => {
-		setCleanupFunction(request);
-	};
+  /**
+   * Before hook - runs before the Lambda handler.
+   *
+   * Registers the cleanup function for middleware coordination.
+   *
+   * @param request - The Middy request object
+   * @internal
+   */
+  const before = async (request: MiddyLikeRequest): Promise<void> => {
+    setCleanupFunction(request);
+  };
 
-	/**
-	 * After/Error hook - runs after the Lambda handler completes or throws.
-	 *
-	 * Logs the original event for debugging and publishes all buffered
-	 * audit entries. This ensures audits are always emitted regardless
-	 * of whether the handler succeeded or failed.
-	 *
-	 * @param request - The Middy request object containing the event
-	 * @internal
-	 */
-	const afterOrError = async (request: MiddyLikeRequest): Promise<void> => {
-		instance.logger.info(request.event);
+  /**
+   * After/Error hook - runs after the Lambda handler completes or throws.
+   *
+   * Logs the original event for debugging and publishes all buffered
+   * audit entries. This ensures audits are always emitted regardless
+   * of whether the handler succeeded or failed.
+   *
+   * @param request - The Middy request object containing the event
+   * @internal
+   */
+  const afterOrError = async (request: MiddyLikeRequest): Promise<void> => {
+    instance.logger.info(request.event);
 
-		instance.publishStoredAudits();
-	};
+    instance.publishStoredAudits();
+  };
 
-	return {
-		before,
-		after: afterOrError,
-		onError: afterOrError,
-	};
+  return {
+    before,
+    after: afterOrError,
+    onError: afterOrError,
+  };
 };
 
 export { logAudits };

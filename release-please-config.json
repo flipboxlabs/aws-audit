@@ -1,20 +1,20 @@
 {
-	"$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
-	"packages": {
-		"sdk": {
-			"package-name": "@flipboxlabs/aws-audit-sdk",
-			"component": "sdk",
-			"changelog-path": "CHANGELOG.md",
-			"release-type": "node"
-		},
-		"cdk": {
-			"package-name": "@flipboxlabs/aws-audit-cdk",
-			"component": "cdk",
-			"changelog-path": "CHANGELOG.md",
-			"release-type": "node"
-		}
-	},
-	"separate-pull-requests": false,
-	"include-component-in-tag": true,
-	"include-v-in-tag": true
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "packages": {
+    "sdk": {
+      "package-name": "@flipboxlabs/aws-audit-sdk",
+      "component": "sdk",
+      "changelog-path": "CHANGELOG.md",
+      "release-type": "node"
+    },
+    "cdk": {
+      "package-name": "@flipboxlabs/aws-audit-cdk",
+      "component": "cdk",
+      "changelog-path": "CHANGELOG.md",
+      "release-type": "node"
+    }
+  },
+  "separate-pull-requests": false,
+  "include-component-in-tag": true,
+  "include-v-in-tag": true
 }

@@ -28,8 +28,7 @@ export type InferApp<C extends AuditConfig> = C["_types"]["App"];
  * type ResourceType = InferResourceType<typeof config>; // 'Order' | 'Product'
  * ```
  */
-export type InferResourceType<C extends AuditConfig> =
-	C["_types"]["ResourceType"];
+export type InferResourceType<C extends AuditConfig> = C["_types"]["ResourceType"];
 
 /**
  * Generic App type - accepts any string.
