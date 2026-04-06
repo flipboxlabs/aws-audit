@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.2.1...sdk-v1.2.2) (2026-04-06)
+
+
+### Bug Fixes
+
+* use Array.length instead of Object.keys for storedAudits size check ([2fdd872](https://github.com/flipboxlabs/aws-audit/commit/2fdd872199a86cea43c6b0c545efe8165f2e6832))
+
 ## [1.2.1](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.2.0...sdk-v1.2.1) (2026-04-06)
 
 
