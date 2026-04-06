@@ -24,21 +24,22 @@ describe("repository.utils", () => {
       expect(typeof result).toBe("string");
     });
 
-    it("should return a token with iv:encrypted format", () => {
+    it("should return a base64url-encoded token", () => {
       const input = { PK: "App1.USER", SK: "audit-123" };
 
       const result = encodeNextPageToken(input);
 
-      expect(result).toMatch(/^[a-f0-9]+:[a-f0-9]+$/);
+      // base64url uses only A-Z a-z 0-9 - _
+      expect(result).toMatch(/^[A-Za-z0-9_-]+=*$/);
     });
 
-    it("should produce different tokens for same input due to random IV", () => {
+    it("should produce the same token for the same input (deterministic)", () => {
       const input = { PK: "App1.USER", SK: "audit-123" };
 
       const result1 = encodeNextPageToken(input);
       const result2 = encodeNextPageToken(input);
 
-      expect(result1).not.toBe(result2);
+      expect(result1).toBe(result2);
     });
 
     it("should handle empty object", () => {
@@ -76,7 +77,7 @@ describe("repository.utils", () => {
       expect(result).toBeUndefined();
     });
 
-    it("should return undefined for empty string (no IV)", () => {
+    it("should return undefined for empty string", () => {
       const result = decodeNextPageToken("");
 
       expect(result).toBeUndefined();
@@ -114,9 +115,7 @@ describe("repository.utils", () => {
       expect(result).toEqual(original);
     });
 
-    it("should handle tokens with colons in the encrypted data", () => {
-      // The encrypted data might contain hex that resembles colons when joined
-      // This tests that the split/join logic works correctly
+    it("should handle values with colons", () => {
       const original = { key: "value:with:colons" };
       const token = encodeNextPageToken(original);
 
