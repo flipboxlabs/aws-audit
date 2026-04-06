@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.2.0...cdk-v1.2.1) (2026-04-06)
+
+
+### Bug Fixes
+
+* format CHANGELOG.md to pass vp check ([cb634de](https://github.com/flipboxlabs/aws-audit/commit/cb634de7fc81caf27a511166204afdfffbd6b7d0))
+
 ## [1.2.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.1.5...cdk-v1.2.0) (2026-04-04)
 
 

@@ -9,7 +9,7 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import type { NativeAttributeValue } from "@aws-sdk/util-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
-import type { AuditConfig } from "./config.js";
+import { DEFAULT_TTL_SECONDS, type AuditConfig } from "./config.js";
 import { DynamoDB } from "./constants.js";
 import { decodeNextPageToken, encodeNextPageToken } from "./repository.utils.js";
 import {
@@ -330,7 +330,7 @@ export class AuditRepository<C extends AuditConfig> {
    * - Timestamps (createdAt, updatedAt)
    *
    * @param items - Array of audit records to upsert
-   * @returns True when the operation completes (does not check for unprocessed items)
+   * @returns True when the operation completes (retries unprocessed items with exponential backoff; throws if max retries exceeded)
    *
    * @example
    * ```typescript
@@ -395,19 +395,66 @@ export class AuditRepository<C extends AuditConfig> {
       ItemBatches.push(Items.slice(i, i + BATCH_SIZE));
     }
 
-    await Promise.all(
-      ItemBatches.map((ItemBatch) =>
-        this.client.send(
-          new BatchWriteItemCommand({
-            RequestItems: {
-              [DynamoDB.Table.Name()]: ItemBatch,
-            },
-          }),
-        ),
-      ),
-    );
+    // Process batches sequentially to reduce risk of triggering additional throttling
+    for (const ItemBatch of ItemBatches) {
+      await this.writeBatchWithRetry(ItemBatch, DynamoDB.Table.Name());
+    }
 
     return true;
+  }
+
+  /**
+   * Writes a batch of items to DynamoDB with exponential backoff retry for unprocessed items.
+   *
+   * DynamoDB's BatchWriteItem can return unprocessed items when throttled or under transient
+   * errors without throwing an exception. This method retries those items automatically.
+   *
+   * @param items - Array of WriteRequests to send
+   * @param tableName - Target DynamoDB table name
+   * @param maxRetries - Maximum number of retry attempts (default: 8)
+   * @param baseDelayMs - Initial delay in milliseconds before first retry (default: 100)
+   * @throws Error if unprocessed items remain after maxRetries attempts
+   * @internal
+   */
+  private async writeBatchWithRetry(
+    items: WriteRequest[],
+    tableName: string,
+    maxRetries = 8,
+    baseDelayMs = 100,
+  ): Promise<void> {
+    let requestItems: Record<string, WriteRequest[]> = { [tableName]: items };
+    let attempt = 0;
+    let delayMs = baseDelayMs;
+
+    while (attempt <= maxRetries) {
+      const response = await this.client.send(
+        new BatchWriteItemCommand({ RequestItems: requestItems }),
+      );
+
+      const unprocessed = response.UnprocessedItems;
+      if (!unprocessed || Object.keys(unprocessed).length === 0) {
+        return; // all items written successfully
+      }
+
+      attempt++;
+      if (attempt > maxRetries) {
+        this.logger.error("BatchWriteItem: unprocessed items remain after max retries", {
+          unprocessed,
+          attempt,
+        });
+        throw new Error(`BatchWriteItem failed: unprocessed items after ${maxRetries} retries`);
+      }
+
+      this.logger.warn("BatchWriteItem: retrying unprocessed items", {
+        count: Object.values(unprocessed).flat().length,
+        attempt,
+        delayMs,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      delayMs = Math.min(delayMs * 2, 30_000); // cap at 30 seconds
+      requestItems = unprocessed as Record<string, WriteRequest[]>;
+    }
   }
 
   /**
@@ -784,7 +831,7 @@ export class AuditRepository<C extends AuditConfig> {
    * @returns TTL attribute with Unix timestamp in seconds
    * @internal
    */
-  private constructTTLAttribute(ttlSeconds: number = DEFAULT_TTL, date?: Date): TTLAttribute {
+  private constructTTLAttribute(ttlSeconds: number = DEFAULT_TTL_SECONDS, date?: Date): TTLAttribute {
     const ttl = date || new Date();
 
     if (ttlSeconds) {
@@ -806,14 +853,12 @@ export class AuditRepository<C extends AuditConfig> {
    * @returns Parsed and validated Audit object
    * @internal
    */
-  private transformItem(item: DynamoDBItem) {
-    return Promise.resolve(
-      AuditSchema.parse({
-        trace: `${item.GSI1_SN_PK}:${item.GSI1_SN_SK}`,
-        ...item,
-        id: item.id.split("#").pop(),
-      }),
-    );
+  private transformItem(item: DynamoDBItem): Audit {
+    return AuditSchema.parse({
+      trace: `${item.GSI1_SN_PK}:${item.GSI1_SN_SK}`,
+      ...item,
+      id: item.id.split("#").pop(),
+    });
   }
 
   /**

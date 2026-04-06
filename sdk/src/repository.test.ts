@@ -41,6 +41,7 @@ describe("AuditRepository", () => {
   };
   let mockLogger: {
     error: ReturnType<typeof vi.fn>;
+    warn: ReturnType<typeof vi.fn>;
     debug: ReturnType<typeof vi.fn>;
   };
   let repository: AuditRepository<typeof testConfig>;
@@ -86,6 +87,7 @@ describe("AuditRepository", () => {
 
     mockLogger = {
       error: vi.fn(),
+      warn: vi.fn(),
       debug: vi.fn(),
     };
 
@@ -408,6 +410,105 @@ describe("AuditRepository", () => {
 
       expect(ttl).toBeGreaterThanOrEqual(before + defaultTtlSeconds);
       expect(ttl).toBeLessThanOrEqual(after + defaultTtlSeconds);
+    });
+
+    it("should resolve successfully when UnprocessedItems are returned on first call but empty on retry", async () => {
+      vi.useFakeTimers();
+
+      const tableName = DynamoDB.Table.Name();
+      const items = [createMockUpsertInput()];
+
+      mockClient.send
+        .mockResolvedValueOnce({
+          UnprocessedItems: {
+            [tableName]: [
+              {
+                PutRequest: {
+                  Item: marshall({ id: { S: "audit-123" } }),
+                },
+              },
+            ],
+          },
+        })
+        .mockResolvedValueOnce({ UnprocessedItems: {} });
+
+      const promise = repository.upsertBatch(items);
+      await vi.runAllTimersAsync();
+      const result = await promise;
+
+      expect(result).toBe(true);
+      expect(mockClient.send).toHaveBeenCalledTimes(2);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        "BatchWriteItem: retrying unprocessed items",
+        expect.objectContaining({ attempt: 1, count: expect.any(Number) }),
+      );
+
+      vi.useRealTimers();
+    });
+
+    it("should throw and log error when unprocessed items remain after max retries", async () => {
+      vi.useFakeTimers();
+
+      const tableName = DynamoDB.Table.Name();
+      const items = [createMockUpsertInput()];
+      const unprocessedItems = {
+        [tableName]: [
+          {
+            PutRequest: {
+              Item: marshall({ id: { S: "audit-123" } }),
+            },
+          },
+        ],
+      };
+
+      mockClient.send.mockResolvedValue({ UnprocessedItems: unprocessedItems });
+
+      const promise = repository.upsertBatch(items);
+      const rejectAssertion = expect(promise).rejects.toThrow(
+        "BatchWriteItem failed: unprocessed items after 8 retries",
+      );
+      for (let i = 0; i < 10; i++) {
+        await vi.runAllTimersAsync();
+      }
+      await rejectAssertion;
+
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        "BatchWriteItem: unprocessed items remain after max retries",
+        expect.objectContaining({ attempt: expect.any(Number), unprocessed: expect.any(Object) }),
+      );
+
+      vi.useRealTimers();
+    });
+
+    it("should log a warning for each retry attempt", async () => {
+      vi.useFakeTimers();
+
+      const tableName = DynamoDB.Table.Name();
+      const items = [createMockUpsertInput()];
+      const unprocessedItems = {
+        [tableName]: [
+          {
+            PutRequest: {
+              Item: marshall({ id: { S: "audit-123" } }),
+            },
+          },
+        ],
+      };
+
+      mockClient.send
+        .mockResolvedValueOnce({ UnprocessedItems: unprocessedItems })
+        .mockResolvedValueOnce({ UnprocessedItems: unprocessedItems })
+        .mockResolvedValueOnce({ UnprocessedItems: {} });
+
+      const promise = repository.upsertBatch(items);
+      for (let i = 0; i < 5; i++) {
+        await vi.runAllTimersAsync();
+      }
+      await promise;
+
+      expect(mockLogger.warn).toHaveBeenCalledTimes(2);
+
+      vi.useRealTimers();
     });
   });
 

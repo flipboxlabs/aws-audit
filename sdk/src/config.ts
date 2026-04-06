@@ -61,9 +61,11 @@ export function defineAuditConfig<const C extends AuditConfigInput>(input: C) {
   };
 
   return {
-    service: process.env.SERVICE,
     ...input,
     ttlSeconds: input.ttlSeconds ?? DEFAULT_TTL_SECONDS,
+    get service() {
+      return input.service ?? process.env.SERVICE;
+    },
     schemas,
     _types: {} as {
       App: App;

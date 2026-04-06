@@ -188,7 +188,7 @@ export class Audits<C extends AuditConfig> {
    * @param item - The audit entry to buffer
    */
   public addAudit(item: StrictLogAuditInput<C>): void {
-    if (Object.keys(this.storedAudits).length >= MAX_AUDITS_SIZE) {
+    if (this.storedAudits.length >= MAX_AUDITS_SIZE) {
       this.publishStoredAudits();
     }
 
