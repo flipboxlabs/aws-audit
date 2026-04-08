@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.0](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.2.3...sdk-v1.3.0) (2026-04-08)
+
+
+### Features
+
+* **sdk:** make audit record TTL configurable via ttlSeconds ([a57757b](https://github.com/flipboxlabs/aws-audit/commit/a57757bfa91ab6ecce2b8cfae2758d64b7a1761b))
+
+
+### Bug Fixes
+
+* format repository TTL helper ([a7fbd61](https://github.com/flipboxlabs/aws-audit/commit/a7fbd610e1b364bd01cdeb042d0b9e07b8c79d9a))
+* resolve main conflicts for configurable TTL ([06e24fb](https://github.com/flipboxlabs/aws-audit/commit/06e24fbbd2ff48b879844b80ca8c45d00e215a02))
+
 ## [1.2.3](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.2.2...sdk-v1.2.3) (2026-04-06)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.2.1...cdk-v1.2.2) (2026-04-08)
+
+
+### Bug Fixes
+
+* resolve main conflicts for configurable TTL ([06e24fb](https://github.com/flipboxlabs/aws-audit/commit/06e24fbbd2ff48b879844b80ca8c45d00e215a02))
+
 ## [1.2.1](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.2.0...cdk-v1.2.1) (2026-04-06)
 
 
