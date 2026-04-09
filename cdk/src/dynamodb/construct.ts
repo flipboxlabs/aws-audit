@@ -5,19 +5,19 @@ import { Construct } from "constructs";
 import AuditTable from "./audit.js";
 
 export class DynamoDBConstruct extends Construct {
-	public readonly table: dynamodb.ITable;
+  public readonly table: dynamodb.ITable;
 
-	constructor(
-		scope: Construct,
-		id: string,
-		props: {
-			config: CDKConfig;
-		},
-	) {
-		super(scope, id);
+  constructor(
+    scope: Construct,
+    id: string,
+    props: {
+      config: CDKConfig;
+    },
+  ) {
+    super(scope, id);
 
-		const { table } = new AuditTable(this, "AuditTable", props);
+    const { table } = new AuditTable(this, "AuditTable", props);
 
-		this.table = table;
-	}
+    this.table = table;
+  }
 }

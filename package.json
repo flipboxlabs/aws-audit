@@ -1,32 +1,29 @@
 {
-	"name": "@flipboxlabs/aws-audit",
-	"version": "1.0.0",
-	"description": "AWS Audit",
-	"private": true,
-	"type": "module",
-	"scripts": {
-		"test": "pnpm -r run test",
-		"test:coverage": "pnpm -r run test:coverage",
-		"cdk:synth:dev": "ENV=dev pnpm -r run cdk:synth",
-		"cdk:deploy:dev": "ENV=dev pnpm -r run cdk:deploy --profile asug_middleware",
-		"prepare": "husky"
-	},
-	"devDependencies": {
-		"@biomejs/biome": "catalog:build",
-		"@commitlint/cli": "catalog:build",
-		"@commitlint/config-conventional": "catalog:build",
-		"husky": "catalog:build",
-		"lint-staged": "catalog:build"
-	},
-	"lint-staged": {
-		"*.{ts,tsx,js,jsx,json}": [
-			"biome check --write --no-errors-on-unmatched"
-		]
-	},
-	"packageManager": "pnpm@10.6.2",
-	"pnpm": {
-		"onlyBuiltDependencies": [
-			"esbuild"
-		]
-	}
+  "name": "@flipboxlabs/aws-audit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AWS Audit",
+  "type": "module",
+  "scripts": {
+    "test": "pnpm -r run test",
+    "test:watch": "pnpm -r run test:watch",
+    "test:coverage": "pnpm -r run test:coverage",
+    "check": "vp check",
+    "lint": "vp lint",
+    "fmt": "vp fmt",
+    "build": "pnpm -r run build",
+    "cdk:synth:dev": "ENV=dev pnpm -r run cdk:synth",
+    "cdk:deploy:dev": "ENV=dev pnpm -r run cdk:deploy --profile asug_middleware"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "catalog:build",
+    "@commitlint/config-conventional": "catalog:build",
+    "vite-plus": "catalog:"
+  },
+  "packageManager": "pnpm@10.6.2",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
 }

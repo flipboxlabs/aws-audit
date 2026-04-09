@@ -8,62 +8,53 @@ import { ESMNodeFunctionFactory } from "../../../lambda/nodejs.function.js";
 import { API_RESOURCE } from "./constants.js";
 
 type Props = {
-	config: CDKConfig;
-	table: dynamodb.ITable;
-	/** Lambda configuration */
-	lambda: {
-		/** Lambda layers to attach to the function */
-		layers: lambda.ILayerVersion[];
-	};
-	restApi: {
-		resource: apigateway.IResource;
-	};
+  config: CDKConfig;
+  table: dynamodb.ITable;
+  /** Lambda configuration */
+  lambda: {
+    /** Lambda layers to attach to the function */
+    layers: lambda.ILayerVersion[];
+  };
+  restApi: {
+    resource: apigateway.IResource;
+  };
 };
 
 export default class extends Construct {
-	constructor(scope: Construct, id: string, props: Props) {
-		super(scope, id);
+  constructor(scope: Construct, id: string, props: Props) {
+    super(scope, id);
 
-		const ref = [
-			props.config.env.toUpperCase(),
-			"REST-API",
-			props.config.service,
-			"Trace",
-		].join("-");
+    const ref = [props.config.env.toUpperCase(), "REST-API", props.config.service, "Trace"].join(
+      "-",
+    );
 
-		// Lambda
-		const lambdaFn = ESMNodeFunctionFactory(props.config)(
-			this,
-			"NodeFunction",
-			{
-				functionName: ref,
-				entry: url.fileURLToPath(
-					new URL("handler.js", import.meta.url).toString(),
-				),
-				layers: props.lambda.layers,
-				currentVersionOptions: {
-					retryAttempts: 1,
-				},
-			},
-		);
+    // Lambda
+    const lambdaFn = ESMNodeFunctionFactory(props.config)(this, "NodeFunction", {
+      functionName: ref,
+      entry: url.fileURLToPath(new URL("handler.js", import.meta.url).toString()),
+      layers: props.lambda.layers,
+      currentVersionOptions: {
+        retryAttempts: 1,
+      },
+    });
 
-		// Logger / Metrics / Tracing
-		lambdaFn.addEnvironment("POWERTOOLS_SERVICE_NAME", "Trace");
+    // Logger / Metrics / Tracing
+    lambdaFn.addEnvironment("POWERTOOLS_SERVICE_NAME", "Trace");
 
-		// DynamoDB
-		props.table.grantReadWriteData(lambdaFn);
+    // DynamoDB
+    props.table.grantReadWriteData(lambdaFn);
 
-		// Integration
-		const integration = new apigateway.LambdaIntegration(lambdaFn);
+    // Integration
+    const integration = new apigateway.LambdaIntegration(lambdaFn);
 
-		const RESOURCE = props.restApi.resource
-			.addResource(API_RESOURCE.RESOURCE)
-			.addResource(`{${API_RESOURCE.RESOURCE}}`);
+    const RESOURCE = props.restApi.resource
+      .addResource(API_RESOURCE.RESOURCE)
+      .addResource(`{${API_RESOURCE.RESOURCE}}`);
 
-		// /trace/{trace}
-		RESOURCE.addMethod("GET", integration, {
-			apiKeyRequired: true,
-			operationName: "Retrieve items by trace identifier",
-		});
-	}
+    // /trace/{trace}
+    RESOURCE.addMethod("GET", integration, {
+      apiKeyRequired: true,
+      operationName: "Retrieve items by trace identifier",
+    });
+  }
 }

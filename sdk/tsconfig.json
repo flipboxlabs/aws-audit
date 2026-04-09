@@ -1,8 +1,8 @@
 {
-	"extends": "@tsconfig/node22/tsconfig.json",
-	"compilerOptions": {
-		"preserveConstEnums": true
-	},
-	"include": ["src/*.ts", "src/**/*.ts"],
-	"exclude": ["dist", ".test.ts", "node_modules", "coverage", "**/__mocks__/*"]
+  "extends": "@tsconfig/node22/tsconfig.json",
+  "compilerOptions": {
+    "preserveConstEnums": true
+  },
+  "include": ["src/*.ts", "src/**/*.ts"],
+  "exclude": ["dist", ".test.ts", "node_modules", "coverage", "**/__mocks__/*"]
 }

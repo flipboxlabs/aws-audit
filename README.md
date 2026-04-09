@@ -6,10 +6,10 @@ A comprehensive audit logging and event management system for AWS Lambda and ser
 
 This monorepo contains two packages that work together:
 
-| Package | Description |
-|---------|-------------|
+| Package                               | Description                                                 |
+| ------------------------------------- | ----------------------------------------------------------- |
 | [`@flipboxlabs/aws-audit-sdk`](./sdk) | Core SDK for audit logging, data models, and business logic |
-| [`@flipboxlabs/aws-audit-cdk`](./cdk) | AWS CDK constructs for deploying audit infrastructure |
+| [`@flipboxlabs/aws-audit-cdk`](./cdk) | AWS CDK constructs for deploying audit infrastructure       |
 
 ## Features
 
@@ -56,11 +56,11 @@ npm install @flipboxlabs/aws-audit-sdk @flipboxlabs/aws-audit-cdk
 
 ```typescript
 // audit-config.ts
-import { defineAuditConfig } from '@flipboxlabs/aws-audit-sdk';
+import { defineAuditConfig } from "@flipboxlabs/aws-audit-sdk";
 
 export const auditConfig = defineAuditConfig({
-  apps: ['my-app', 'my-other-app'],
-  resourceTypes: ['user', 'order', 'payment'],
+  apps: ["my-app", "my-other-app"],
+  resourceTypes: ["user", "order", "payment"],
 });
 
 export type AuditConfig = typeof auditConfig;
@@ -69,12 +69,16 @@ export type AuditConfig = typeof auditConfig;
 ### 3. Deploy infrastructure with CDK
 
 ```typescript
-import { DynamoDBConstruct, EventBridgeConstruct, CloudWatchConstruct } from '@flipboxlabs/aws-audit-cdk';
+import {
+  DynamoDBConstruct,
+  EventBridgeConstruct,
+  CloudWatchConstruct,
+} from "@flipboxlabs/aws-audit-cdk";
 
 // In your CDK stack
-new DynamoDBConstruct(this, 'AuditTable');
-new EventBridgeConstruct(this, 'AuditEventBus');
-new CloudWatchConstruct(this, 'AuditSubscription', {
+new DynamoDBConstruct(this, "AuditTable");
+new EventBridgeConstruct(this, "AuditEventBus");
+new CloudWatchConstruct(this, "AuditSubscription", {
   handler: subscriptionLambda,
 });
 ```
@@ -82,20 +86,20 @@ new CloudWatchConstruct(this, 'AuditSubscription', {
 ### 4. Log audits in your Lambda functions
 
 ```typescript
-import { Audits } from '@flipboxlabs/aws-audit-sdk';
-import type { AuditConfig } from './audit-config';
+import { Audits } from "@flipboxlabs/aws-audit-sdk";
+import type { AuditConfig } from "./audit-config";
 
 const audits = new Audits<AuditConfig>();
 
 export const handler = async (event: Event) => {
   // Log an audit entry
   audits.add({
-    app: 'my-app',
-    resourceType: 'order',
-    resourceId: 'order-123',
-    operation: 'created',
-    status: 'SUCCESS',
-    tier: 'INFO',
+    app: "my-app",
+    resourceType: "order",
+    resourceId: "order-123",
+    operation: "created",
+    status: "SUCCESS",
+    tier: "INFO",
   });
 
   // Audits are automatically flushed at Lambda completion
@@ -140,18 +144,18 @@ The CDK package provides constructs for:
 
 Each audit record contains:
 
-| Field | Description |
-|-------|-------------|
-| `app` | Application identifier |
-| `resourceType` | Type of resource being audited |
-| `resourceId` | Unique identifier for the resource |
-| `operation` | Action performed (e.g., "created", "updated") |
-| `status` | Result status (SUCCESS, FAIL) |
-| `tier` | Log level (INFO, WARN, ERROR) |
-| `traceId` | X-Ray trace ID for distributed tracing |
-| `context` | Additional contextual data |
-| `tenantId` | Optional tenant identifier |
-| `createdAt` | Timestamp of the audit event |
+| Field          | Description                                   |
+| -------------- | --------------------------------------------- |
+| `app`          | Application identifier                        |
+| `resourceType` | Type of resource being audited                |
+| `resourceId`   | Unique identifier for the resource            |
+| `operation`    | Action performed (e.g., "created", "updated") |
+| `status`       | Result status (SUCCESS, FAIL)                 |
+| `tier`         | Log level (INFO, WARN, ERROR)                 |
+| `traceId`      | X-Ray trace ID for distributed tracing        |
+| `context`      | Additional contextual data                    |
+| `tenantId`     | Optional tenant identifier                    |
+| `createdAt`    | Timestamp of the audit event                  |
 
 ## Requirements
 

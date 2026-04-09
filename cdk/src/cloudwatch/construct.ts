@@ -10,79 +10,69 @@ import { Construct } from "constructs";
 import { ESMNodeFunctionFactory } from "../lambda/nodejs.function.js";
 
 type Props = {
-	config: CDKConfig;
-	table: dynamodb.ITable;
-	eventBus: events.IEventBus;
-	/** Lambda configuration */
-	lambda: {
-		/** Lambda layers to attach to the function */
-		layers: lambda.ILayerVersion[];
-	};
+  config: CDKConfig;
+  table: dynamodb.ITable;
+  eventBus: events.IEventBus;
+  /** Lambda configuration */
+  lambda: {
+    /** Lambda layers to attach to the function */
+    layers: lambda.ILayerVersion[];
+  };
 
-	subscriptionFilter?: {
-		/** Scope of the subscription filter policy. Defaults to "ALL". */
-		scope?: string;
-		/** Selection criteria for log groups. Defaults to excluding the subscription lambda's log group. */
-		selectionCriteria?: string;
-	};
+  subscriptionFilter?: {
+    /** Scope of the subscription filter policy. Defaults to "ALL". */
+    scope?: string;
+    /** Selection criteria for log groups. Defaults to excluding the subscription lambda's log group. */
+    selectionCriteria?: string;
+  };
 };
 
 export class CloudWatchConstruct extends Construct {
-	constructor(scope: Construct, id: string, props: Props) {
-		super(scope, id);
+  constructor(scope: Construct, id: string, props: Props) {
+    super(scope, id);
 
-		const ref = `${[props.config.env.toUpperCase(), "Account", "CloudWatch", "Subscription"].join("-")}`;
+    const ref = `${[props.config.env.toUpperCase(), "Account", "CloudWatch", "Subscription"].join("-")}`;
 
-		// Lambda Function
-		const lambdaFn = ESMNodeFunctionFactory(props.config)(
-			this,
-			"subscription",
-			{
-				functionName: ref,
-				entry: url.fileURLToPath(
-					new URL("subscription.handler.js", import.meta.url).toString(),
-				),
-				layers: props.lambda.layers,
-				currentVersionOptions: {
-					retryAttempts: 2,
-				},
-			},
-		);
+    // Lambda Function
+    const lambdaFn = ESMNodeFunctionFactory(props.config)(this, "subscription", {
+      functionName: ref,
+      entry: url.fileURLToPath(new URL("subscription.handler.js", import.meta.url).toString()),
+      layers: props.lambda.layers,
+      currentVersionOptions: {
+        retryAttempts: 2,
+      },
+    });
 
-		// Allow writes to DynamoDB
-		props.table.grantWriteData(lambdaFn);
+    // Allow writes to DynamoDB
+    props.table.grantWriteData(lambdaFn);
 
-		// Allow puts to EventBridge
-		props.eventBus.grantPutEventsTo(lambdaFn);
+    // Allow puts to EventBridge
+    props.eventBus.grantPutEventsTo(lambdaFn);
 
-		// Permissions
-		lambdaFn.addPermission("LogProcessorPermission", {
-			principal: new ServicePrincipal("logs.amazonaws.com"),
-			action: "lambda:InvokeFunction",
-			sourceArn: `arn:aws:logs:${props.config.aws.region}:${props.config.aws.account}:log-group:*`,
-			sourceAccount: props.config.aws.account,
-		});
+    // Permissions
+    lambdaFn.addPermission("LogProcessorPermission", {
+      principal: new ServicePrincipal("logs.amazonaws.com"),
+      action: "lambda:InvokeFunction",
+      sourceArn: `arn:aws:logs:${props.config.aws.region}:${props.config.aws.account}:log-group:*`,
+      sourceAccount: props.config.aws.account,
+    });
 
-		// Create an Account-Level Subscription Filter Policy
-		const accountPolicy = new logs.CfnAccountPolicy(
-			this,
-			"AccountLevelLogSubscriptionPolicy",
-			{
-				policyName: `${props.config.env.toUpperCase()}AccountLevelSubscriptionPolicy`,
-				policyType: "SUBSCRIPTION_FILTER_POLICY",
-				policyDocument: JSON.stringify({
-					DestinationArn: lambdaFn.functionArn,
-					Distribution: "Random",
-					FilterPattern: `{ $.${AUDIT_LOG_IDENTIFIER}.operation = * }`,
-				}),
-				scope: props.subscriptionFilter?.scope ?? "ALL",
-				selectionCriteria:
-					props.subscriptionFilter?.selectionCriteria ??
-					`LogGroupName NOT IN ["/aws/lambda/${lambdaFn.functionName}"]`,
-			},
-		);
+    // Create an Account-Level Subscription Filter Policy
+    const accountPolicy = new logs.CfnAccountPolicy(this, "AccountLevelLogSubscriptionPolicy", {
+      policyName: `${props.config.env.toUpperCase()}AccountLevelSubscriptionPolicy`,
+      policyType: "SUBSCRIPTION_FILTER_POLICY",
+      policyDocument: JSON.stringify({
+        DestinationArn: lambdaFn.functionArn,
+        Distribution: "Random",
+        FilterPattern: `{ $.${AUDIT_LOG_IDENTIFIER}.operation = * }`,
+      }),
+      scope: props.subscriptionFilter?.scope ?? "ALL",
+      selectionCriteria:
+        props.subscriptionFilter?.selectionCriteria ??
+        `LogGroupName NOT IN ["/aws/lambda/${lambdaFn.functionName}"]`,
+    });
 
-		// Add explicit dependency on the Lambda function
-		accountPolicy.node.addDependency(lambdaFn);
-	}
+    // Add explicit dependency on the Lambda function
+    accountPolicy.node.addDependency(lambdaFn);
+  }
 }

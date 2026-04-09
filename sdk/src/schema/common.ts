@@ -9,9 +9,9 @@ import { EventBridgeEventSchema } from "./model.js";
  * - PUBLIC (3): Public audits, shown in summary views
  */
 export const Tier = {
-	INTERNAL: 1,
-	INFO: 2,
-	PUBLIC: 3,
+  INTERNAL: 1,
+  INFO: 2,
+  PUBLIC: 3,
 } as const;
 export type AnyTier = (typeof Tier)[keyof typeof Tier];
 
@@ -42,9 +42,9 @@ const ResourceTypeSchema = z.string();
  * Used to identify the target or source of an audit
  */
 const ResourceReferenceSchema = z.object({
-	app: AppSchema,
-	id: z.union([z.string(), z.number()]).optional(),
-	type: ResourceTypeSchema,
+  app: AppSchema,
+  id: z.union([z.string(), z.number()]).optional(),
+  type: ResourceTypeSchema,
 });
 export type ResourceReference = z.output<typeof ResourceReferenceSchema>;
 
@@ -53,7 +53,7 @@ export type ResourceReference = z.output<typeof ResourceReferenceSchema>;
  * Extends ResourceReferenceSchema for linking secondary resources to an audit
  */
 const AdditionalResourceSchema = ResourceReferenceSchema.extend({
-	id: z.union([z.string(), z.number()]).optional(),
+  id: z.union([z.string(), z.number()]).optional(),
 });
 export type AdditionalResource = z.output<typeof AdditionalResourceSchema>;
 
@@ -68,10 +68,10 @@ type ContextValue = string | number | boolean | { [key: string]: ContextValue };
  * Allows nested key-value structures for storing audit metadata
  */
 const RecursiveContextValueSchema: z.ZodType<ContextValue> = z.union([
-	z.string(),
-	z.number(),
-	z.boolean(),
-	z.lazy(() => z.record(z.string(), RecursiveContextValueSchema)),
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.lazy(() => z.record(z.string(), RecursiveContextValueSchema)),
 ]);
 
 /**
@@ -84,26 +84,24 @@ const ContextSchema = z.record(z.string(), RecursiveContextValueSchema);
  * Handles string errors (with optional JSON parsing), Error instances, and plain objects.
  */
 const ErrorSchema = z
-	.union([
-		z.string().transform((error) => {
-			try {
-				return JSON.parse(error);
-			} catch {
-				return error;
-			}
-		}),
-		z
-			.instanceof(Error)
-			.transform((error) =>
-				JSON.parse(JSON.stringify(error, Object.getOwnPropertyNames(error))),
-			),
-		z.record(z.any(), z.any()),
-	])
-	.optional();
+  .union([
+    z.string().transform((error) => {
+      try {
+        return JSON.parse(error);
+      } catch {
+        return error;
+      }
+    }),
+    z
+      .instanceof(Error)
+      .transform((error) => JSON.parse(JSON.stringify(error, Object.getOwnPropertyNames(error)))),
+    z.record(z.any(), z.any()),
+  ])
+  .optional();
 
 export const DateTimeObjectSchema = z
-	.union([z.iso.datetime(), z.instanceof(Date)])
-	.transform((val) => new Date(val));
+  .union([z.iso.datetime(), z.instanceof(Date)])
+  .transform((val) => new Date(val));
 
 /**
  * Schema for datetime fields that accept ISO strings or Date objects.
@@ -116,22 +114,22 @@ export const DateTimeObjectSchema = z
  * ```
  */
 export const DateTimeStringSchema = z
-	.union([z.iso.datetime(), z.instanceof(Date)])
-	.transform((val) => (val instanceof Date ? val.toISOString() : val));
+  .union([z.iso.datetime(), z.instanceof(Date)])
+  .transform((val) => (val instanceof Date ? val.toISOString() : val));
 
 /**
  * Schema for tracking individual retry attempts
  * Each attempt records the outcome and timing of a single execution
  */
 export const AttemptSchema = z.object({
-	/** Sequential attempt number (1-indexed) */
-	number: z.number().int().min(1),
-	/** Outcome of this attempt */
-	status: StatusSchema,
-	/** Error details if the attempt failed */
-	error: ErrorSchema,
-	/** ISO timestamp when this attempt occurred */
-	at: DateTimeStringSchema.default(() => new Date().toISOString()),
+  /** Sequential attempt number (1-indexed) */
+  number: z.number().int().min(1),
+  /** Outcome of this attempt */
+  status: StatusSchema,
+  /** Error details if the attempt failed */
+  error: ErrorSchema,
+  /** ISO timestamp when this attempt occurred */
+  at: DateTimeStringSchema.default(() => new Date().toISOString()),
 });
 export type Attempt = z.output<typeof AttemptSchema>;
 
@@ -142,32 +140,32 @@ export type Attempt = z.output<typeof AttemptSchema>;
  * @internal
  */
 export const BaseSchema = z.object({
-	/** Unique identifier for the audit record */
-	id: z.string(),
-	/** Tenant identifier for multi-tenancy support (optional) */
-	tenantId: z.string().optional(),
-	/** Current status of the audited operation */
-	status: StatusSchema,
-	/** Escalation tier for visibility (defaults to INFO) */
-	tier: TierSchema.default(2),
-	/** The primary resource being audited */
-	target: ResourceReferenceSchema,
-	/** The resource that initiated the operation (optional) */
-	source: ResourceReferenceSchema.optional(),
-	/** Additional metadata as key-value pairs */
-	context: ContextSchema.optional(),
-	/** Name of the operation being audited */
-	operation: z.string(),
-	/** Human-readable description of the audit */
-	message: z.string().optional(),
-	/** Whether this audit can be re-run/retried */
-	rerunable: z.boolean().optional(),
-	/** Trace identifier for distributed tracing */
-	trace: z.string().optional(),
-	/** Original EventBridge event that triggered this audit */
-	event: EventBridgeEventSchema.optional(),
-	/** Error details if the operation failed */
-	error: ErrorSchema,
-	/** History of all execution attempts for retry tracking */
-	attempts: z.array(AttemptSchema).optional(),
+  /** Unique identifier for the audit record */
+  id: z.string(),
+  /** Tenant identifier for multi-tenancy support (optional) */
+  tenantId: z.string().optional(),
+  /** Current status of the audited operation */
+  status: StatusSchema,
+  /** Escalation tier for visibility (defaults to INFO) */
+  tier: TierSchema.default(2),
+  /** The primary resource being audited */
+  target: ResourceReferenceSchema,
+  /** The resource that initiated the operation (optional) */
+  source: ResourceReferenceSchema.optional(),
+  /** Additional metadata as key-value pairs */
+  context: ContextSchema.optional(),
+  /** Name of the operation being audited */
+  operation: z.string(),
+  /** Human-readable description of the audit */
+  message: z.string().optional(),
+  /** Whether this audit can be re-run/retried */
+  rerunable: z.boolean().optional(),
+  /** Trace identifier for distributed tracing */
+  trace: z.string().optional(),
+  /** Original EventBridge event that triggered this audit */
+  event: EventBridgeEventSchema.optional(),
+  /** Error details if the operation failed */
+  error: ErrorSchema,
+  /** History of all execution attempts for retry tracking */
+  attempts: z.array(AttemptSchema).optional(),
 });

@@ -8,33 +8,33 @@ import { API_RESOURCE } from "./constants.js";
 import Objects from "./resources/objects/construct.js";
 
 type Props = {
-	config: CDKConfig;
-	table: dynamodb.ITable;
-	eventBus: events.IEventBus;
-	/** Lambda configuration */
-	lambda: {
-		/** Lambda layers to attach to the function */
-		layers: lambda.ILayerVersion[];
-	};
-	restApi: {
-		resource: apigateway.IResource;
-	};
+  config: CDKConfig;
+  table: dynamodb.ITable;
+  eventBus: events.IEventBus;
+  /** Lambda configuration */
+  lambda: {
+    /** Lambda layers to attach to the function */
+    layers: lambda.ILayerVersion[];
+  };
+  restApi: {
+    resource: apigateway.IResource;
+  };
 };
 
 export default class extends Construct {
-	constructor(scope: Construct, id: string, props: Props) {
-		super(scope, id);
+  constructor(scope: Construct, id: string, props: Props) {
+    super(scope, id);
 
-		new Objects(this, "Objects", {
-			config: props.config,
-			table: props.table,
-			eventBus: props.eventBus,
-			lambda: props.lambda,
-			restApi: {
-				resource: props.restApi.resource
-					.addResource(API_RESOURCE.RESOURCE)
-					.addResource(`{${API_RESOURCE.RESOURCE_WILDCARD}}`),
-			},
-		});
-	}
+    new Objects(this, "Objects", {
+      config: props.config,
+      table: props.table,
+      eventBus: props.eventBus,
+      lambda: props.lambda,
+      restApi: {
+        resource: props.restApi.resource
+          .addResource(API_RESOURCE.RESOURCE)
+          .addResource(`{${API_RESOURCE.RESOURCE_WILDCARD}}`),
+      },
+    });
+  }
 }

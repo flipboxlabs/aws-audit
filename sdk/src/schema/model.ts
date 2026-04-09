@@ -18,19 +18,15 @@ import * as z from "zod/v4";
  * ```
  */
 export const EventBridgeEventSchema = z.object({
-	/** The source service that generated the event */
-	source: z.string().optional(),
-	/** The type/category of the event */
-	"detail-type": z.string().optional(),
-	/** Event payload - objects are automatically JSON stringified */
-	detail: z
-		.union([z.string(), z.record(z.string(), z.any())])
-		.optional()
-		.pipe(
-			z.transform((val) =>
-				typeof val === "object" ? JSON.stringify(val) : val,
-			),
-		),
+  /** The source service that generated the event */
+  source: z.string().optional(),
+  /** The type/category of the event */
+  "detail-type": z.string().optional(),
+  /** Event payload - objects are automatically JSON stringified */
+  detail: z
+    .union([z.string(), z.record(z.string(), z.any())])
+    .optional()
+    .pipe(z.transform((val) => (typeof val === "object" ? JSON.stringify(val) : val))),
 });
 
 /**
@@ -54,10 +50,10 @@ export type EventBridgeEvent = z.output<typeof EventBridgeEventSchema>;
  * ```
  */
 export const PaginationSchema = z.object({
-	/** Number of items per page (string or number accepted) */
-	pageSize: z.union([z.string(), z.number()]).nullable().optional(),
-	/** Cursor token for fetching the next page */
-	nextToken: z.string().nullable().optional(),
+  /** Number of items per page (string or number accepted) */
+  pageSize: z.union([z.string(), z.number()]).nullable().optional(),
+  /** Cursor token for fetching the next page */
+  nextToken: z.string().nullable().optional(),
 });
 
 /**
@@ -78,9 +74,9 @@ export type Pagination = z.output<typeof PaginationSchema>;
  * ```
  */
 export const CollectionSchema = <T extends z.ZodTypeAny>(itemSchema: T) =>
-	z.object({
-		items: z.array(itemSchema),
-	});
+  z.object({
+    items: z.array(itemSchema),
+  });
 
 /**
  * Generic collection type containing an array of items.
@@ -88,7 +84,7 @@ export const CollectionSchema = <T extends z.ZodTypeAny>(itemSchema: T) =>
  * @typeParam I - The type of items in the collection
  */
 export type Collection<I> = {
-	items: I[];
+  items: I[];
 };
 
 /**
@@ -109,13 +105,11 @@ export type Collection<I> = {
  * });
  * ```
  */
-export const PaginationCollectionSchema = <T extends z.ZodTypeAny>(
-	itemSchema: T,
-) =>
-	z.object({
-		items: z.array(itemSchema),
-		pagination: PaginationSchema.optional(),
-	});
+export const PaginationCollectionSchema = <T extends z.ZodTypeAny>(itemSchema: T) =>
+  z.object({
+    items: z.array(itemSchema),
+    pagination: PaginationSchema.optional(),
+  });
 
 /**
  * Generic paginated collection type.
@@ -126,5 +120,5 @@ export const PaginationCollectionSchema = <T extends z.ZodTypeAny>(
  * @typeParam I - The type of items in the collection
  */
 export type PaginationCollection<I> = Collection<I> & {
-	pagination?: Pagination;
+  pagination?: Pagination;
 };

@@ -1,4 +1,5 @@
 ## Git Workflow Guidelines
+
 - Before begging an issue, ensure the main branch is current and clear of any changes.
 - Create a new branch from main per issue following the structure `issue/<issueId>`.
 - While performing work, ask questions within the issue to gain clarity and direction.

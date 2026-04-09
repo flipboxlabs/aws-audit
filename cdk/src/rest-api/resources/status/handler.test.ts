@@ -15,14 +15,14 @@ vi.mock("@flipboxlabs/aws-audit-sdk", async (importOriginal) => {
 		await importOriginal<typeof import("@flipboxlabs/aws-audit-sdk")>();
 	return {
 		...actual,
-		AuditService: vi.fn().mockImplementation(() => ({
-			listByStatus: mockListByStatus,
-		})),
+		AuditService: class MockAuditService {
+			listByStatus = mockListByStatus;
+		},
 	};
 });
 
 vi.mock("@aws-lambda-powertools/logger", () => ({
-	Logger: vi.fn().mockImplementation(() => ({})),
+	Logger: class MockLogger {},
 }));
 
 import { handler } from "./handler.js";
