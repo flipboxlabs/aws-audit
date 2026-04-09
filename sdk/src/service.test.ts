@@ -11,6 +11,7 @@ vi.mock("./repository.js", () => ({
     upsertBatch: vi.fn(),
     listItems: vi.fn(),
     listTraceItems: vi.fn(),
+    listByStatus: vi.fn(),
   })),
 }));
 
@@ -35,6 +36,7 @@ describe("AuditService", () => {
     upsertBatch: ReturnType<typeof vi.fn>;
     listItems: ReturnType<typeof vi.fn>;
     listTraceItems: ReturnType<typeof vi.fn>;
+    listByStatus: ReturnType<typeof vi.fn>;
   };
   let mockEvents: {
     upserted: ReturnType<typeof vi.fn>;
@@ -56,6 +58,7 @@ describe("AuditService", () => {
       upsertBatch: vi.fn(),
       listItems: vi.fn(),
       listTraceItems: vi.fn(),
+      listByStatus: vi.fn(),
     };
 
     mockEvents = {
@@ -567,6 +570,67 @@ describe("AuditService", () => {
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         "An error occurred while trying to list trace items",
+        { error },
+      );
+    });
+  });
+
+  describe("listByStatus", () => {
+    const mockResponse = {
+      items: [{ id: "status-audit-1" }, { id: "status-audit-2", trace: "trace-123:1" }],
+      pagination: { nextToken: "next-page" },
+    };
+
+    it("should return status items from storage", async () => {
+      mockStorage.listByStatus.mockResolvedValue(mockResponse);
+
+      const result = await service.listByStatus({ status: "fail" });
+
+      expect(result).toEqual(mockResponse);
+      expect(mockStorage.listByStatus).toHaveBeenCalledWith({ status: "fail" }, undefined);
+    });
+
+    it("should pass filters and pagination parameters", async () => {
+      mockStorage.listByStatus.mockResolvedValue(mockResponse);
+
+      await service.listByStatus(
+        {
+          status: "warn",
+          app: App.App1,
+          resource: { type: ResourceType.UNKNOWN, id: "resource-123" },
+        },
+        { pageSize: 10, nextToken: "token-123" },
+      );
+
+      expect(mockStorage.listByStatus).toHaveBeenCalledWith(
+        {
+          status: "warn",
+          app: App.App1,
+          resource: { type: ResourceType.UNKNOWN, id: "resource-123" },
+        },
+        { pageSize: 10, nextToken: "token-123" },
+      );
+    });
+
+    it("should rethrow errors from storage", async () => {
+      const error = new Error("Status query failed");
+      mockStorage.listByStatus.mockRejectedValue(error);
+
+      await expect(service.listByStatus({ status: "fail" })).rejects.toThrow("Status query failed");
+    });
+
+    it("should log and rethrow synchronous errors", async () => {
+      const error = new Error("Sync status query error");
+      mockStorage.listByStatus.mockImplementation(() => {
+        throw error;
+      });
+
+      await expect(service.listByStatus({ status: "fail" })).rejects.toThrow(
+        "Sync status query error",
+      );
+
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        "An error occurred while trying to list items by status",
         { error },
       );
     });

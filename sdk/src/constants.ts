@@ -86,6 +86,11 @@ export const DynamoDB = {
     LSI1_S_SORT_KEY: "LSI1_S_SK",
     /** LSI1 (Numeric) sort key */
     LSI1_N_SORT_KEY: "LSI1_N_SK",
+
+    /** GSI2 (String-String) partition key - for status-based queries */
+    GSI2_SS_PARTITION_KEY: "GSI2_SS_PK",
+    /** GSI2 (String-String) sort key - for status-based queries */
+    GSI2_SS_SORT_KEY: "GSI2_SS_SK",
   },
   /** Secondary index names */
   Indexes: {
@@ -93,6 +98,9 @@ export const DynamoDB = {
     GSI1_SS: "GSI1_SS",
     /** Global Secondary Index 1 - String partition, Numeric sort */
     GSI1_SN: "GSI1_SN",
+
+    /** Global Secondary Index 2 - String partition, String sort (status-based queries) */
+    GSI2_SS: "GSI2_SS",
 
     /** Local Secondary Index 1 - String sort key */
     LSI1_S: "LSI1_S",

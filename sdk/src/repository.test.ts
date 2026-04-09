@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { DynamoDB } from "./constants.js";
 import {
   AuditRepository,
+  type TypedListByStatusOptions,
   type TypedIdentifiers,
   type TypedListItemsOptions,
   type TypedListTraceItems,
@@ -23,6 +24,7 @@ import { App, ResourceType, testConfig } from "./test-config.js";
 type Identifiers = TypedIdentifiers<typeof testConfig>;
 type ListItemsOptions = TypedListItemsOptions<typeof testConfig>;
 type ListTraceItems = TypedListTraceItems<typeof testConfig>;
+type ListByStatusOptions = TypedListByStatusOptions<typeof testConfig>;
 
 // Mock the DynamoDB client
 vi.mock("@aws-sdk/client-dynamodb", async () => {
@@ -1280,6 +1282,145 @@ describe("AuditRepository", () => {
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
       const expressionValues = command.input.ExpressionAttributeValues;
       expect(expressionValues?.[":PK"]?.S).toBe("trace-abc-123");
+    });
+  });
+
+  describe("listByStatus", () => {
+    it("should query the status index with the provided status", async () => {
+      mockClient.send.mockResolvedValue({
+        Items: [],
+        LastEvaluatedKey: undefined,
+      });
+
+      const params: ListByStatusOptions = {
+        status: "fail",
+      };
+
+      await repository.listByStatus(params);
+
+      const command = mockClient.send.mock.calls[0][0] as QueryCommand;
+      expect(command.input.IndexName).toBe(DynamoDB.Indexes.GSI2_SS);
+      expect(command.input.KeyConditionExpression).toBe("#PK = :PK");
+      expect(command.input.ScanIndexForward).toBe(false);
+      expect(command.input.ExpressionAttributeValues?.[":PK"]?.S).toBe("fail");
+      expect(command.input.FilterExpression).toContain("not contains(SK, :isParent)");
+    });
+
+    it("should include app and resource filters", async () => {
+      mockClient.send.mockResolvedValue({
+        Items: [],
+        LastEvaluatedKey: undefined,
+      });
+
+      const params: ListByStatusOptions = {
+        status: "warn",
+        app: App.App1,
+        resource: {
+          type: ResourceType.UNKNOWN,
+          id: "resource-456",
+        },
+      };
+
+      await repository.listByStatus(params);
+
+      const command = mockClient.send.mock.calls[0][0] as QueryCommand;
+      expect(command.input.FilterExpression).toContain("#target.#app = :app");
+      expect(command.input.FilterExpression).toContain("#target.#type = :resourceType");
+      expect(command.input.FilterExpression).toContain("#target.#id = :resourceId");
+      expect(command.input.FilterExpression).toContain(" AND ");
+      expect(command.input.ExpressionAttributeValues?.[":app"]?.S).toBe(App.App1);
+      expect(command.input.ExpressionAttributeValues?.[":resourceType"]?.S).toBe(
+        ResourceType.UNKNOWN,
+      );
+      expect(command.input.ExpressionAttributeValues?.[":resourceId"]?.S).toBe("resource-456");
+    });
+
+    it("should use tenant-prefixed partition key and pagination", async () => {
+      mockClient.send.mockResolvedValue({
+        Items: [],
+        LastEvaluatedKey: marshall({
+          PK: `${App.App1}.${ResourceType.UNKNOWN}`,
+          SK: "audit-456",
+          GSI2_SS_PK: "tenant-123#fail",
+          GSI2_SS_SK: "2024-01-01T00:00:00.000Z#audit-456",
+        }),
+      });
+
+      const params: ListByStatusOptions = {
+        tenantId: "tenant-123",
+        status: "fail",
+      };
+
+      const nextToken = encodeNextPageToken({
+        PK: `${App.App1}.${ResourceType.UNKNOWN}`,
+        SK: "audit-123",
+        GSI2_SS_PK: "tenant-123#fail",
+        GSI2_SS_SK: "2024-01-02T00:00:00.000Z#audit-123",
+      });
+
+      const result = await repository.listByStatus(params, { pageSize: 25, nextToken });
+
+      const command = mockClient.send.mock.calls[0][0] as QueryCommand;
+      expect(command.input.ExpressionAttributeValues?.[":PK"]?.S).toBe("tenant-123#fail");
+      expect(command.input.Limit).toBe(25);
+      expect(command.input.ExclusiveStartKey).toBeDefined();
+      expect(result.pagination?.nextToken).toBeDefined();
+    });
+
+    it("should preserve trace when the status query item includes trace keys", async () => {
+      mockClient.send.mockResolvedValue({
+        Items: [
+          marshall({
+            PK: `${App.App1}.${ResourceType.UNKNOWN}`,
+            SK: "audit-123",
+            GSI2_SS_PK: "fail",
+            GSI2_SS_SK: "2024-01-02T00:00:00.000Z#audit-123",
+            GSI1_SN_PK: "trace-123",
+            GSI1_SN_SK: 2,
+            operation: "statusOp",
+            status: "fail",
+            target: {
+              app: App.App1,
+              type: ResourceType.UNKNOWN,
+              id: "resource-123",
+            },
+            createdAt: "2024-01-02T00:00:00.000Z",
+          }),
+        ],
+        LastEvaluatedKey: undefined,
+      });
+
+      const result = await repository.listByStatus({ status: "fail" });
+
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0].trace).toBe("trace-123:2");
+    });
+
+    it("should not synthesize trace when the status query item does not include trace keys", async () => {
+      mockClient.send.mockResolvedValue({
+        Items: [
+          marshall({
+            PK: `${App.App1}.${ResourceType.UNKNOWN}`,
+            SK: "audit-123",
+            GSI2_SS_PK: "fail",
+            GSI2_SS_SK: "2024-01-02T00:00:00.000Z#audit-123",
+            operation: "statusOp",
+            status: "fail",
+            target: {
+              app: App.App1,
+              type: ResourceType.UNKNOWN,
+              id: "resource-123",
+            },
+            createdAt: "2024-01-02T00:00:00.000Z",
+          }),
+        ],
+        LastEvaluatedKey: undefined,
+      });
+
+      const result = await repository.listByStatus({ status: "fail" });
+
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0].trace).toBeUndefined();
     });
   });
 });

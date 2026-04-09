@@ -102,28 +102,27 @@ export default class extends Construct {
       ],
     });
 
-    // this.table.addGlobalSecondaryIndex({
-    // 	indexName: Indexes.GSI2_SS,
-    // 	partitionKey: {
-    // 		name: Keys.GSI2_SS_PARTITION_KEY,
-    // 		type: dynamodb.AttributeType.STRING,
-    // 	},
-    // 	sortKey: {
-    // 		name: Keys.GSI2_SS_SORT_KEY,
-    // 		type: dynamodb.AttributeType.STRING,
-    // 	},
-    // 	projectionType: dynamodb.ProjectionType.INCLUDE,
-    // 	nonKeyAttributes: [
-    // 		"operation",
-    // 		"status",
-    // 		"message",
-    // 		"result",
-    // 		"error",
-    // 		"source",
-    // 		"target",
-    // 		"rerunable",
-    // 		"_createdAt",
-    // 	],
-    // });
+    // List by Status (with date ordering)
+    this.table.addGlobalSecondaryIndex({
+      indexName: DynamoDB.Indexes.GSI2_SS,
+      partitionKey: {
+        name: DynamoDB.Keys.GSI2_SS_PARTITION_KEY,
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: DynamoDB.Keys.GSI2_SS_SORT_KEY,
+        type: dynamodb.AttributeType.STRING,
+      },
+      projectionType: dynamodb.ProjectionType.INCLUDE,
+      nonKeyAttributes: [
+        "operation",
+        "status",
+        "message",
+        "source",
+        "target",
+        "rerunable",
+        "createdAt",
+      ],
+    });
   }
 }

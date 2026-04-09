@@ -18,6 +18,7 @@ import {
   AuditPayloadSchema,
   AuditSchema,
 } from "./schema/audit.js";
+import type { AnyStatus } from "./schema/log.js";
 import { type Pagination, PaginationCollectionSchema } from "./schema/model.js";
 import type { UpsertAuditInput } from "./schema/service.js";
 import { type AuditStorage, AuditStorageSchema } from "./schema/storage.js";
@@ -91,6 +92,16 @@ type GSI1PK = GSI1PKBase | `${TenantId}#${GSI1PKBase}`;
 /** GSI sort key for resource listing: {id} */
 type GSI1SK = `${Id}`;
 
+/** Status value type for status-based queries */
+type StatusValue = AnyStatus;
+
+/** GSI2 partition key base for status queries: {status} */
+type GSI2PKBase = `${StatusValue}`;
+/** GSI2 partition key for status queries: optionally prefixed with {tenantId}# */
+type GSI2PK = GSI2PKBase | `${TenantId}#${GSI2PKBase}`;
+/** GSI2 sort key for status queries: {createdAt}#{id} for date ordering with uniqueness */
+type GSI2SK = string;
+
 /**
  * DynamoDB GSI keys for resource-based listing queries.
  * Uses GSI1_SS (String-String) index for resource lookups.
@@ -98,6 +109,15 @@ type GSI1SK = `${Id}`;
 type DynamoDBGSI1Keys = {
   [DynamoDB.Keys.GSI1_SS_PARTITION_KEY]: GSI1PK;
   [DynamoDB.Keys.GSI1_SS_SORT_KEY]: GSI1SK;
+};
+
+/**
+ * DynamoDB GSI keys for status-based listing queries.
+ * Uses GSI2_SS (String-String) index for status lookups with date ordering.
+ */
+type DynamoDBGSI2Keys = {
+  [DynamoDB.Keys.GSI2_SS_PARTITION_KEY]: GSI2PK;
+  [DynamoDB.Keys.GSI2_SS_SORT_KEY]: GSI2SK;
 };
 
 /**
@@ -140,6 +160,7 @@ export type TypedIdentifiers<C extends AuditConfig> = {
  * plus LSI sort key for tier-based sorting.
  */
 type SecondaryKeys = DynamoDBGSI1Keys &
+  DynamoDBGSI2Keys &
   DynamoDBTraceGSIKeys & {
     [DynamoDB.Keys.LSI1_N_SORT_KEY]: number;
   };
@@ -174,6 +195,15 @@ type TraceListingItem = ListingAttributes &
 type ListingItem = TraceListingItem & Pick<SecondaryKeys, "GSI1_SS_PK" | "GSI1_SS_SK">;
 
 /**
+ * Item structure returned from status-based listing queries.
+ * Includes listing attributes plus status GSI keys for ordering.
+ */
+type StatusListingItem = ListingAttributes &
+  Pick<DynamoDBPrimaryKey, "PK" | "SK"> &
+  Pick<SecondaryKeys, "GSI2_SS_PK" | "GSI2_SS_SK"> &
+  Partial<Pick<SecondaryKeys, "GSI1_SN_PK" | "GSI1_SN_SK">>;
+
+/**
  * Options for listing audit items by resource with typed App and ResourceType.
  * @typeParam C - The audit config type for type inference
  */
@@ -200,6 +230,26 @@ export type TypedListTraceItems<C extends AuditConfig> = {
   tenantId?: string;
   /** Trace ID to query for related audit records */
   trace: string;
+  /** Optional application filter */
+  app?: InferApp<C>;
+  /** Optional resource filter */
+  resource?: {
+    /** Filter by resource type */
+    type?: InferResourceType<C>;
+    /** Filter by resource ID */
+    id?: string;
+  };
+};
+
+/**
+ * Options for listing audit items by status with typed App and ResourceType.
+ * @typeParam C - The audit config type for type inference
+ */
+export type TypedListByStatusOptions<C extends AuditConfig> = {
+  /** Tenant/organization identifier for multi-tenancy support (optional) */
+  tenantId?: string;
+  /** Status to filter by (success, warn, fail, skip) */
+  status: AnyStatus;
   /** Optional application filter */
   app?: InferApp<C>;
   /** Optional resource filter */
@@ -722,6 +772,86 @@ export class AuditRepository<C extends AuditConfig> {
   }
 
   /**
+   * Lists audit records by status with date ordering and optional filters.
+   *
+   * Queries the GSI2_SS index to retrieve all audits with a specific status,
+   * ordered by creation date (most recent first by default).
+   * Supports optional filtering by app, resource type, and resource ID.
+   *
+   * @param params - Query parameters including status and optional filters
+   * @param pagination - Optional pagination settings (pageSize, nextToken)
+   * @returns Paginated collection of audit records in reverse date order
+   */
+  public async listByStatus(params: TypedListByStatusOptions<C>, pagination?: Pagination) {
+    const startKey = decodeNextPageToken(pagination?.nextToken);
+
+    const pageSize = Number(pagination?.pageSize || 100);
+
+    const pkBase = params.status;
+    const pk = params.tenantId ? `${params.tenantId}#${pkBase}` : pkBase;
+
+    const filters: string[] = [];
+    const ExpressionAttributeValues: UnmarshalledAttributes = {
+      ":PK": pk,
+    };
+    const ExpressionAttributeNames: Record<string, string> = {
+      "#PK": DynamoDB.Keys.GSI2_SS_PARTITION_KEY,
+    };
+
+    if (params?.resource?.id) {
+      Object.assign(ExpressionAttributeValues, {
+        ":resourceId": params.resource.id,
+      });
+      ExpressionAttributeNames["#target"] = "target";
+      ExpressionAttributeNames["#id"] = "id";
+      filters.push("#target.#id = :resourceId");
+    }
+
+    if (params?.resource?.type) {
+      Object.assign(ExpressionAttributeValues, {
+        ":resourceType": params.resource.type,
+      });
+      ExpressionAttributeNames["#target"] = "target";
+      ExpressionAttributeNames["#type"] = "type";
+      filters.push("#target.#type = :resourceType");
+    }
+
+    if (params?.app) {
+      Object.assign(ExpressionAttributeValues, {
+        ":app": params.app,
+      });
+      ExpressionAttributeNames["#target"] = "target";
+      ExpressionAttributeNames["#app"] = "app";
+      filters.push("#target.#app = :app");
+    }
+
+    // Audits with other resources will have a compound id, filter these out
+    Object.assign(ExpressionAttributeValues, { ":isParent": "#" });
+    filters.push("not contains(SK, :isParent)");
+
+    const { Items: items, LastEvaluatedKey: lastEvaluatedKey } = await this.client.send(
+      new QueryCommand({
+        ScanIndexForward: false,
+        IndexName: DynamoDB.Indexes.GSI2_SS,
+        ExpressionAttributeValues: marshall(ExpressionAttributeValues),
+        ExpressionAttributeNames,
+        KeyConditionExpression: "#PK = :PK",
+        TableName: DynamoDB.Table.Name(),
+        Limit: pageSize,
+        ExclusiveStartKey: startKey ? marshall(startKey) : undefined,
+        FilterExpression: filters.length > 0 ? filters.join(" AND ") : undefined,
+      }),
+    );
+
+    return PaginationCollectionSchema(AuditListItemPayloadSchema).parse({
+      items: items?.map((i) => this.transformStatusListItem(unmarshall(i) as StatusListingItem)),
+      pagination: {
+        nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
+      },
+    });
+  }
+
+  /**
    * Constructs the DynamoDB primary key from identifiers.
    *
    * When tenantId is provided, it prefixes the partition key for multi-tenant isolation.
@@ -766,6 +896,7 @@ export class AuditRepository<C extends AuditConfig> {
         app: item.target.app,
       }),
       ...this.constructGSI1_SN(item),
+      ...this.constructGSI2_SS(item),
     };
   }
 
@@ -820,6 +951,28 @@ export class AuditRepository<C extends AuditConfig> {
         ? `${item.tenantId}#${pkBase}`
         : pkBase) as TraceGSIPK,
       [DynamoDB.Keys.GSI1_SN_SORT_KEY]: stage,
+    };
+  }
+
+  /**
+   * Constructs GSI2_SS (String-String) index keys for status-based queries.
+   *
+   * The partition key is the status value (optionally prefixed with tenantId),
+   * and the sort key combines createdAt timestamp with id for date ordering
+   * while ensuring uniqueness.
+   *
+   * @param item - The audit storage item
+   * @returns GSI2_SS key attributes
+   * @internal
+   */
+  private constructGSI2_SS(item: AuditStorage): DynamoDBGSI2Keys {
+    const pkBase = item.status;
+
+    return {
+      [DynamoDB.Keys.GSI2_SS_PARTITION_KEY]: (item.tenantId
+        ? `${item.tenantId}#${pkBase}`
+        : pkBase) as GSI2PK,
+      [DynamoDB.Keys.GSI2_SS_SORT_KEY]: `${item.createdAt}#${item.id}`,
     };
   }
 
@@ -893,6 +1046,27 @@ export class AuditRepository<C extends AuditConfig> {
 
     return AuditListItemPayloadSchema.parse({
       trace: `${item.GSI1_SN_PK}:${item.GSI1_SN_SK}`,
+      ...item,
+      id: id,
+    });
+  }
+
+  /**
+   * Transforms a status listing item into an audit list item payload.
+   *
+   * @param item - Raw listing item from GSI2_SS query
+   * @returns Parsed audit list item payload
+   * @internal
+   */
+  private transformStatusListItem(item: StatusListingItem) {
+    const [id] = item.SK.split("#");
+    const trace =
+      item.GSI1_SN_PK !== undefined && item.GSI1_SN_SK !== undefined
+        ? `${item.GSI1_SN_PK}:${item.GSI1_SN_SK}`
+        : undefined;
+
+    return AuditListItemPayloadSchema.parse({
+      trace,
       ...item,
       id: id,
     });
