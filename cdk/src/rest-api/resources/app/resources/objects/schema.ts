@@ -10,10 +10,18 @@ export const PathSchema = z.object({
   [API_RESOURCE.RESOURCE_WILDCARD_ITEM]: z.string(),
 });
 
+export const DetailPathSchema = PathSchema.extend({
+  [API_RESOURCE.RESOURCE_WILDCARD_ITEM_AUDIT]: z.string(),
+});
+
 // Query params use flat keys matching API Gateway's bracket notation
 export const QuerySchema = z.object({
   "pagination[pageSize]": z.coerce.number().optional(),
   "pagination[nextToken]": z.string().optional(),
 });
 
-export const ResponseSchema = PaginationCollectionSchema(AuditPayloadSchema);
+export const ResponseCollectionSchema = PaginationCollectionSchema(AuditPayloadSchema);
+export type ResponseCollection = z.output<typeof ResponseCollectionSchema>;
+
+export const ResponseDetailSchema = AuditPayloadSchema;
+export type ResponseDetail = z.output<typeof ResponseDetailSchema>;

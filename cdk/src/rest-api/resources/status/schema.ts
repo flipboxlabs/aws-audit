@@ -1,8 +1,4 @@
-import {
-  AuditListItemPayloadSchema,
-  PaginationCollectionSchema,
-  Status,
-} from "@flipboxlabs/aws-audit-sdk";
+import { AuditPayloadSchema, PaginationCollectionSchema, Status } from "@flipboxlabs/aws-audit-sdk";
 import { z } from "zod";
 import { auditConfig } from "../../../audit-config.js";
 import { API_RESOURCE } from "./constants.js";
@@ -19,4 +15,5 @@ export const QuerySchema = z.object({
   "filter[resourceType]": auditConfig.schemas.resourceType.optional(),
 });
 
-export const ResponseSchema = PaginationCollectionSchema(AuditListItemPayloadSchema);
+export const ResponseCollectionSchema = PaginationCollectionSchema(AuditPayloadSchema);
+export type ResponseCollection = z.output<typeof ResponseCollectionSchema>;

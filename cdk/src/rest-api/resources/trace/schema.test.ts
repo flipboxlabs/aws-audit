@@ -5,7 +5,7 @@ vi.mock("../../../audit-config.js", () => ({
   auditConfig: testConfig,
 }));
 
-import { PathSchema, QuerySchema, ResponseSchema } from "./schema.js";
+import { PathSchema, QuerySchema, ResponseCollectionSchema } from "./schema.js";
 
 describe("trace handler schemas", () => {
   describe("PathSchema", () => {
@@ -84,12 +84,12 @@ describe("trace handler schemas", () => {
 
   describe("ResponseSchema", () => {
     it("should validate valid response with empty items", () => {
-      const result = ResponseSchema.safeParse({ items: [] });
+      const result = ResponseCollectionSchema.safeParse({ items: [] });
       expect(result.success).toBe(true);
     });
 
     it("should validate valid response with audit items", () => {
-      const result = ResponseSchema.safeParse({
+      const result = ResponseCollectionSchema.safeParse({
         items: [
           {
             id: "audit-123",
@@ -105,7 +105,7 @@ describe("trace handler schemas", () => {
     });
 
     it("should validate response with pagination", () => {
-      const result = ResponseSchema.safeParse({
+      const result = ResponseCollectionSchema.safeParse({
         items: [],
         pagination: { nextToken: "next-page-token" },
       });
@@ -115,7 +115,7 @@ describe("trace handler schemas", () => {
     });
 
     it("should reject response without items array", () => {
-      const result = ResponseSchema.safeParse({});
+      const result = ResponseCollectionSchema.safeParse({});
       expect(result.success).toBe(false);
     });
   });

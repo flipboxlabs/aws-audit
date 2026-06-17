@@ -4,7 +4,12 @@ import { AuditService } from "@flipboxlabs/aws-audit-sdk";
 import type { Context } from "aws-lambda";
 import { type App, auditConfig } from "../../../audit-config.js";
 import { API_RESOURCE } from "./constants.js";
-import { PathSchema, QuerySchema, ResponseSchema } from "./schema.js";
+import {
+  PathSchema,
+  QuerySchema,
+  ResponseCollectionSchema,
+  type ResponseCollection,
+} from "./schema.js";
 
 const logger = new Logger({
   logRecordOrder: ["level", "message"],
@@ -28,13 +33,15 @@ app.get(
           }
         : undefined;
 
-    return audits.listTraceItems(
+    const collection = await audits.listTraceItems(
       {
         trace: traceId,
         app: query["filter[app]"] as App | undefined,
       },
       pagination,
     );
+
+    return Response.json(collection, { status: 200 }) as unknown as ResponseCollection;
   },
   {
     validation: {
@@ -43,7 +50,7 @@ app.get(
         query: QuerySchema,
       },
       res: {
-        body: ResponseSchema,
+        body: ResponseCollectionSchema,
       },
     },
   },

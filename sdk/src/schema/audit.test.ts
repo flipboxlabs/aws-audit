@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { App, ResourceType } from "../test-config.js";
-import { AuditListItemPayloadSchema, AuditPayloadSchema, AuditSchema } from "./audit.js";
-import { BaseSchema } from "./common.js";
+import { AuditPayloadSchema, AuditSchema } from "./audit.js";
 
 const createValidTarget = () => ({
   app: App.App1,
@@ -55,13 +54,34 @@ describe("AuditSchema", () => {
 });
 
 describe("AuditPayloadSchema", () => {
-  it("should be same as BaseSchema", () => {
-    expect(AuditPayloadSchema).toBe(BaseSchema);
-  });
-});
+  it("should accept JSON response timestamps", () => {
+    const result = AuditPayloadSchema.parse({
+      id: "audit-123",
+      operation: "testOp",
+      status: "success",
+      tier: 2,
+      target: createValidTarget(),
+      updatedAt: "2024-01-15T10:30:00.000Z",
+      createdAt: "2024-01-15T10:30:00.000Z",
+      error: { message: "Payload error" },
+      attempts: [{ number: 1, status: "fail", at: "2024-01-15T10:30:00.000Z" }],
+      event: {
+        source: "test.source",
+        "detail-type": "TestEvent",
+        detail: '{"id":"item-123"}',
+      },
+    });
 
-describe("AuditListItemPayloadSchema", () => {
-  it("should be same as BaseSchema", () => {
-    expect(AuditListItemPayloadSchema).toBe(BaseSchema);
+    expect(result.updatedAt).toBe("2024-01-15T10:30:00.000Z");
+    expect(result.createdAt).toBe("2024-01-15T10:30:00.000Z");
+    expect(result.error).toEqual({ message: "Payload error" });
+    expect(result.attempts).toEqual([
+      { number: 1, status: "fail", at: "2024-01-15T10:30:00.000Z" },
+    ]);
+    expect(result.event).toEqual({
+      source: "test.source",
+      "detail-type": "TestEvent",
+      detail: '{"id":"item-123"}',
+    });
   });
 });
