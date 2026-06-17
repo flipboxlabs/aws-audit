@@ -5,7 +5,7 @@ vi.mock("../../../audit-config.js", () => ({
   auditConfig: testConfig,
 }));
 
-import { PathSchema, QuerySchema, ResponseSchema } from "./schema.js";
+import { PathSchema, QuerySchema, ResponseCollectionSchema } from "./schema.js";
 
 describe("status handler schemas", () => {
   describe("PathSchema", () => {
@@ -116,14 +116,14 @@ describe("status handler schemas", () => {
     });
   });
 
-  describe("ResponseSchema", () => {
+  describe("ResponseCollectionSchema", () => {
     it("should validate valid response with empty items", () => {
-      const result = ResponseSchema.safeParse({ items: [] });
+      const result = ResponseCollectionSchema.safeParse({ items: [] });
       expect(result.success).toBe(true);
     });
 
     it("should validate valid response with audit items", () => {
-      const result = ResponseSchema.safeParse({
+      const result = ResponseCollectionSchema.safeParse({
         items: [
           {
             id: "audit-123",
@@ -131,15 +131,31 @@ describe("status handler schemas", () => {
             tier: 2,
             operation: "testOp",
             target: { app: App.App1, type: ResourceType.UNKNOWN },
+            attempts: [{ number: 1, status: "fail", at: "2024-01-02T00:00:00.000Z" }],
+            error: { message: "Status response error" },
+            event: {
+              source: "test.source",
+              "detail-type": "TestEvent",
+              detail: '{"id":"item-123"}',
+            },
           },
         ],
       });
 
       expect(result.success).toBe(true);
+      expect(result.data?.items[0].attempts).toEqual([
+        { number: 1, status: "fail", at: "2024-01-02T00:00:00.000Z" },
+      ]);
+      expect(result.data?.items[0].error).toEqual({ message: "Status response error" });
+      expect(result.data?.items[0].event).toEqual({
+        source: "test.source",
+        "detail-type": "TestEvent",
+        detail: '{"id":"item-123"}',
+      });
     });
 
     it("should validate response with pagination", () => {
-      const result = ResponseSchema.safeParse({
+      const result = ResponseCollectionSchema.safeParse({
         items: [],
         pagination: { nextToken: "next-page-token" },
       });
@@ -149,7 +165,7 @@ describe("status handler schemas", () => {
     });
 
     it("should reject response without items array", () => {
-      const result = ResponseSchema.safeParse({});
+      const result = ResponseCollectionSchema.safeParse({});
       expect(result.success).toBe(false);
     });
   });

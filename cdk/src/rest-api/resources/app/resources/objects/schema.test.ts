@@ -5,7 +5,13 @@ vi.mock("../../../../../audit-config.js", () => ({
   auditConfig: testConfig,
 }));
 
-import { PathSchema, QuerySchema, ResponseSchema } from "./schema.js";
+import {
+  DetailPathSchema,
+  ResponseDetailSchema,
+  PathSchema,
+  QuerySchema,
+  ResponseCollectionSchema,
+} from "./schema.js";
 
 describe("objects handler schemas", () => {
   describe("PathSchema", () => {
@@ -65,6 +71,30 @@ describe("objects handler schemas", () => {
     });
   });
 
+  describe("DetailPathSchema", () => {
+    it("should validate valid detail path params", () => {
+      const result = DetailPathSchema.safeParse({
+        app: App.App1,
+        object: ResourceType.UNKNOWN,
+        item: "item-123",
+        audit: "audit-456",
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data?.audit).toBe("audit-456");
+    });
+
+    it("should reject missing audit id", () => {
+      const result = DetailPathSchema.safeParse({
+        app: App.App1,
+        object: ResourceType.UNKNOWN,
+        item: "item-123",
+      });
+
+      expect(result.success).toBe(false);
+    });
+  });
+
   describe("QuerySchema", () => {
     it("should validate empty query params", () => {
       const result = QuerySchema.safeParse({});
@@ -103,14 +133,14 @@ describe("objects handler schemas", () => {
     });
   });
 
-  describe("ResponseSchema", () => {
+  describe("ResponseCollectionSchema", () => {
     it("should validate valid response with empty items", () => {
-      const result = ResponseSchema.safeParse({ items: [] });
+      const result = ResponseCollectionSchema.safeParse({ items: [] });
       expect(result.success).toBe(true);
     });
 
     it("should validate valid response with audit items", () => {
-      const result = ResponseSchema.safeParse({
+      const result = ResponseCollectionSchema.safeParse({
         items: [
           {
             id: "audit-456",
@@ -122,15 +152,25 @@ describe("objects handler schemas", () => {
               type: ResourceType.UNKNOWN,
               id: "item-123",
             },
+            createdAt: "2024-01-01T00:00:00.000Z",
+            updatedAt: "2024-01-02T00:00:00.000Z",
+            attempts: [{ number: 1, status: "success", at: "2024-01-02T00:00:00.000Z" }],
+            error: { message: "Schema response error" },
           },
         ],
       });
 
       expect(result.success).toBe(true);
+      expect(result.data?.items[0].createdAt).toBe("2024-01-01T00:00:00.000Z");
+      expect(result.data?.items[0].updatedAt).toBe("2024-01-02T00:00:00.000Z");
+      expect(result.data?.items[0].attempts).toEqual([
+        { number: 1, status: "success", at: "2024-01-02T00:00:00.000Z" },
+      ]);
+      expect(result.data?.items[0].error).toEqual({ message: "Schema response error" });
     });
 
     it("should validate response with pagination", () => {
-      const result = ResponseSchema.safeParse({
+      const result = ResponseCollectionSchema.safeParse({
         items: [],
         pagination: {
           pageSize: 25,
@@ -144,12 +184,12 @@ describe("objects handler schemas", () => {
     });
 
     it("should reject response without items array", () => {
-      const result = ResponseSchema.safeParse({});
+      const result = ResponseCollectionSchema.safeParse({});
       expect(result.success).toBe(false);
     });
 
     it("should reject invalid audit item status", () => {
-      const result = ResponseSchema.safeParse({
+      const result = ResponseCollectionSchema.safeParse({
         items: [
           {
             id: "audit-789",
@@ -162,6 +202,42 @@ describe("objects handler schemas", () => {
       });
 
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe("DetailResponseSchema", () => {
+    it("should validate detail response with attempts, error, and event", () => {
+      const result = ResponseDetailSchema.safeParse({
+        id: "audit-456",
+        status: "fail",
+        tier: 2,
+        operation: "createItem",
+        target: {
+          app: App.App1,
+          type: ResourceType.UNKNOWN,
+          id: "item-123",
+        },
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-02T00:00:00.000Z",
+        attempts: [{ number: 1, status: "fail", at: "2024-01-02T00:00:00.000Z" }],
+        error: { message: "Schema detail error" },
+        event: {
+          source: "test.source",
+          "detail-type": "TestEvent",
+          detail: '{"id":"item-123"}',
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data?.attempts).toEqual([
+        { number: 1, status: "fail", at: "2024-01-02T00:00:00.000Z" },
+      ]);
+      expect(result.data?.error).toEqual({ message: "Schema detail error" });
+      expect(result.data?.event).toEqual({
+        source: "test.source",
+        "detail-type": "TestEvent",
+        detail: '{"id":"item-123"}',
+      });
     });
   });
 });

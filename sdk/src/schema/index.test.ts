@@ -16,7 +16,6 @@ describe("schema/index.ts exports", () => {
 
     expect(index.AuditSchema).toBeDefined();
     expect(index.AuditPayloadSchema).toBeDefined();
-    expect(index.AuditListItemPayloadSchema).toBeDefined();
   });
 
   it("should export common types and Tier", async () => {

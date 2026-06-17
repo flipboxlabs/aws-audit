@@ -14,4 +14,5 @@ export const QuerySchema = z.object({
   "filter[app]": auditConfig.schemas.app.optional(),
 });
 
-export const ResponseSchema = PaginationCollectionSchema(AuditPayloadSchema);
+export const ResponseCollectionSchema = PaginationCollectionSchema(AuditPayloadSchema);
+export type ResponseCollection = z.output<typeof ResponseCollectionSchema>;

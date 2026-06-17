@@ -4,13 +4,16 @@ import { type AnyStatus, AuditService } from "@flipboxlabs/aws-audit-sdk";
 import type { Context } from "aws-lambda";
 import { type App, auditConfig, type ResourceType } from "../../../audit-config.js";
 import { API_RESOURCE } from "./constants.js";
-import { PathSchema, QuerySchema, ResponseSchema } from "./schema.js";
+import { PathSchema, QuerySchema, ResponseCollectionSchema, ResponseCollection } from "./schema.js";
+import { ResponseValidationMiddleware } from "../../http/response-validation.js";
 
 const logger = new Logger({
   logRecordOrder: ["level", "message"],
 });
 
 const app = new Router();
+
+app.use(ResponseValidationMiddleware());
 
 const audits = new AuditService(logger, auditConfig);
 
@@ -28,7 +31,7 @@ app.get(
           }
         : undefined;
 
-    return audits.listByStatus(
+    const collection = await audits.listByStatus(
       {
         status: status as AnyStatus,
         app: query["filter[app]"] as App | undefined,
@@ -38,6 +41,8 @@ app.get(
       },
       pagination,
     );
+
+    return Response.json(collection, { status: 200 }) as unknown as ResponseCollection;
   },
   {
     validation: {
@@ -46,7 +51,7 @@ app.get(
         query: QuerySchema,
       },
       res: {
-        body: ResponseSchema,
+        body: ResponseCollectionSchema,
       },
     },
   },

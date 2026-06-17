@@ -12,12 +12,7 @@ import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { DEFAULT_TTL_SECONDS, type AuditConfig } from "./config.js";
 import { DynamoDB } from "./constants.js";
 import { decodeNextPageToken, encodeNextPageToken } from "./repository.utils.js";
-import {
-  type Audit,
-  AuditListItemPayloadSchema,
-  AuditPayloadSchema,
-  AuditSchema,
-} from "./schema/audit.js";
+import { type Audit, AuditPayloadSchema, AuditSchema } from "./schema/audit.js";
 import type { AnyStatus } from "./schema/log.js";
 import { type Pagination, PaginationCollectionSchema } from "./schema/model.js";
 import type { UpsertAuditInput } from "./schema/service.js";
@@ -177,7 +172,17 @@ type DynamoDBItem = AuditStorage & TTLAttribute & DynamoDBPrimaryKey & Secondary
  */
 type ListingAttributes = Pick<
   AuditStorage,
-  "operation" | "status" | "message" | "source" | "target" | "rerunable"
+  | "operation"
+  | "status"
+  | "message"
+  | "source"
+  | "target"
+  | "rerunable"
+  | "createdAt"
+  | "updatedAt"
+  | "attempts"
+  | "error"
+  | "event"
 >;
 
 /**
@@ -843,7 +848,7 @@ export class AuditRepository<C extends AuditConfig> {
       }),
     );
 
-    return PaginationCollectionSchema(AuditListItemPayloadSchema).parse({
+    return PaginationCollectionSchema(AuditPayloadSchema).parse({
       items: items?.map((i) => this.transformStatusListItem(unmarshall(i) as StatusListingItem)),
       pagination: {
         nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
@@ -1027,7 +1032,7 @@ export class AuditRepository<C extends AuditConfig> {
   private transformTraceListItem(item: TraceListingItem) {
     const [id] = item.SK.split("#");
 
-    return AuditListItemPayloadSchema.parse({
+    return AuditPayloadSchema.parse({
       trace: `${item.GSI1_SN_PK}:${item.GSI1_SN_SK}`,
       ...item,
       id: id,
@@ -1044,7 +1049,7 @@ export class AuditRepository<C extends AuditConfig> {
   private transformListItem(item: ListingItem) {
     const [id] = item.SK.split("#");
 
-    return AuditListItemPayloadSchema.parse({
+    return AuditPayloadSchema.parse({
       trace: `${item.GSI1_SN_PK}:${item.GSI1_SN_SK}`,
       ...item,
       id: id,
@@ -1065,7 +1070,7 @@ export class AuditRepository<C extends AuditConfig> {
         ? `${item.GSI1_SN_PK}:${item.GSI1_SN_SK}`
         : undefined;
 
-    return AuditListItemPayloadSchema.parse({
+    return AuditPayloadSchema.parse({
       trace,
       ...item,
       id: id,

@@ -1,5 +1,5 @@
 import * as z from "zod/v4";
-import { BaseSchema, DateTimeObjectSchema } from "./common.js";
+import { BaseSchema, DateTimeObjectSchema, DateTimeStringSchema } from "./common.js";
 
 /**
  * Schema for fully-hydrated audit records retrieved from storage.
@@ -54,22 +54,15 @@ export type Audit = z.output<typeof AuditSchema>;
  * Uses the base schema without timestamp transformation,
  * suitable for JSON serialization in API responses.
  */
-export const AuditPayloadSchema = BaseSchema;
+export const AuditPayloadSchema = z.object({
+  ...BaseSchema.shape,
+  /** Last update timestamp - ISO string suitable for JSON API responses */
+  updatedAt: DateTimeStringSchema.optional(),
+  /** Creation timestamp - ISO string suitable for JSON API responses */
+  createdAt: DateTimeStringSchema.optional(),
+});
 
 /**
  * Output type for audit payloads.
  */
 export type AuditPayload = z.output<typeof AuditPayloadSchema>;
-
-/**
- * Schema for audit list item payloads.
- *
- * Same as AuditPayloadSchema, used for items in list responses
- * where a lighter payload is sufficient.
- */
-export const AuditListItemPayloadSchema = BaseSchema;
-
-/**
- * Output type for audit list item payloads.
- */
-export type AuditAuditListItemPayload = z.output<typeof AuditListItemPayloadSchema>;

@@ -2,7 +2,8 @@ import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { App, ResourceType, testConfig } from "../../../../../test-config.js";
 
-const { mockListItems } = vi.hoisted(() => ({
+const { mockGetItem, mockListItems } = vi.hoisted(() => ({
+  mockGetItem: vi.fn(),
   mockListItems: vi.fn(),
 }));
 
@@ -15,6 +16,7 @@ vi.mock("@flipboxlabs/aws-audit-sdk", async (importOriginal) => {
   return {
     ...actual,
     AuditService: class MockAuditService {
+      getItem = mockGetItem;
       listItems = mockListItems;
     },
   };
@@ -102,6 +104,8 @@ describe("objects handler", () => {
               type: ResourceType.UNKNOWN,
               id: "item-123",
             },
+            createdAt: "2024-01-01T00:00:00.000Z",
+            updatedAt: "2024-01-02T00:00:00.000Z",
           },
         ],
       };
@@ -221,6 +225,60 @@ describe("objects handler", () => {
         undefined,
       );
       expect(response.statusCode).toBe(200);
+    });
+  });
+
+  describe("GET /apps/:app/objects/:object/:item/:audit", () => {
+    it("should return audit detail for an audit id", async () => {
+      const mockResponse = {
+        id: "audit-456",
+        status: "fail",
+        tier: 2,
+        operation: "testOp",
+        target: {
+          app: App.App1,
+          type: ResourceType.UNKNOWN,
+          id: "item-123",
+        },
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-02T00:00:00.000Z",
+        attempts: [{ number: 1, status: "fail", at: "2024-01-02T00:00:00.000Z" }],
+        error: { message: "Handler detail error" },
+        event: {
+          source: "test.source",
+          "detail-type": "TestEvent",
+          detail: '{"id":"item-123"}',
+        },
+      };
+      mockGetItem.mockResolvedValue(mockResponse);
+
+      const event = createApiGatewayEvent({
+        routeKey: "GET /apps/{app}/objects/{object}/{item}/{audit}",
+        rawPath: `/apps/${App.App1}/objects/${ResourceType.UNKNOWN}/item-123/audit-456`,
+        requestContext: {
+          ...createApiGatewayEvent().requestContext,
+          routeKey: "GET /apps/{app}/objects/{object}/{item}/{audit}",
+          http: {
+            ...createApiGatewayEvent().requestContext.http,
+            path: `/apps/${App.App1}/objects/${ResourceType.UNKNOWN}/item-123/audit-456`,
+          },
+        },
+        pathParameters: {
+          app: App.App1,
+          object: ResourceType.UNKNOWN,
+          item: "item-123",
+          audit: "audit-456",
+        },
+      });
+      const response = await handler(event, mockContext);
+
+      expect(mockGetItem).toHaveBeenCalledWith({
+        app: App.App1,
+        resourceType: ResourceType.UNKNOWN,
+        id: "audit-456",
+      });
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(response.body as string)).toEqual(mockResponse);
     });
   });
 });

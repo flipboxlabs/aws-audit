@@ -608,6 +608,10 @@ describe("AuditRepository", () => {
           type: ResourceType.UNKNOWN,
           id: "resource-123",
         },
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-02T00:00:00.000Z",
+        attempts: [{ number: 1, status: "success", at: "2024-01-02T00:00:00.000Z" }],
+        error: { message: "List item error" },
         PK: `${App.App1}.${ResourceType.UNKNOWN}`,
         SK: "audit-123",
         GSI1_SS_PK: `${App.App1}.${ResourceType.UNKNOWN}#resource-123`,
@@ -633,6 +637,12 @@ describe("AuditRepository", () => {
 
       expect(result.items).toHaveLength(1);
       expect(result.items[0].operation).toBe("testOp");
+      expect(result.items[0].createdAt).toBe("2024-01-01T00:00:00.000Z");
+      expect(result.items[0].updatedAt).toBe("2024-01-02T00:00:00.000Z");
+      expect(result.items[0].attempts).toEqual([
+        { number: 1, status: "success", at: "2024-01-02T00:00:00.000Z" },
+      ]);
+      expect(result.items[0].error).toEqual({ message: "List item error" });
     });
 
     it("should include nextToken when LastEvaluatedKey exists", async () => {
@@ -1168,6 +1178,10 @@ describe("AuditRepository", () => {
           type: ResourceType.UNKNOWN,
           id: "resource-123",
         },
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-02T00:00:00.000Z",
+        attempts: [{ number: 1, status: "success", at: "2024-01-02T00:00:00.000Z" }],
+        error: { message: "Trace item error" },
         PK: `${App.App1}.${ResourceType.UNKNOWN}`,
         SK: "audit-123",
         GSI1_SN_PK: "trace-123",
@@ -1187,6 +1201,12 @@ describe("AuditRepository", () => {
 
       expect(result.items).toHaveLength(1);
       expect(result.items[0].operation).toBe("traceOp");
+      expect(result.items[0].createdAt).toBe("2024-01-01T00:00:00.000Z");
+      expect(result.items[0].updatedAt).toBe("2024-01-02T00:00:00.000Z");
+      expect(result.items[0].attempts).toEqual([
+        { number: 1, status: "success", at: "2024-01-02T00:00:00.000Z" },
+      ]);
+      expect(result.items[0].error).toEqual({ message: "Trace item error" });
     });
 
     it("should combine multiple filters with AND", async () => {
@@ -1385,6 +1405,9 @@ describe("AuditRepository", () => {
               id: "resource-123",
             },
             createdAt: "2024-01-02T00:00:00.000Z",
+            updatedAt: "2024-01-03T00:00:00.000Z",
+            attempts: [{ number: 1, status: "fail", at: "2024-01-03T00:00:00.000Z" }],
+            error: { message: "Status item error" },
           }),
         ],
         LastEvaluatedKey: undefined,
@@ -1394,6 +1417,12 @@ describe("AuditRepository", () => {
 
       expect(result.items).toHaveLength(1);
       expect(result.items[0].trace).toBe("trace-123:2");
+      expect(result.items[0].createdAt).toBe("2024-01-02T00:00:00.000Z");
+      expect(result.items[0].updatedAt).toBe("2024-01-03T00:00:00.000Z");
+      expect(result.items[0].attempts).toEqual([
+        { number: 1, status: "fail", at: "2024-01-03T00:00:00.000Z" },
+      ]);
+      expect(result.items[0].error).toEqual({ message: "Status item error" });
     });
 
     it("should not synthesize trace when the status query item does not include trace keys", async () => {

@@ -58,11 +58,20 @@ export default class extends Construct {
       .addResource(`{${API_RESOURCE.RESOURCE_WILDCARD}}`);
 
     const ITEM_RESOURCE = RESOURCE.addResource(`{${API_RESOURCE.RESOURCE_WILDCARD_ITEM}}`);
+    const AUDIT_RESOURCE = ITEM_RESOURCE.addResource(
+      `{${API_RESOURCE.RESOURCE_WILDCARD_ITEM_AUDIT}}`,
+    );
 
     // /apps/{app}/objects/{object}/{item}
     ITEM_RESOURCE.addMethod("GET", integration, {
       apiKeyRequired: true,
       operationName: "List audit items for resource",
+    });
+
+    // /apps/{app}/objects/{object}/{item}/{audit}
+    AUDIT_RESOURCE.addMethod("GET", integration, {
+      apiKeyRequired: true,
+      operationName: "Get audit item detail",
     });
 
     new ReRun(this, "ReRun", {
@@ -71,7 +80,7 @@ export default class extends Construct {
       eventBus: props.eventBus,
       lambda: props.lambda,
       restApi: {
-        resource: ITEM_RESOURCE.addResource(`{${API_RESOURCE.RESOURCE_WILDCARD_ITEM_AUDIT}}`),
+        resource: AUDIT_RESOURCE,
       },
     });
   }
