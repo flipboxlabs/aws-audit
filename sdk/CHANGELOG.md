@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.1](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.4.0...sdk-v1.4.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* allow null audit messages in API responses ([467212d](https://github.com/flipboxlabs/aws-audit/commit/467212dc4734d195bc127c074019979f4f5082b3))
+* allow null audit messages in API responses ([dcc9521](https://github.com/flipboxlabs/aws-audit/commit/dcc9521a995019dee0aff642b50bfb8611cf4cad))
+
 ## [1.4.0](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.3.0...sdk-v1.4.0) (2026-06-17)
 
 
