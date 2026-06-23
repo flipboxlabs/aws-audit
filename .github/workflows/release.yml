@@ -4,15 +4,17 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 permissions:
   contents: write
   pull-requests: write
   id-token: write
+  actions: write
 
 jobs:
   release-please:
@@ -34,6 +36,27 @@ jobs:
       - name: Enable auto-merge for release PR
         if: ${{ steps.release.outputs.pr }}
         run: gh pr merge --auto --squash --delete-branch "${{ fromJson(steps.release.outputs.pr).number }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
+      - name: Dispatch release workflow after release PR merges
+        if: ${{ steps.release.outputs.pr }}
+        run: |
+          pr_number="${{ fromJson(steps.release.outputs.pr).number }}"
+
+          for _ in {1..60}; do
+            state="$(gh pr view "$pr_number" --json state --jq .state)"
+
+            if [ "$state" = "MERGED" ]; then
+              gh workflow run release.yml --ref main
+              exit 0
+            fi
+
+            sleep 10
+          done
+
+          echo "::warning::Release PR #$pr_number was not merged before timeout; run the Release workflow manually after it merges."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
