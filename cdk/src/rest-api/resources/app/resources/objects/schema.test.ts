@@ -183,6 +183,28 @@ describe("objects handler schemas", () => {
       expect(result.data?.pagination?.nextToken).toBe("next-page");
     });
 
+    it("should validate audit items with null messages as undefined", () => {
+      const result = ResponseCollectionSchema.safeParse({
+        items: [
+          {
+            id: "audit-456",
+            status: "success",
+            tier: 2,
+            operation: "createItem",
+            target: {
+              app: App.App1,
+              type: ResourceType.UNKNOWN,
+              id: "item-123",
+            },
+            message: null,
+          },
+        ],
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data?.items[0].message).toBeUndefined();
+    });
+
     it("should reject response without items array", () => {
       const result = ResponseCollectionSchema.safeParse({});
       expect(result.success).toBe(false);
@@ -238,6 +260,24 @@ describe("objects handler schemas", () => {
         "detail-type": "TestEvent",
         detail: '{"id":"item-123"}',
       });
+    });
+
+    it("should validate detail responses with null messages as undefined", () => {
+      const result = ResponseDetailSchema.safeParse({
+        id: "audit-456",
+        status: "success",
+        tier: 2,
+        operation: "createItem",
+        target: {
+          app: App.App1,
+          type: ResourceType.UNKNOWN,
+          id: "item-123",
+        },
+        message: null,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data?.message).toBeUndefined();
     });
   });
 });
