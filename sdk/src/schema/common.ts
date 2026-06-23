@@ -157,7 +157,10 @@ export const BaseSchema = z.object({
   /** Name of the operation being audited */
   operation: z.string(),
   /** Human-readable description of the audit */
-  message: z.string().optional(),
+  message: z
+    .union([z.string(), z.null()])
+    .optional()
+    .transform((value) => value ?? undefined),
   /** Whether this audit can be re-run/retried */
   rerunable: z.boolean().optional(),
   /** Trace identifier for distributed tracing */

@@ -51,6 +51,21 @@ describe("AuditSchema", () => {
     expect(result.updatedAt).toBeInstanceOf(Date);
     expect(result.createdAt).toBeInstanceOf(Date);
   });
+
+  it("should convert null messages from stored audit items to undefined", () => {
+    const result = AuditSchema.parse({
+      id: "audit-123",
+      operation: "testOp",
+      status: "success",
+      tier: 2,
+      target: createValidTarget(),
+      message: null,
+      updatedAt: "2024-01-15T10:30:00.000Z",
+      createdAt: "2024-01-15T10:30:00.000Z",
+    });
+
+    expect(result.message).toBeUndefined();
+  });
 });
 
 describe("AuditPayloadSchema", () => {
@@ -83,5 +98,18 @@ describe("AuditPayloadSchema", () => {
       "detail-type": "TestEvent",
       detail: '{"id":"item-123"}',
     });
+  });
+
+  it("should convert null messages in JSON response payloads to undefined", () => {
+    const result = AuditPayloadSchema.parse({
+      id: "audit-123",
+      operation: "testOp",
+      status: "success",
+      tier: 2,
+      target: createValidTarget(),
+      message: null,
+    });
+
+    expect(result.message).toBeUndefined();
   });
 });
