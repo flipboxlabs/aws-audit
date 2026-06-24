@@ -774,6 +774,37 @@ describe("AuditRepository", () => {
       expect(result).toBe(2);
     });
 
+    it("should update the appended attempt number for retries", async () => {
+      mockClient.send.mockResolvedValue({
+        Attributes: marshall({
+          attempts: [
+            { number: 1, status: "fail", at: "2024-01-01T00:00:00Z" },
+            { number: 1, status: "success", at: "2024-01-02T00:00:00Z" },
+          ],
+        }),
+      });
+
+      const item = createMockUpsertInput();
+      const attempt = {
+        number: 1,
+        status: "success",
+        at: "2024-01-02T00:00:00Z",
+      };
+
+      const result = await repository.upsertItem(item, attempt);
+
+      expect(result).toBe(2);
+      expect(mockClient.send).toHaveBeenCalledTimes(2);
+
+      const command = mockClient.send.mock.calls[1][0] as UpdateItemCommand;
+      expect(command.input.UpdateExpression).toBe("SET #attempts[1].#number = :attemptNumber");
+      expect(command.input.ExpressionAttributeNames).toEqual({
+        "#attempts": "attempts",
+        "#number": "number",
+      });
+      expect(command.input.ExpressionAttributeValues?.[":attemptNumber"]?.N).toBe("2");
+    });
+
     it("should include list_append expression for attempts", async () => {
       mockClient.send.mockResolvedValue({
         Attributes: marshall({

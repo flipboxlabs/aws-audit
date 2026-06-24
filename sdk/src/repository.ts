@@ -617,7 +617,30 @@ export class AuditRepository<C extends AuditConfig> {
       throw new Error("UpdateItem did not return attributes");
     }
     const updated = unmarshall(result.Attributes) as { attempts: unknown[] };
-    return updated.attempts.length;
+    const attemptNumber = updated.attempts.length;
+
+    if (attemptNumber !== currentAttempt.number) {
+      await this.client.send(
+        new UpdateItemCommand({
+          TableName: DynamoDB.Table.Name(),
+          Key: marshall(primaryKey, {
+            removeUndefinedValues: true,
+            convertEmptyValues: true,
+            convertClassInstanceToMap: true,
+          }),
+          UpdateExpression: `SET #attempts[${attemptNumber - 1}].#number = :attemptNumber`,
+          ExpressionAttributeNames: {
+            "#attempts": "attempts",
+            "#number": "number",
+          },
+          ExpressionAttributeValues: marshall({
+            ":attemptNumber": attemptNumber,
+          }),
+        }),
+      );
+    }
+
+    return attemptNumber;
   }
 
   /**
