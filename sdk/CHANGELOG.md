@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.2](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.4.1...sdk-v1.4.2) (2026-06-24)
+
+
+### Bug Fixes
+
+* **sdk:** correct audit resource storage ([7f5915a](https://github.com/flipboxlabs/aws-audit/commit/7f5915a91cd821318811dabcadfa0edadb33f178))
+* **sdk:** correct audit resource storage ([a294084](https://github.com/flipboxlabs/aws-audit/commit/a29408421f57569e0dba02e95a5d437ccb43763a))
+
 ## [1.4.1](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.4.0...sdk-v1.4.1) (2026-06-23)
 
 
