@@ -7,6 +7,7 @@ import type { AnyStatus } from "./schema/log.js";
 import type { Pagination } from "./schema/model.js";
 import { createTypedUpsertAuditSchema, type UpsertAuditInput } from "./schema/service.js";
 import type { InferApp, InferResourceType } from "./types.js";
+import { generateAuditId } from "./utils.js";
 
 /**
  * Typed identifiers for locating audit records.
@@ -209,7 +210,11 @@ export class AuditService<C extends AuditConfig> {
    */
   public async upsertItem(input: UpsertAuditInput): Promise<void> {
     const schema = createTypedUpsertAuditSchema(this.config.schemas.resourceReference);
-    const item = schema.parse(input);
+    const parsed = schema.parse(input);
+    const item = {
+      ...parsed,
+      id: parsed.id ?? generateAuditId(),
+    };
     const now = new Date().toISOString();
 
     // Build current attempt record
@@ -230,11 +235,11 @@ export class AuditService<C extends AuditConfig> {
       .filter((resource) => !!resource.id)
       .map((resource) => ({
         ...item,
-        ...resource,
 
         id: `${item.id}#${resource.app}.${resource.type}#${resource.id}`, // deterministic ID for retry correlation
 
-        // Source
+        // Link the related resource back to the original audit target.
+        target: resource,
         source: item.target,
 
         rerunable: item.rerunable !== undefined ? item.rerunable : !!item.event,

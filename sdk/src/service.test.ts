@@ -227,16 +227,33 @@ describe("AuditService", () => {
       expect(mockStorage.upsertBatch).toHaveBeenCalledWith([
         expect.objectContaining({
           id: "parent-id#App1.Unknown#resource-1",
-          app: App.App1,
-          type: ResourceType.UNKNOWN,
+          target: { app: App.App1, type: ResourceType.UNKNOWN, id: "resource-1" },
           source: baseInput.target,
         }),
         expect.objectContaining({
           id: "parent-id#App1.Unknown#resource-2",
-          app: App.App1,
-          type: ResourceType.UNKNOWN,
+          target: { app: App.App1, type: ResourceType.UNKNOWN, id: "resource-2" },
           source: baseInput.target,
         }),
+      ]);
+    });
+
+    it("should generate a shared parent id before creating related resource entries", async () => {
+      const inputWithGeneratedId: UpsertAuditInput = {
+        ...baseInput,
+        resources: [{ app: App.App1, type: ResourceType.UNKNOWN, id: "resource-1" }],
+      };
+
+      await service.upsertItem(inputWithGeneratedId);
+
+      const parentArg = mockStorage.upsertItem.mock.calls[0][0];
+      const childArg = mockStorage.upsertBatch.mock.calls[0][0][0];
+
+      expect(parentArg.id).toEqual(expect.any(String));
+      expect(childArg.id).toBe(`${parentArg.id}#App1.Unknown#resource-1`);
+      expect(childArg.id).not.toContain("undefined#");
+      expect(mockEvents.upserted).toHaveBeenCalledWith([
+        expect.objectContaining({ id: parentArg.id }),
       ]);
     });
 
