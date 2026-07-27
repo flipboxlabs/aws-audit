@@ -2,9 +2,10 @@ import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { App, ResourceType, testConfig } from "../../../../../test-config.js";
 
-const { mockGetItem, mockListItems } = vi.hoisted(() => ({
+const { mockGetItem, mockListItems, mockListObjects } = vi.hoisted(() => ({
   mockGetItem: vi.fn(),
   mockListItems: vi.fn(),
+  mockListObjects: vi.fn(),
 }));
 
 vi.mock("../../../../../audit-config.js", () => ({
@@ -18,6 +19,7 @@ vi.mock("@flipboxlabs/aws-audit-sdk", async (importOriginal) => {
     AuditService: class MockAuditService {
       getItem = mockGetItem;
       listItems = mockListItems;
+      listObjects = mockListObjects;
     },
   };
 });
@@ -66,6 +68,31 @@ const createApiGatewayEvent = (
     ...overrides,
   }) as APIGatewayProxyEventV2;
 
+const createObjectApiGatewayEvent = (
+  overrides: Partial<APIGatewayProxyEventV2> = {},
+): APIGatewayProxyEventV2 => {
+  const baseEvent = createApiGatewayEvent();
+  const rawPath = `/apps/${App.App1}/objects/${ResourceType.UNKNOWN}`;
+
+  return createApiGatewayEvent({
+    routeKey: "GET /apps/{app}/objects/{object}",
+    rawPath,
+    requestContext: {
+      ...baseEvent.requestContext,
+      routeKey: "GET /apps/{app}/objects/{object}",
+      http: {
+        ...baseEvent.requestContext.http,
+        path: rawPath,
+      },
+    },
+    pathParameters: {
+      app: App.App1,
+      object: ResourceType.UNKNOWN,
+    },
+    ...overrides,
+  });
+};
+
 const mockContext: Context = {
   callbackWaitsForEmptyEventLoop: false,
   functionName: "test-function",
@@ -88,6 +115,93 @@ describe("objects handler", () => {
 
   afterEach(() => {
     vi.resetAllMocks();
+  });
+
+  describe("GET /apps/:app/objects/:object", () => {
+    it("should return audit items for an object type", async () => {
+      const mockResponse = { items: [] };
+      mockListObjects.mockResolvedValue(mockResponse);
+
+      const response = await handler(createObjectApiGatewayEvent(), mockContext);
+
+      expect(mockListObjects).toHaveBeenCalledWith(
+        {
+          resource: { type: ResourceType.UNKNOWN },
+          app: App.App1,
+        },
+        undefined,
+      );
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(response.body as string)).toEqual(mockResponse);
+    });
+
+    it("should pass pagination parameters to the service", async () => {
+      const mockResponse = {
+        items: [],
+        pagination: { nextToken: "next-page" },
+      };
+      mockListObjects.mockResolvedValue(mockResponse);
+
+      const response = await handler(
+        createObjectApiGatewayEvent({
+          rawQueryString: "pagination[pageSize]=50&pagination[nextToken]=token123",
+          queryStringParameters: {
+            "pagination[pageSize]": "50",
+            "pagination[nextToken]": "token123",
+          },
+        }),
+        mockContext,
+      );
+
+      expect(mockListObjects).toHaveBeenCalledWith(
+        {
+          resource: { type: ResourceType.UNKNOWN },
+          app: App.App1,
+        },
+        { pageSize: 50, nextToken: "token123" },
+      );
+      expect(response.statusCode).toBe(200);
+    });
+
+    it("should return 422 for an invalid app", async () => {
+      const response = await handler(
+        createObjectApiGatewayEvent({
+          rawPath: `/apps/InvalidApp/objects/${ResourceType.UNKNOWN}`,
+          pathParameters: {
+            app: "InvalidApp",
+            object: ResourceType.UNKNOWN,
+          },
+        }),
+        mockContext,
+      );
+
+      expect(response.statusCode).toBe(422);
+      expect(mockListObjects).not.toHaveBeenCalled();
+    });
+
+    it("should return 422 for an invalid resource type", async () => {
+      const response = await handler(
+        createObjectApiGatewayEvent({
+          rawPath: `/apps/${App.App1}/objects/InvalidType`,
+          pathParameters: {
+            app: App.App1,
+            object: "InvalidType",
+          },
+        }),
+        mockContext,
+      );
+
+      expect(response.statusCode).toBe(422);
+      expect(mockListObjects).not.toHaveBeenCalled();
+    });
+
+    it("should handle service errors", async () => {
+      mockListObjects.mockRejectedValue(new Error("Service error"));
+
+      const response = await handler(createObjectApiGatewayEvent(), mockContext);
+
+      expect(response.statusCode).toBe(500);
+    });
   });
 
   describe("GET /apps/:app/objects/:object/:item", () => {

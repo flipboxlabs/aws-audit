@@ -14,6 +14,7 @@ import {
   type TypedListByStatusOptions,
   type TypedIdentifiers,
   type TypedListItemsOptions,
+  type TypedListObjectsOptions,
   type TypedListTraceItems,
 } from "./repository.js";
 import { encodeNextPageToken } from "./repository.utils.js";
@@ -23,6 +24,7 @@ import { App, ResourceType, testConfig } from "./test-config.js";
 // Type aliases using test config for convenience
 type Identifiers = TypedIdentifiers<typeof testConfig>;
 type ListItemsOptions = TypedListItemsOptions<typeof testConfig>;
+type ListObjectsOptions = TypedListObjectsOptions<typeof testConfig>;
 type ListTraceItems = TypedListTraceItems<typeof testConfig>;
 type ListByStatusOptions = TypedListByStatusOptions<typeof testConfig>;
 
@@ -511,6 +513,107 @@ describe("AuditRepository", () => {
       expect(mockLogger.warn).toHaveBeenCalledTimes(2);
 
       vi.useRealTimers();
+    });
+  });
+
+  describe("listObjects", () => {
+    const params: ListObjectsOptions = {
+      app: App.App1,
+      resource: {
+        type: ResourceType.UNKNOWN,
+      },
+    };
+
+    it("should query the LSI using the app and resource type partition key", async () => {
+      mockClient.send.mockResolvedValue({
+        Items: [],
+        LastEvaluatedKey: undefined,
+      });
+
+      await repository.listObjects(params);
+
+      expect(mockClient.send).toHaveBeenCalledWith(expect.any(QueryCommand));
+      const command = mockClient.send.mock.calls[0][0] as QueryCommand;
+      expect(command.input.IndexName).toBe(DynamoDB.Indexes.LSI1_N);
+      expect(command.input.KeyConditionExpression).toBe("#PK=:PK");
+      expect(command.input.ExpressionAttributeValues?.[":PK"]?.S).toBe("App1.Unknown");
+      expect(command.input.ScanIndexForward).toBe(false);
+      expect(command.input.Limit).toBe(100);
+    });
+
+    it("should use pagination parameters", async () => {
+      const token = encodeNextPageToken({
+        PK: "App1.Unknown",
+        SK: "audit-123",
+        LSI1_N_SK: 21234567890,
+      });
+
+      mockClient.send.mockResolvedValue({
+        Items: [],
+        LastEvaluatedKey: undefined,
+      });
+
+      await repository.listObjects(params, {
+        pageSize: 25,
+        nextToken: token,
+      });
+
+      const command = mockClient.send.mock.calls[0][0] as QueryCommand;
+      expect(command.input.Limit).toBe(25);
+      expect(command.input.ExclusiveStartKey).toBeDefined();
+    });
+
+    it("should prefix the partition key with the tenant ID", async () => {
+      mockClient.send.mockResolvedValue({
+        Items: [],
+        LastEvaluatedKey: undefined,
+      });
+
+      await repository.listObjects({
+        ...params,
+        tenantId: "org-456",
+      });
+
+      const command = mockClient.send.mock.calls[0][0] as QueryCommand;
+      expect(command.input.ExpressionAttributeValues?.[":PK"]?.S).toBe("org-456#App1.Unknown");
+    });
+
+    it("should transform items without creating a bogus trace", async () => {
+      const mockListItem = createMockAuditItem({
+        SK: "audit-123#App1.Unknown#resource-123",
+        GSI1_SN_PK: undefined,
+        GSI1_SN_SK: undefined,
+      });
+
+      mockClient.send.mockResolvedValue({
+        Items: [
+          marshall(mockListItem, {
+            removeUndefinedValues: true,
+          }),
+        ],
+        LastEvaluatedKey: undefined,
+      });
+
+      const result = await repository.listObjects(params);
+
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0].id).toBe("audit-123");
+      expect(result.items[0].trace).toBeUndefined();
+    });
+
+    it("should return a next token when DynamoDB has another page", async () => {
+      mockClient.send.mockResolvedValue({
+        Items: [],
+        LastEvaluatedKey: {
+          PK: { S: "App1.Unknown" },
+          SK: { S: "audit-last" },
+          LSI1_N_SK: { N: "21234567890" },
+        },
+      });
+
+      const result = await repository.listObjects(params);
+
+      expect(result.pagination?.nextToken).toBeDefined();
     });
   });
 

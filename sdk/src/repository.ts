@@ -209,21 +209,35 @@ type StatusListingItem = ListingAttributes &
   Partial<Pick<SecondaryKeys, "GSI1_SN_PK" | "GSI1_SN_SK">>;
 
 /**
- * Options for listing audit items by resource with typed App and ResourceType.
+ * Options for listing audit objects by resource with typed App and ResourceType.
  * @typeParam C - The audit config type for type inference
  */
-export type TypedListItemsOptions<C extends AuditConfig> = {
+export type TypedListObjectsOptions<C extends AuditConfig> = {
   /** Tenant/organization identifier for multi-tenancy support (optional) */
   tenantId?: string;
   /** Resource identification */
   resource: {
     /** Type of the resource */
     type: InferResourceType<C>;
-    /** Unique identifier of the resource */
-    id: string;
   };
   /** Application owning the resource */
   app: InferApp<C>;
+};
+
+/**
+ * Options for listing audit items by resource with typed App and ResourceType.
+ * @typeParam C - The audit config type for type inference
+ */
+export type TypedListItemsOptions<C extends AuditConfig> = Omit<
+  TypedListObjectsOptions<C>,
+  "resource"
+> & {
+  resource: {
+    /** Type of the resource */
+    type: InferResourceType<C>;
+    /** Unique identifier of the resource */
+    id: string;
+  };
 };
 
 /**
@@ -641,6 +655,45 @@ export class AuditRepository<C extends AuditConfig> {
     }
 
     return attemptNumber;
+  }
+
+  public async listObjects(params: TypedListObjectsOptions<C>, pagination?: Pagination) {
+    const startKey = decodeNextPageToken(pagination?.nextToken);
+
+    const pageSize = Number(pagination?.pageSize || 100);
+
+    const pkBase = `${params.app}.${params.resource.type}`;
+    const pk = params.tenantId ? `${params.tenantId}#${pkBase}` : pkBase;
+
+    const { Items: items, LastEvaluatedKey: lastEvaluatedKey } = await this.client.send(
+      new QueryCommand({
+        ScanIndexForward: false,
+        IndexName: DynamoDB.Indexes.LSI1_N,
+        ExpressionAttributeValues: marshall({
+          ":PK": pk,
+        }),
+        ExpressionAttributeNames: {
+          "#PK": DynamoDB.Keys.PARTITION_KEY,
+        },
+        KeyConditionExpression: "#PK=:PK",
+        TableName: DynamoDB.Table.Name(),
+        Limit: pageSize,
+        ExclusiveStartKey: startKey
+          ? marshall(startKey, {
+              removeUndefinedValues: true,
+              convertEmptyValues: true,
+              convertClassInstanceToMap: true,
+            })
+          : undefined,
+      }),
+    );
+
+    return PaginationCollectionSchema(AuditPayloadSchema).parse({
+      items: items?.map((i) => this.transformListItem(unmarshall(i) as ListingItem)),
+      pagination: {
+        nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
+      },
+    });
   }
 
   /**
@@ -1071,9 +1124,13 @@ export class AuditRepository<C extends AuditConfig> {
    */
   private transformListItem(item: ListingItem) {
     const [id] = item.SK.split("#");
+    const trace =
+      item.GSI1_SN_PK !== undefined && item.GSI1_SN_SK !== undefined
+        ? `${item.GSI1_SN_PK}:${item.GSI1_SN_SK}`
+        : undefined;
 
     return AuditPayloadSchema.parse({
-      trace: `${item.GSI1_SN_PK}:${item.GSI1_SN_SK}`,
+      trace,
       ...item,
       id: id,
     });

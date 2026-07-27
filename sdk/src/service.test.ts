@@ -9,6 +9,7 @@ vi.mock("./repository.js", () => ({
   AuditRepository: vi.fn().mockImplementation(() => ({
     getItem: vi.fn(),
     upsertBatch: vi.fn(),
+    listObjects: vi.fn(),
     listItems: vi.fn(),
     listTraceItems: vi.fn(),
     listByStatus: vi.fn(),
@@ -34,6 +35,7 @@ describe("AuditService", () => {
     getItem: ReturnType<typeof vi.fn>;
     upsertItem: ReturnType<typeof vi.fn>;
     upsertBatch: ReturnType<typeof vi.fn>;
+    listObjects: ReturnType<typeof vi.fn>;
     listItems: ReturnType<typeof vi.fn>;
     listTraceItems: ReturnType<typeof vi.fn>;
     listByStatus: ReturnType<typeof vi.fn>;
@@ -56,6 +58,7 @@ describe("AuditService", () => {
       getItem: vi.fn(),
       upsertItem: vi.fn().mockResolvedValue(1), // Returns attempt number
       upsertBatch: vi.fn(),
+      listObjects: vi.fn(),
       listItems: vi.fn(),
       listTraceItems: vi.fn(),
       listByStatus: vi.fn(),
@@ -454,6 +457,43 @@ describe("AuditService", () => {
           }),
         );
       });
+    });
+  });
+
+  describe("listObjects", () => {
+    const params = {
+      app: App.App1,
+      resource: { type: ResourceType.UNKNOWN },
+    } as const;
+    const mockResponse = {
+      items: [{ id: "audit-1" }, { id: "audit-2" }],
+      pagination: { nextToken: "token123" },
+    };
+
+    it("should return objects from storage and pass pagination parameters", async () => {
+      mockStorage.listObjects.mockResolvedValue(mockResponse);
+
+      const result = await service.listObjects(params, {
+        pageSize: 10,
+        nextToken: "abc",
+      });
+
+      expect(result).toEqual(mockResponse);
+      expect(mockStorage.listObjects).toHaveBeenCalledWith(params, {
+        pageSize: 10,
+        nextToken: "abc",
+      });
+    });
+
+    it("should log and rethrow storage errors", async () => {
+      const error = new Error("Object query failed");
+      mockStorage.listObjects.mockRejectedValue(error);
+
+      await expect(service.listObjects(params)).rejects.toThrow("Object query failed");
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        "An error occurred while trying to list objects",
+        { error },
+      );
     });
   });
 

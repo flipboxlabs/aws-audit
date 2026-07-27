@@ -7,12 +7,13 @@ import { API_RESOURCE as BASE_API_RESOURCE } from "../../constants.js";
 import { API_RESOURCE } from "./constants.js";
 import {
   DetailPathSchema,
-  ResponseDetailSchema,
+  ObjectPathSchema,
   PathSchema,
   QuerySchema,
+  type ResponseCollection,
   ResponseCollectionSchema,
-  ResponseCollection,
-  ResponseDetail,
+  type ResponseDetail,
+  ResponseDetailSchema,
 } from "./schema.js";
 import { ResponseValidationMiddleware } from "../../../../http/response-validation.js";
 
@@ -25,6 +26,48 @@ const app = new Router();
 app.use(ResponseValidationMiddleware());
 
 const audits = new AuditService(logger, auditConfig);
+
+app.get(
+  `/${BASE_API_RESOURCE.RESOURCE}/:${BASE_API_RESOURCE.RESOURCE_WILDCARD}/${API_RESOURCE.RESOURCE}/:${API_RESOURCE.RESOURCE_WILDCARD}`,
+  async (reqCtx) => {
+    const {
+      [BASE_API_RESOURCE.RESOURCE_WILDCARD]: appId,
+      [API_RESOURCE.RESOURCE_WILDCARD]: objectType,
+    } = reqCtx.valid.req.path;
+    const query = reqCtx.valid.req.query;
+
+    const pagination =
+      query["pagination[pageSize]"] || query["pagination[nextToken]"]
+        ? {
+            pageSize: query["pagination[pageSize]"],
+            nextToken: query["pagination[nextToken]"],
+          }
+        : undefined;
+
+    const collection = await audits.listObjects(
+      {
+        resource: {
+          type: objectType as ResourceType,
+        },
+        app: appId as App,
+      },
+      pagination,
+    );
+
+    return Response.json(collection, { status: 200 }) as unknown as ResponseCollection;
+  },
+  {
+    validation: {
+      req: {
+        path: ObjectPathSchema,
+        query: QuerySchema,
+      },
+      res: {
+        body: ResponseCollectionSchema,
+      },
+    },
+  },
+);
 
 app.get(
   `/${BASE_API_RESOURCE.RESOURCE}/:${BASE_API_RESOURCE.RESOURCE_WILDCARD}/${API_RESOURCE.RESOURCE}/:${API_RESOURCE.RESOURCE_WILDCARD}/:${API_RESOURCE.RESOURCE_WILDCARD_ITEM}`,

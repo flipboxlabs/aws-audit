@@ -7,13 +7,47 @@ vi.mock("../../../../../audit-config.js", () => ({
 
 import {
   DetailPathSchema,
-  ResponseDetailSchema,
+  ObjectPathSchema,
   PathSchema,
   QuerySchema,
   ResponseCollectionSchema,
+  ResponseDetailSchema,
 } from "./schema.js";
 
 describe("objects handler schemas", () => {
+  describe("ObjectPathSchema", () => {
+    it("should validate object-level path params", () => {
+      const result = ObjectPathSchema.safeParse({
+        app: App.App1,
+        object: ResourceType.UNKNOWN,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({
+        app: App.App1,
+        object: ResourceType.UNKNOWN,
+      });
+    });
+
+    it("should reject an invalid app", () => {
+      const result = ObjectPathSchema.safeParse({
+        app: "InvalidApp",
+        object: ResourceType.UNKNOWN,
+      });
+
+      expect(result.success).toBe(false);
+    });
+
+    it("should reject an invalid resource type", () => {
+      const result = ObjectPathSchema.safeParse({
+        app: App.App1,
+        object: "InvalidType",
+      });
+
+      expect(result.success).toBe(false);
+    });
+  });
+
   describe("PathSchema", () => {
     it("should validate valid path params", () => {
       const result = PathSchema.safeParse({
