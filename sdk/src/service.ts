@@ -1,88 +1,26 @@
 import type { Logger } from "@aws-lambda-powertools/logger";
 import type { AuditConfig } from "./config.js";
 import { AuditEventBus } from "./events/bus.js";
-import { AuditRepository } from "./repository.js";
+import {
+  AuditRepository,
+  type TypedIdentifiers,
+  type TypedListByStatusOptions,
+  type TypedListItemsOptions,
+  type TypedListObjectsOptions,
+  type TypedListTraceItems,
+} from "./repository.js";
 import type { Audit } from "./schema/audit.js";
-import type { AnyStatus } from "./schema/log.js";
 import type { Pagination } from "./schema/model.js";
 import { createTypedUpsertAuditSchema, type UpsertAuditInput } from "./schema/service.js";
-import type { InferApp, InferResourceType } from "./types.js";
 import { generateAuditId } from "./utils.js";
 
-/**
- * Typed identifiers for locating audit records.
- * Uses config-derived App and ResourceType types for strict typing.
- */
-export type TypedIdentifiers<C extends AuditConfig> = {
-  /** Tenant/organization identifier for multi-tenancy support (optional) */
-  tenantId?: string;
-  /** Unique audit record identifier */
-  id: string | number;
-  /** Application that owns this audit record */
-  app: InferApp<C>;
-  /** Optional resource identifier within the application */
-  resourceId?: string | number;
-  /** Type of resource being audited */
-  resourceType: InferResourceType<C>;
-};
-
-/**
- * Typed options for listing audit items by resource.
- * Uses config-derived App and ResourceType types for strict typing.
- */
-export type TypedListItemsOptions<C extends AuditConfig> = {
-  /** Tenant/organization identifier for multi-tenancy support (optional) */
-  tenantId?: string;
-  /** Resource identification */
-  resource: {
-    /** Type of the resource */
-    type: InferResourceType<C>;
-    /** Unique identifier of the resource */
-    id: string;
-  };
-  /** Application owning the resource */
-  app: InferApp<C>;
-};
-
-/**
- * Typed options for listing audit items by trace ID.
- * Uses config-derived App and ResourceType types for strict typing.
- */
-export type TypedListTraceItems<C extends AuditConfig> = {
-  /** Tenant/organization identifier for multi-tenancy support (optional) */
-  tenantId?: string;
-  /** Trace ID to query for related audit records */
-  trace: string;
-  /** Optional application filter */
-  app?: InferApp<C>;
-  /** Optional resource filter */
-  resource?: {
-    /** Filter by resource type */
-    type?: InferResourceType<C>;
-    /** Filter by resource ID */
-    id?: string;
-  };
-};
-
-/**
- * Typed options for listing audit items by status.
- * Uses config-derived App and ResourceType types for strict typing.
- */
-export type TypedListByStatusOptions<C extends AuditConfig> = {
-  /** Tenant/organization identifier for multi-tenancy support (optional) */
-  tenantId?: string;
-  /** Status to filter by (success, warn, fail, skip) */
-  status: AnyStatus;
-  /** Optional application filter */
-  app?: InferApp<C>;
-  /** Optional resource filter */
-  resource?: {
-    /** Filter by resource type */
-    type?: InferResourceType<C>;
-    /** Filter by resource ID */
-    id?: string;
-  };
-};
+export type {
+  TypedIdentifiers,
+  TypedListByStatusOptions,
+  TypedListObjectsOptions,
+  TypedListItemsOptions,
+  TypedListTraceItems,
+} from "./repository.js";
 
 /**
  * High-level service for managing audit records with typed App and ResourceType.
@@ -256,6 +194,37 @@ export class AuditService<C extends AuditConfig> {
     }
 
     await this.events?.upserted([item]);
+  }
+
+  /**
+   * Lists audit records with filtering and pagination.
+   *
+   * Queries audits based on resource type and app.
+   * Results are paginated in descending tier and creation order.
+   *
+   * @param params - Query parameters for filtering
+   * @param pagination - Optional pagination settings
+   * @returns Paginated collection of audit records
+   * @throws Re-throws any storage errors after logging
+   *
+   * @example
+   * ```typescript
+   * const { items, pagination } = await service.listObjects({
+   *   resource: { type: 'Order' },
+   *   app: 'Orders',
+   * });
+   * ```
+   */
+  public async listObjects(params: TypedListObjectsOptions<C>, pagination?: Pagination) {
+    try {
+      return await this.storage.listObjects(params, pagination);
+    } catch (error) {
+      this.logger.error("An error occurred while trying to list objects", {
+        error,
+      });
+
+      throw error;
+    }
   }
 
   /**

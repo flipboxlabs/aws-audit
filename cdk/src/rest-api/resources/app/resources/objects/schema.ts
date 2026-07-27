@@ -4,9 +4,12 @@ import { auditConfig } from "../../../../../audit-config.js";
 import { API_RESOURCE as BASE_API_RESOURCE } from "../../constants.js";
 import { API_RESOURCE } from "./constants.js";
 
-export const PathSchema = z.object({
+export const ObjectPathSchema = z.object({
   [BASE_API_RESOURCE.RESOURCE_WILDCARD]: auditConfig.schemas.app,
   [API_RESOURCE.RESOURCE_WILDCARD]: auditConfig.schemas.resourceType,
+});
+
+export const PathSchema = ObjectPathSchema.extend({
   [API_RESOURCE.RESOURCE_WILDCARD_ITEM]: z.string(),
 });
 

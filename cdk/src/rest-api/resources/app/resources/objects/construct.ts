@@ -62,6 +62,12 @@ export default class extends Construct {
       `{${API_RESOURCE.RESOURCE_WILDCARD_ITEM_AUDIT}}`,
     );
 
+    // /apps/{app}/objects/{object}
+    RESOURCE.addMethod("GET", integration, {
+      apiKeyRequired: true,
+      operationName: "List audit object items",
+    });
+
     // /apps/{app}/objects/{object}/{item}
     ITEM_RESOURCE.addMethod("GET", integration, {
       apiKeyRequired: true,
