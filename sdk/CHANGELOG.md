@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.0](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.4.2...sdk-v1.5.0) (2026-07-27)
+
+
+### Features
+
+* adding api resource to list items by app and object ([4b04bbe](https://github.com/flipboxlabs/aws-audit/commit/4b04bbe33f9ad733d07383d1ce071db99906f333))
+* adding api resource to list items by app and object ([08f7f00](https://github.com/flipboxlabs/aws-audit/commit/08f7f000b2ccbafd47348ff03d9c179c0681dbca))
+
 ## [1.4.2](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.4.1...sdk-v1.4.2) (2026-06-24)
 
 
