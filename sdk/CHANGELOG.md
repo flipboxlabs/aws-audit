@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.1](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.5.0...sdk-v1.5.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **sdk:** generate audit storage id per parse instead of at import ([e755cbe](https://github.com/flipboxlabs/aws-audit/commit/e755cbed2bd3d8c9e0ba804b5a9871633652514a))
+* **sdk:** generate audit storage id per parse instead of at import ([bac67af](https://github.com/flipboxlabs/aws-audit/commit/bac67af12b5e5b7d97c97fb7d57fe660a8b79c04)), closes [#76](https://github.com/flipboxlabs/aws-audit/issues/76)
+
 ## [1.5.0](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.4.2...sdk-v1.5.0) (2026-07-27)
 
 
