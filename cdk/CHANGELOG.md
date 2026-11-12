@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.4.0...cdk-v1.5.0) (2026-11-12)
+
+
+### Features
+
+* **cdk:** run audit Lambdas on the Node.js 24 runtime ([99f6c9b](https://github.com/flipboxlabs/aws-audit/commit/99f6c9b71f09c1f772213d77f840d8e01b8a821f))
+* **cdk:** run audit Lambdas on the Node.js 24 runtime ([0bc2462](https://github.com/flipboxlabs/aws-audit/commit/0bc246242034f0dc17aaac4ee67f77e0ce13a3b8))
+
 ## [1.4.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.3.1...cdk-v1.4.0) (2026-07-27)
 
 
