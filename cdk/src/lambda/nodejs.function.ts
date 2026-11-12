@@ -25,7 +25,7 @@ export const ESMNodeFunctionFactory =
       logRetention: props.logRetention || logs.RetentionDays.ONE_WEEK,
       memorySize: props.memorySize || 512,
       architecture: props.architecture || lambda.Architecture.ARM_64,
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       bundling: {
         minify: true,
         metafile: false,

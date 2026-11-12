@@ -60,7 +60,7 @@ export const resourceTypes = ${JSON.stringify(props.resourceTypes)};
 
     this.layer = new lambda.LayerVersion(this, "Layer", {
       code: lambda.Code.fromAsset(tempDir),
-      compatibleRuntimes: [lambda.Runtime.NODEJS_20_X],
+      compatibleRuntimes: [lambda.Runtime.NODEJS_24_X],
       description: "Audit configuration layer containing apps and resourceTypes",
     });
   }
