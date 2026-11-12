@@ -21,6 +21,25 @@ describe("AuditStorageSchema", () => {
     expect(typeof result.id).toBe("string");
   });
 
+  it("should generate a unique id per parse", () => {
+    const base = {
+      operation: "testOp",
+      status: "success",
+      tier: 2,
+    };
+
+    const a = AuditStorageSchema.parse({
+      ...base,
+      target: { ...createValidTarget(), id: "a" },
+    });
+    const b = AuditStorageSchema.parse({
+      ...base,
+      target: { ...createValidTarget(), id: "b" },
+    });
+
+    expect(a.id).not.toBe(b.id);
+  });
+
   it("should use provided id", () => {
     const result = AuditStorageSchema.parse({
       id: "custom-id",

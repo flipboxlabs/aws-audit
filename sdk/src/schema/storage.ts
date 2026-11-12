@@ -48,7 +48,7 @@ export const AuditStorageSchema = z.object({
    * Unique audit identifier.
    * Auto-generates a KSUID if not provided.
    */
-  id: z.string().default(generateAuditId()),
+  id: z.string().default(() => generateAuditId()),
   /**
    * Last update timestamp.
    * Accepts ISO string or Date, outputs ISO string.
