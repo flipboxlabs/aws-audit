@@ -44,7 +44,7 @@ describe("AuditService", () => {
     listByStatus: ReturnType<typeof vi.fn>;
   };
   let mockEvents: {
-    upserted: ReturnType<typeof vi.fn>;
+    upsertedOrThrow: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -69,7 +69,7 @@ describe("AuditService", () => {
     };
 
     mockEvents = {
-      upserted: vi.fn(),
+      upsertedOrThrow: vi.fn(),
     };
 
     service = new AuditService(
@@ -234,7 +234,7 @@ describe("AuditService", () => {
         }),
       );
       expect(mockStorage.upsertBatch).not.toHaveBeenCalled();
-      expect(mockEvents.upserted).toHaveBeenCalledWith([
+      expect(mockEvents.upsertedOrThrow).toHaveBeenCalledWith([
         expect.objectContaining({
           operation: "createUser",
         }),
@@ -288,7 +288,7 @@ describe("AuditService", () => {
       expect(parentArg.id).toEqual(expect.any(String));
       expect(childArg.id).toBe(`${parentArg.id}#App1.Unknown#resource-1`);
       expect(childArg.id).not.toContain("undefined#");
-      expect(mockEvents.upserted).toHaveBeenCalledWith([
+      expect(mockEvents.upsertedOrThrow).toHaveBeenCalledWith([
         expect.objectContaining({ id: parentArg.id }),
       ]);
     });
@@ -373,7 +373,7 @@ describe("AuditService", () => {
       expect(batchArg[0].error).toBeUndefined();
     });
 
-    it("should not call events.upserted when events is null", async () => {
+    it("should not publish events when events is null", async () => {
       const serviceWithoutEvents = new AuditService(
         mockLogger as unknown as ConstructorParameters<typeof AuditService<typeof testConfig>>[0],
         testConfig,
@@ -409,6 +409,7 @@ describe("AuditService", () => {
         expect(mockLogger.critical).toHaveBeenCalledWith(
           "Audit stored but Upserted event not published",
           {
+            tenantId: undefined,
             id: "audit-id",
             app: App.App1,
             target: { type: ResourceType.UNKNOWN, id: "user-123" },
@@ -426,7 +427,7 @@ describe("AuditService", () => {
           "EventBridge accepted 0 of 1 events after 3 attempts",
           failedEntries,
         );
-        mockEvents.upserted.mockRejectedValue(error);
+        mockEvents.upsertedOrThrow.mockRejectedValue(error);
 
         await expect(service.upsertItem(input)).resolves.toBeUndefined();
 
@@ -434,16 +435,25 @@ describe("AuditService", () => {
         expectCriticalLog({ failedEntries, error });
       });
 
+      it("should include the tenantId in the critical log", async () => {
+        const error = new PutEventsError("EventBridge accepted 0 of 1 events after 1 attempt");
+        mockEvents.upsertedOrThrow.mockRejectedValue(error);
+
+        await service.upsertItem({ ...input, tenantId: "tenant-1" });
+
+        expectCriticalLog({ tenantId: "tenant-1", failedEntries: [], error });
+      });
+
       it("should log critical for an error that isn't a PutEventsError", async () => {
         const error = new Error("unexpected");
-        mockEvents.upserted.mockRejectedValue(error);
+        mockEvents.upsertedOrThrow.mockRejectedValue(error);
 
         await expect(service.upsertItem(input)).resolves.toBeUndefined();
 
         expectCriticalLog({ failedEntries: undefined, error });
       });
 
-      it("should retry a persistently rejected event 3 times, then log critical", async () => {
+      it("should retry a persistently failing event 3 times, then log critical", async () => {
         vi.useFakeTimers();
 
         const send = vi.fn().mockResolvedValue({

@@ -43,25 +43,35 @@ try {
 }
 ```
 
-`putEventsWithRetry` works like `putEventsOrThrow` but retries first. Entries
-EventBridge rejects, and every entry of a chunk whose PutEvents call throws, are
-resent after a jittered exponential backoff; accepted entries are not resent. It
-makes 3 attempts in total by default (`attempts`), starting from a 100ms delay
-(`baseDelay`), and throws a `PutEventsError` describing the final attempt if
-entries are still not accepted.
+`putEventsWithRetry` works like `putEventsOrThrow` but retries entries
+EventBridge rejected for a transient reason (`ThrottlingException`,
+`InternalFailure`, `InternalException`, `ServiceUnavailable`). Only those
+entries are resent, after a jittered exponential backoff capped at 30 seconds.
+It makes 3 attempts in total by default (`attempts`), starting from a 100ms
+delay (`baseDelay`). Because PutEvents isn't idempotent, nothing that might
+already have been published is resent: a PutEvents call that throws (after the
+client's own retries) fails its chunk, an entry with no result entry fails, and
+any other `ErrorCode` fails right away. If any entry is not accepted, it throws
+a `PutEventsError` with the rejected entries in `failedEntries`, every result
+entry returned in `results`, and the last client error as `cause` if a call
+threw.
 
 ```typescript
 const results = await events.putEventsWithRetry(entries, { attempts: 5, baseDelay: 50 });
 ```
 
-`AuditEventBus.upserted` publishes with `putEventsWithRetry`, extra events
-included, so it throws a `PutEventsError` when an event can't be published.
-`AuditService.upsertItem` catches that error instead of throwing: the audit is
-already stored, and a throw would make callers upsert it again and record an
-extra attempt. It logs at critical level with the stable message
-`"Audit stored but Upserted event not published"`, the audit's `id`, `app` and
-`target` (`type`, `id`), the `failedEntries`, and the `error`. Use that message
-for a CloudWatch metric filter or alarm.
+`AuditEventBus.upsertedOrThrow` publishes Upserted events (extra events
+included) with `putEventsWithRetry` and throws its `PutEventsError`.
+`AuditEventBus.upserted` sends the same way but never throws: it logs at
+critical level and returns the result entries, or `[]` if a call threw, like
+`putEvents`.
+
+`AuditService.upsertItem` uses `upsertedOrThrow` and catches the error instead
+of throwing: the audit is already stored, and a throw would make callers upsert
+it again and record an extra attempt. It logs at critical level with the stable
+message `"Audit stored but Upserted event not published"`, the audit's
+`tenantId`, `id`, `app` and `target` (`type`, `id`), the `failedEntries`, and
+the `error`. Use that message for a CloudWatch metric filter or alarm.
 
 ## Errors
 

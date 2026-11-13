@@ -154,13 +154,40 @@ describe("AuditEventBus", () => {
       expect(result).toEqual(expectedResults);
     });
 
-    it("should throw the PutEventsError when events are not accepted after retries", async () => {
-      const error = new PutEventsError("EventBridge accepted 0 of 1 events after 3 attempts", [
-        { ErrorCode: "InternalFailure" },
-      ]);
+    it("should log critical and return the results when events are not accepted", async () => {
+      const results = [{ ErrorCode: "MalformedDetail" }];
+      const error = new PutEventsError(
+        "EventBridge accepted 0 of 1 events after 1 attempt",
+        results,
+        {
+          results,
+        },
+      );
       mockHandler.putEventsWithRetry.mockRejectedValue(error);
 
-      await expect(eventBus.upserted([createMockAudit()])).rejects.toBe(error);
+      const result = await eventBus.upserted([createMockAudit()]);
+
+      expect(result).toEqual(results);
+      expect(mockLogger.critical).toHaveBeenCalledWith("Error pushing event bridge events", error);
+    });
+
+    it("should log critical and return an empty array when a call threw", async () => {
+      const error = new PutEventsError("EventBridge accepted 0 of 1 events after 1 attempt", [], {
+        cause: new Error("EventBridge error"),
+        results: [{ EventId: "event-1" }],
+      });
+      mockHandler.putEventsWithRetry.mockRejectedValue(error);
+
+      const result = await eventBus.upserted([createMockAudit()]);
+
+      expect(result).toEqual([]);
+      expect(mockLogger.critical).toHaveBeenCalledWith("Error pushing event bridge events", error);
+    });
+
+    it("should not log when every event is accepted", async () => {
+      await eventBus.upserted([createMockAudit()]);
+
+      expect(mockLogger.critical).not.toHaveBeenCalled();
     });
 
     it("should handle empty audits array", async () => {
@@ -178,6 +205,36 @@ describe("AuditEventBus", () => {
       expect(callArgs[0].EventBusName).toBe(EventBridge.Bus.Name());
       expect(callArgs[0].DetailType).toBe("Upserted");
       expect(callArgs[0].Source).toBe("Audit");
+    });
+  });
+
+  describe("upsertedOrThrow", () => {
+    it("should publish audit and extra events with retries", async () => {
+      const expectedResults = [{ EventId: "event-1" }, { EventId: "event-2" }];
+      mockHandler.putEventsWithRetry.mockResolvedValue(expectedResults);
+      const extraEvents = [{ DetailType: "CustomEvent", Detail: "{}", Source: "custom" }];
+
+      const result = await eventBus.upsertedOrThrow([createMockAudit()], extraEvents);
+
+      expect(result).toEqual(expectedResults);
+      expect(mockHandler.putEventsWithRetry).toHaveBeenCalledWith([
+        expect.objectContaining({
+          EventBusName: EventBridge.Bus.Name(),
+          DetailType: EventBridge.DetailType.UPSERTED,
+          Source: EventBridge.Source,
+        }),
+        extraEvents[0],
+      ]);
+    });
+
+    it("should throw the PutEventsError without logging", async () => {
+      const error = new PutEventsError("EventBridge accepted 0 of 1 events after 3 attempts", [
+        { ErrorCode: "ThrottlingException" },
+      ]);
+      mockHandler.putEventsWithRetry.mockRejectedValue(error);
+
+      await expect(eventBus.upsertedOrThrow([createMockAudit()])).rejects.toBe(error);
+      expect(mockLogger.critical).not.toHaveBeenCalled();
     });
   });
 

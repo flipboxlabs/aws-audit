@@ -132,8 +132,8 @@ export class AuditService<C extends AuditConfig> {
    * on `input` are accepted for backward compatibility but ignored.
    *
    * After storage, publishes an "Upserted" event to EventBridge (if events is configured).
-   * Rejected or failed events are retried (see {@link AuditEventBus.upserted}). If the event
-   * still isn't published, this logs at critical level with the message
+   * Throttled or internally failed events are retried (see {@link AuditEventBus.upsertedOrThrow}).
+   * If the event still isn't published, this logs at critical level with the message
    * `"Audit stored but Upserted event not published"` and the audit's identifiers, and does
    * not throw: the audit is already stored, and a throw would make callers upsert it again
    * and record an extra attempt.
@@ -201,9 +201,10 @@ export class AuditService<C extends AuditConfig> {
     }
 
     try {
-      await this.events?.upserted([item]);
+      await this.events?.upsertedOrThrow([item]);
     } catch (error) {
       this.logger.critical("Audit stored but Upserted event not published", {
+        tenantId: item.tenantId,
         id: item.id,
         app: item.target.app,
         target: {
