@@ -2,6 +2,7 @@ import type { Logger } from "@aws-lambda-powertools/logger";
 import {
   type EventBridgeClient,
   PutEventsCommand,
+  type PutEventsCommandOutput,
   type PutEventsRequestEntry,
   type PutEventsResultEntry,
 } from "@aws-sdk/client-eventbridge";
@@ -11,6 +12,18 @@ import {
  * EventBridge allows a maximum of 10 entries per PutEvents call.
  */
 const CHUNK_SIZE = 10;
+
+/**
+ * Default number of PutEvents attempts made by {@link BatchHandler.putEventsWithRetry},
+ * including the first.
+ */
+const RETRY_ATTEMPTS = 3;
+
+/**
+ * Default delay in milliseconds before the first retry in
+ * {@link BatchHandler.putEventsWithRetry}. It doubles on each later retry.
+ */
+const RETRY_BASE_DELAY = 100;
 
 /**
  * Throws when `chunk` isn't a batch size EventBridge accepts (1 to 10).
@@ -24,13 +37,29 @@ const assertChunkSize = (chunk: number): void => {
 };
 
 /**
- * Thrown by {@link BatchHandler.putEventsOrThrow} when EventBridge did not
- * accept every entry.
+ * Options for {@link BatchHandler.putEventsWithRetry}.
+ */
+export interface PutEventsRetryOptions {
+  /** Batch size for chunking, an integer from 1 to 10 (default: 10) */
+  chunk?: number;
+  /** Total PutEvents attempts per entry, including the first, an integer of at least 1 (default: 3) */
+  attempts?: number;
+  /**
+   * Delay in milliseconds before the first retry (default: 100). It doubles on
+   * each later retry, and each delay is jittered to between half and all of it.
+   */
+  baseDelay?: number;
+}
+
+/**
+ * Thrown by {@link BatchHandler.putEventsOrThrow} and
+ * {@link BatchHandler.putEventsWithRetry} when EventBridge did not accept
+ * every entry.
  *
- * Either the PutEvents call itself failed (the client error is the `cause`
- * and `failedEntries` is empty), or EventBridge answered but did not accept
- * every entry (`failedEntries` holds the result entries carrying an
- * `ErrorCode`).
+ * Either a PutEvents call itself failed (the client error is the `cause`),
+ * or EventBridge answered but did not accept every entry (`failedEntries`
+ * holds the result entries carrying an `ErrorCode`). After retries, both
+ * can be true: `failedEntries` and `cause` describe the final attempt.
  */
 export class PutEventsError extends Error {
   /**
@@ -168,6 +197,132 @@ export class BatchHandler {
         `EventBridge accepted ${accepted} of ${entries.length} events`,
         failedEntries,
       );
+    }
+
+    this.logger.debug("Pushed event bridge events", {
+      events: result,
+    });
+
+    return result;
+  }
+
+  /**
+   * Publishes events to EventBridge like {@link putEventsOrThrow}, retrying
+   * the entries that were not accepted before giving up.
+   *
+   * An entry fails when EventBridge rejects it (its result entry carries an
+   * `ErrorCode`, or no result entry came back for it) or when the PutEvents
+   * call for its chunk throws. Only failed entries are resent, after a jittered
+   * exponential backoff, until every entry is accepted or `attempts` run out.
+   * Result entries line up with request entries by position, so the returned
+   * array is in the same order as `entries` whichever attempt accepted them.
+   *
+   * Thrown PutEvents calls are retried here on top of the EventBridge client's
+   * own retry strategy.
+   *
+   * @param entries - Array of EventBridge event entries to publish
+   * @param options - Batch size, attempts and backoff delay
+   * @returns Array of result entries from EventBridge, all accepted, in `entries` order
+   * @throws {RangeError} When `chunk` isn't an integer from 1 to 10, or `attempts`
+   *   isn't an integer of at least 1 (nothing is sent)
+   * @throws {PutEventsError} When entries are still not accepted after the last
+   *   attempt (see {@link PutEventsError} for what it carries)
+   *
+   * @example
+   * ```typescript
+   * try {
+   *   await handler.putEventsWithRetry(events, { attempts: 5 });
+   * } catch (error) {
+   *   if (error instanceof PutEventsError) {
+   *     logger.critical("Events not sent", error);
+   *   }
+   * }
+   * ```
+   */
+  public async putEventsWithRetry(
+    entries: PutEventsRequestEntry[],
+    {
+      chunk = CHUNK_SIZE,
+      attempts = RETRY_ATTEMPTS,
+      baseDelay = RETRY_BASE_DELAY,
+    }: PutEventsRetryOptions = {},
+  ): Promise<PutEventsResultEntry[]> {
+    assertChunkSize(chunk);
+
+    if (!Number.isInteger(attempts) || attempts < 1) {
+      throw new RangeError(`attempts must be an integer of at least 1, got ${attempts}`);
+    }
+
+    const result: PutEventsResultEntry[] = [];
+
+    // Positions in `entries` that still have to be accepted
+    let pending = entries.map((_, index) => index);
+    let failedEntries: PutEventsResultEntry[] = [];
+    let cause: unknown;
+
+    for (let attempt = 1; ; attempt++) {
+      const failed: number[] = [];
+      failedEntries = [];
+      cause = undefined;
+
+      for (let i = 0, j = pending.length; i < j; i += chunk) {
+        const indexes = pending.slice(i, i + chunk);
+
+        let output: PutEventsCommandOutput;
+
+        try {
+          output = await this.client.send(
+            new PutEventsCommand({
+              Entries: indexes.map((index) => entries[index]),
+            }),
+          );
+        } catch (error) {
+          // A thrown call means none of the chunk's entries were accepted
+          cause = error;
+          failed.push(...indexes);
+          continue;
+        }
+
+        indexes.forEach((index, position) => {
+          const entry = output.Entries?.[position];
+
+          if (entry && !entry.ErrorCode) {
+            result[index] = entry;
+            return;
+          }
+
+          failed.push(index);
+
+          if (entry) {
+            failedEntries.push(entry);
+          }
+        });
+      }
+
+      if (failed.length === 0) {
+        break;
+      }
+
+      if (attempt >= attempts) {
+        throw new PutEventsError(
+          `EventBridge accepted ${entries.length - failed.length} of ${entries.length} events after ${attempts} attempts`,
+          failedEntries,
+          cause === undefined ? undefined : { cause },
+        );
+      }
+
+      // Jittered exponential backoff: between half and all of baseDelay * 2^(attempt - 1)
+      const ceiling = baseDelay * 2 ** (attempt - 1);
+      const delayMs = Math.round(ceiling / 2 + (Math.random() * ceiling) / 2);
+
+      this.logger.warn("Retrying event bridge events", {
+        count: failed.length,
+        attempt,
+        delayMs,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      pending = failed;
     }
 
     this.logger.debug("Pushed event bridge events", {
