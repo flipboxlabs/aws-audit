@@ -105,13 +105,14 @@ describe("rerun handler", () => {
 
   describe("POST /apps/:app/objects/:object/:item/:audit/rerun", () => {
     it("should rerun a rerunable audit event", async () => {
+      // Stored audits carry `event.detail` as a JSON string (see EventBridgeEventSchema)
       const mockAuditItem = {
         id: "audit-456",
         rerunable: true,
         event: {
           source: "test-source",
           "detail-type": "TestEvent",
-          detail: { key: "value" },
+          detail: '{"k":1}',
         },
       };
       mockGetItem.mockResolvedValue(mockAuditItem);
@@ -129,7 +130,7 @@ describe("rerun handler", () => {
         {
           Source: "test-source",
           EventBusName: "test-event-bus",
-          Detail: JSON.stringify({ key: "value" }),
+          Detail: '{"k":1}',
           DetailType: "TestEvent",
         },
       ]);
