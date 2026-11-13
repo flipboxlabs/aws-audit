@@ -418,25 +418,7 @@ describe("objects handler", () => {
       };
       mockGetItem.mockResolvedValue(mockResponse);
 
-      const event = createApiGatewayEvent({
-        routeKey: "GET /apps/{app}/objects/{object}/{item}/{audit}",
-        rawPath: `/apps/${App.App1}/objects/${ResourceType.UNKNOWN}/item-123/audit-456`,
-        requestContext: {
-          ...createApiGatewayEvent().requestContext,
-          routeKey: "GET /apps/{app}/objects/{object}/{item}/{audit}",
-          http: {
-            ...createApiGatewayEvent().requestContext.http,
-            path: `/apps/${App.App1}/objects/${ResourceType.UNKNOWN}/item-123/audit-456`,
-          },
-        },
-        pathParameters: {
-          app: App.App1,
-          object: ResourceType.UNKNOWN,
-          item: "item-123",
-          audit: "audit-456",
-        },
-      });
-      const response = await handler(event, mockContext);
+      const response = await handler(createDetailApiGatewayEvent(), mockContext);
 
       expect(mockGetItem).toHaveBeenCalledWith({
         app: App.App1,
