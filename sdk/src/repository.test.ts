@@ -175,7 +175,7 @@ describe("AuditRepository", () => {
         }),
       ).rejects.toBe(error);
       expect(mockLogger.error).toHaveBeenCalledWith(
-        "Unable to find audit item in the repository",
+        "Failed to read audit item",
         expect.objectContaining({
           identifiers: expect.any(Object),
           error,
@@ -196,7 +196,7 @@ describe("AuditRepository", () => {
         }),
       ).rejects.toThrow();
       expect(mockLogger.error).toHaveBeenCalledWith(
-        "Unable to find audit item in the repository",
+        "Failed to read audit item",
         expect.objectContaining({
           identifiers: expect.any(Object),
           error: expect.any(Error),

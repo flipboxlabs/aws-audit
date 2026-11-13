@@ -29,6 +29,6 @@ export class AuditNotFoundError extends Error {
         .join(" | ")}`,
     );
     this.name = "AuditNotFoundError";
-    this.identifiers = identifiers;
+    this.identifiers = { ...identifiers };
   }
 }

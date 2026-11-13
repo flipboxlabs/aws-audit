@@ -434,7 +434,7 @@ export class AuditRepository<C extends AuditConfig> {
 
       return item ? this.transformItem(unmarshall(item) as DynamoDBItem) : undefined;
     } catch (error) {
-      this.logger.error("Unable to find audit item in the repository", {
+      this.logger.error("Failed to read audit item", {
         identifiers,
         error,
       });
