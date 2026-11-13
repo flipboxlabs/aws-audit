@@ -1306,7 +1306,7 @@ describe("AuditRepository", () => {
       expect(command.input.KeyConditionExpression).toBe("#PK=:PK");
     });
 
-    it("should add resource ID filter when provided", async () => {
+    it("should filter on target.id when resource ID is provided", async () => {
       mockClient.send.mockResolvedValue({
         Items: [],
         LastEvaluatedKey: undefined,
@@ -1322,10 +1322,22 @@ describe("AuditRepository", () => {
       await repository.listTraceItems(params);
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
-      expect(command.input.FilterExpression).toContain("resourceId=:resourceId");
+      expect(command.input.FilterExpression).toBe(
+        "#target.#id = :resourceId AND not contains(SK, :isParent)",
+      );
+      expect(command.input.ExpressionAttributeNames).toEqual({
+        "#PK": DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
+        "#target": "target",
+        "#id": "id",
+      });
+      expect(command.input.ExpressionAttributeValues).toEqual({
+        ":PK": { S: "trace-123" },
+        ":resourceId": { S: "resource-456" },
+        ":isParent": { S: "#" },
+      });
     });
 
-    it("should add resource type filter when provided", async () => {
+    it("should filter on target.type when resource type is provided", async () => {
       mockClient.send.mockResolvedValue({
         Items: [],
         LastEvaluatedKey: undefined,
@@ -1341,10 +1353,22 @@ describe("AuditRepository", () => {
       await repository.listTraceItems(params);
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
-      expect(command.input.FilterExpression).toContain("resourceType=:resourceType");
+      expect(command.input.FilterExpression).toBe(
+        "#target.#type = :resourceType AND not contains(SK, :isParent)",
+      );
+      expect(command.input.ExpressionAttributeNames).toEqual({
+        "#PK": DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
+        "#target": "target",
+        "#type": "type",
+      });
+      expect(command.input.ExpressionAttributeValues).toEqual({
+        ":PK": { S: "trace-123" },
+        ":resourceType": { S: ResourceType.UNKNOWN },
+        ":isParent": { S: "#" },
+      });
     });
 
-    it("should add app filter when provided", async () => {
+    it("should filter on target.app when app is provided", async () => {
       mockClient.send.mockResolvedValue({
         Items: [],
         LastEvaluatedKey: undefined,
@@ -1358,10 +1382,22 @@ describe("AuditRepository", () => {
       await repository.listTraceItems(params);
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
-      expect(command.input.FilterExpression).toContain("app=:app");
+      expect(command.input.FilterExpression).toBe(
+        "#target.#app = :app AND not contains(SK, :isParent)",
+      );
+      expect(command.input.ExpressionAttributeNames).toEqual({
+        "#PK": DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
+        "#target": "target",
+        "#app": "app",
+      });
+      expect(command.input.ExpressionAttributeValues).toEqual({
+        ":PK": { S: "trace-123" },
+        ":app": { S: App.App1 },
+        ":isParent": { S: "#" },
+      });
     });
 
-    it("should filter out compound IDs", async () => {
+    it("should only filter out compound IDs when no filters are provided", async () => {
       mockClient.send.mockResolvedValue({
         Items: [],
         LastEvaluatedKey: undefined,
@@ -1374,7 +1410,14 @@ describe("AuditRepository", () => {
       await repository.listTraceItems(params);
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
-      expect(command.input.FilterExpression).toContain("not contains(SK, :isParent)");
+      expect(command.input.FilterExpression).toBe("not contains(SK, :isParent)");
+      expect(command.input.ExpressionAttributeNames).toEqual({
+        "#PK": DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
+      });
+      expect(command.input.ExpressionAttributeValues).toEqual({
+        ":PK": { S: "trace-123" },
+        ":isParent": { S: "#" },
+      });
     });
 
     it("should scan in forward order for trace items", async () => {
@@ -1452,7 +1495,7 @@ describe("AuditRepository", () => {
       expect(result.items[0].error).toEqual({ message: "Trace item error" });
     });
 
-    it("should combine multiple filters with AND", async () => {
+    it("should combine target filters with AND", async () => {
       mockClient.send.mockResolvedValue({
         Items: [],
         LastEvaluatedKey: undefined,
@@ -1470,7 +1513,23 @@ describe("AuditRepository", () => {
       await repository.listTraceItems(params);
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
-      expect(command.input.FilterExpression).toContain(" AND ");
+      expect(command.input.FilterExpression).toBe(
+        "#target.#id = :resourceId AND #target.#type = :resourceType AND #target.#app = :app AND not contains(SK, :isParent)",
+      );
+      expect(command.input.ExpressionAttributeNames).toEqual({
+        "#PK": DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
+        "#target": "target",
+        "#id": "id",
+        "#type": "type",
+        "#app": "app",
+      });
+      expect(command.input.ExpressionAttributeValues).toEqual({
+        ":PK": { S: "trace-123" },
+        ":resourceId": { S: "resource-456" },
+        ":resourceType": { S: ResourceType.UNKNOWN },
+        ":app": { S: App.App1 },
+        ":isParent": { S: "#" },
+      });
     });
 
     it("should use provided page size", async () => {
@@ -1596,6 +1655,41 @@ describe("AuditRepository", () => {
         ResourceType.UNKNOWN,
       );
       expect(command.input.ExpressionAttributeValues?.[":resourceId"]?.S).toBe("resource-456");
+    });
+
+    it("should send the exact combined target filter", async () => {
+      mockClient.send.mockResolvedValue({
+        Items: [],
+        LastEvaluatedKey: undefined,
+      });
+
+      await repository.listByStatus({
+        status: "warn",
+        app: App.App1,
+        resource: {
+          type: ResourceType.UNKNOWN,
+          id: "resource-456",
+        },
+      });
+
+      const command = mockClient.send.mock.calls[0][0] as QueryCommand;
+      expect(command.input.FilterExpression).toBe(
+        "#target.#id = :resourceId AND #target.#type = :resourceType AND #target.#app = :app AND not contains(SK, :isParent)",
+      );
+      expect(command.input.ExpressionAttributeNames).toEqual({
+        "#PK": DynamoDB.Keys.GSI2_SS_PARTITION_KEY,
+        "#target": "target",
+        "#id": "id",
+        "#type": "type",
+        "#app": "app",
+      });
+      expect(command.input.ExpressionAttributeValues).toEqual({
+        ":PK": { S: "warn" },
+        ":resourceId": { S: "resource-456" },
+        ":resourceType": { S: ResourceType.UNKNOWN },
+        ":app": { S: App.App1 },
+        ":isParent": { S: "#" },
+      });
     });
 
     it("should use tenant-prefixed partition key and pagination", async () => {

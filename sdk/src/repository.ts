@@ -281,6 +281,61 @@ export type TypedListByStatusOptions<C extends AuditConfig> = {
 };
 
 /**
+ * Builds the filter shared by index listings that narrow on the audit target.
+ *
+ * App and resource values live on the nested `target` map (`target.app`,
+ * `target.type`, `target.id`), so the filters address them through expression
+ * attribute names. Audits recorded against additional resources carry a
+ * compound sort key and are always excluded.
+ *
+ * @param params - Optional app and resource filters
+ * @returns Filter conditions plus the attribute names and values they reference
+ * @internal
+ */
+function buildTargetFilter(params: { app?: string; resource?: { type?: string; id?: string } }) {
+  const filters: string[] = [];
+  const ExpressionAttributeValues: UnmarshalledAttributes = {};
+  const ExpressionAttributeNames: Record<string, string> = {};
+
+  if (params?.resource?.id) {
+    Object.assign(ExpressionAttributeValues, {
+      ":resourceId": params.resource.id,
+    });
+    ExpressionAttributeNames["#target"] = "target";
+    ExpressionAttributeNames["#id"] = "id";
+    filters.push("#target.#id = :resourceId");
+  }
+
+  if (params?.resource?.type) {
+    Object.assign(ExpressionAttributeValues, {
+      ":resourceType": params.resource.type,
+    });
+    ExpressionAttributeNames["#target"] = "target";
+    ExpressionAttributeNames["#type"] = "type";
+    filters.push("#target.#type = :resourceType");
+  }
+
+  if (params?.app) {
+    Object.assign(ExpressionAttributeValues, {
+      ":app": params.app,
+    });
+    ExpressionAttributeNames["#target"] = "target";
+    ExpressionAttributeNames["#app"] = "app";
+    filters.push("#target.#app = :app");
+  }
+
+  // Audits with other resources will have a compound id, filter these out
+  Object.assign(ExpressionAttributeValues, { ":isParent": "#" });
+  filters.push("not contains(SK, :isParent)");
+
+  return {
+    FilterExpression: filters.join(" AND "),
+    ExpressionAttributeNames,
+    ExpressionAttributeValues,
+  };
+}
+
+/**
  * Repository for managing audit records in DynamoDB.
  *
  * Provides CRUD operations for audit records with support for:
@@ -805,49 +860,25 @@ export class AuditRepository<C extends AuditConfig> {
     const pkBase = params.trace;
     const pk = params.tenantId ? `${params.tenantId}#${pkBase}` : pkBase;
 
-    const filters = [];
-    const ExpressionAttributeValues: UnmarshalledAttributes = {
-      ":PK": pk,
-    };
-
-    if (params?.resource?.id) {
-      Object.assign(ExpressionAttributeValues, {
-        ":resourceId": params?.resource?.id,
-      });
-      filters.push("resourceId=:resourceId");
-    }
-
-    if (params?.resource?.type) {
-      Object.assign(ExpressionAttributeValues, {
-        ":resourceType": params?.resource?.type,
-      });
-      filters.push("resourceType=:resourceType");
-    }
-
-    if (params?.app) {
-      Object.assign(ExpressionAttributeValues, {
-        ":app": params.app,
-      });
-      filters.push("app=:app");
-    }
-
-    // Audits with other resources will have a compound id - filter these out
-    Object.assign(ExpressionAttributeValues, { ":isParent": "#" });
-    filters.push("not contains(SK, :isParent)");
+    const filter = buildTargetFilter(params);
 
     const { Items: items, LastEvaluatedKey: lastEvaluatedKey } = await this.client.send(
       new QueryCommand({
         ScanIndexForward: true,
         IndexName: DynamoDB.Indexes.GSI1_SN,
-        ExpressionAttributeValues: marshall(ExpressionAttributeValues),
+        ExpressionAttributeValues: marshall({
+          ":PK": pk,
+          ...filter.ExpressionAttributeValues,
+        }),
         ExpressionAttributeNames: {
           "#PK": DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
+          ...filter.ExpressionAttributeNames,
         },
         KeyConditionExpression: "#PK=:PK",
         TableName: DynamoDB.Table.Name(),
         Limit: pageSize,
         ExclusiveStartKey: startKey ? marshall(startKey) : undefined,
-        FilterExpression: filters.join(" AND "),
+        FilterExpression: filter.FilterExpression,
       }),
     );
 
@@ -878,56 +909,25 @@ export class AuditRepository<C extends AuditConfig> {
     const pkBase = params.status;
     const pk = params.tenantId ? `${params.tenantId}#${pkBase}` : pkBase;
 
-    const filters: string[] = [];
-    const ExpressionAttributeValues: UnmarshalledAttributes = {
-      ":PK": pk,
-    };
-    const ExpressionAttributeNames: Record<string, string> = {
-      "#PK": DynamoDB.Keys.GSI2_SS_PARTITION_KEY,
-    };
-
-    if (params?.resource?.id) {
-      Object.assign(ExpressionAttributeValues, {
-        ":resourceId": params.resource.id,
-      });
-      ExpressionAttributeNames["#target"] = "target";
-      ExpressionAttributeNames["#id"] = "id";
-      filters.push("#target.#id = :resourceId");
-    }
-
-    if (params?.resource?.type) {
-      Object.assign(ExpressionAttributeValues, {
-        ":resourceType": params.resource.type,
-      });
-      ExpressionAttributeNames["#target"] = "target";
-      ExpressionAttributeNames["#type"] = "type";
-      filters.push("#target.#type = :resourceType");
-    }
-
-    if (params?.app) {
-      Object.assign(ExpressionAttributeValues, {
-        ":app": params.app,
-      });
-      ExpressionAttributeNames["#target"] = "target";
-      ExpressionAttributeNames["#app"] = "app";
-      filters.push("#target.#app = :app");
-    }
-
-    // Audits with other resources will have a compound id, filter these out
-    Object.assign(ExpressionAttributeValues, { ":isParent": "#" });
-    filters.push("not contains(SK, :isParent)");
+    const filter = buildTargetFilter(params);
 
     const { Items: items, LastEvaluatedKey: lastEvaluatedKey } = await this.client.send(
       new QueryCommand({
         ScanIndexForward: false,
         IndexName: DynamoDB.Indexes.GSI2_SS,
-        ExpressionAttributeValues: marshall(ExpressionAttributeValues),
-        ExpressionAttributeNames,
+        ExpressionAttributeValues: marshall({
+          ":PK": pk,
+          ...filter.ExpressionAttributeValues,
+        }),
+        ExpressionAttributeNames: {
+          "#PK": DynamoDB.Keys.GSI2_SS_PARTITION_KEY,
+          ...filter.ExpressionAttributeNames,
+        },
         KeyConditionExpression: "#PK = :PK",
         TableName: DynamoDB.Table.Name(),
         Limit: pageSize,
         ExclusiveStartKey: startKey ? marshall(startKey) : undefined,
-        FilterExpression: filters.length > 0 ? filters.join(" AND ") : undefined,
+        FilterExpression: filter.FilterExpression,
       }),
     );
 
