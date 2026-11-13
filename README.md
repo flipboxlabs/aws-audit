@@ -135,6 +135,8 @@ GET /trace/{traceId}
 
 An audit's `trace` is the trace it was written with, and is omitted when it has none. `GET /apps/{app}/objects/{type}/{item}` and `GET /trace/{trace}` rebuild it from index keys, so there a trace written with stage `0` (`abc:0`) comes back as the equivalent `abc`. `GET /status/{status}` omits `trace`, because the status index doesn't project it; fetch the single audit to read it.
 
+Getting or rerunning a single audit answers `404` when `{auditId}` doesn't exist or belongs to a resource other than `{resourceId}`. An audit that lists a resource in `resources` also appears in that resource's listing, with the audit's `id` and its target as the `source`; fetch or rerun it under the source: `/apps/{source.app}/objects/{source.type}/{source.id}/{id}`.
+
 `GET /config` answers:
 
 ```json

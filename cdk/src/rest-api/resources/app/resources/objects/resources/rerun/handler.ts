@@ -39,14 +39,22 @@ app.post(
     const {
       [BASE_API_RESOURCE.RESOURCE_WILDCARD]: appId,
       [ITEM_API_RESOURCE.RESOURCE_WILDCARD]: resourceType,
+      [ITEM_API_RESOURCE.RESOURCE_WILDCARD_ITEM]: itemId,
       [ITEM_API_RESOURCE.RESOURCE_WILDCARD_ITEM_AUDIT]: auditId,
     } = reqCtx.valid.req.path;
 
-    const item = await audits.getItem({
+    const identifiers = {
       app: appId as App,
       resourceType: resourceType as ResourceType,
       id: auditId,
-    });
+    };
+    const item = await audits.getItem(identifiers);
+
+    // The lookup ignores {item}, so an audit of another item is answered as missing.
+    // A target without an id can't be matched, so any {item} resolves it.
+    if (item.target.id !== undefined && String(item.target.id) !== itemId) {
+      throw new AuditNotFoundError(identifiers);
+    }
 
     if (!item.rerunable || !item.event) {
       throw new BadRequestError("Item is not rerunable");
