@@ -5,6 +5,7 @@ import type * as events from "aws-cdk-lib/aws-events";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
 import { Construct } from "constructs";
 import App from "./app/construct.js";
+import Config from "./config/construct.js";
 import Status from "./status/construct.js";
 import Trace from "./trace/construct.js";
 
@@ -32,5 +33,11 @@ export class RestApiResourcesConstruct extends Construct {
     new App(this, "App", props);
 
     new Status(this, "Status", props);
+
+    new Config(this, "Config", {
+      config: props.config,
+      lambda: props.lambda,
+      restApi: props.restApi,
+    });
   }
 }

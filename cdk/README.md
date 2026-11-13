@@ -92,7 +92,21 @@ EventBridge bus for audit events, enabling event-driven architectures.
 
 ### RestApiConstruct
 
-REST API for querying audits by resource or trace ID.
+REST API for querying audits by resource, status, or trace ID. Every route requires an API key.
+
+| Method | Path                                              | Description                                                     |
+| ------ | ------------------------------------------------- | --------------------------------------------------------------- |
+| `GET`  | `/config`                                         | The deployment's apps, resource types, statuses and CDK version |
+| `GET`  | `/apps/{app}/objects/{type}`                      | Audits for a resource type                                      |
+| `GET`  | `/apps/{app}/objects/{type}/{item}`               | Audits for a resource                                           |
+| `GET`  | `/apps/{app}/objects/{type}/{item}/{audit}`       | A single audit                                                  |
+| `POST` | `/apps/{app}/objects/{type}/{item}/{audit}/rerun` | Rerun an audit's event                                          |
+| `GET`  | `/status/{status}`                                | Audits by status                                                |
+| `GET`  | `/trace/{trace}`                                  | Audits by trace ID                                              |
+
+`GET /config` reads the `AuditConfigLayer` only, so its Lambda has no DynamoDB or EventBridge permissions. Its `version` comes from this package's `package.json` at synth time. Deployments from before the route was added answer `GET /config` with a `403` `{"message":"Missing Authentication Token"}` (API Gateway's response for an unknown route), not a `404`.
+
+> **Upgrading:** `RestApiConstruct` always adds a `/config` resource at the API root. If your stack already adds its own `config` resource to `restApi.root`, synth fails after upgrading, with a duplicate construct or path error. Rename or remove your route before upgrading.
 
 ## CDKConfig
 
