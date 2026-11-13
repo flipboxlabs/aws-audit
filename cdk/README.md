@@ -106,7 +106,7 @@ REST API for querying audits by resource, status, or trace ID. Every route requi
 
 An audit's `trace` is the trace it was written with, and is omitted when it has none. `GET /apps/{app}/objects/{type}/{item}` and `GET /trace/{trace}` rebuild it from index keys, so there a trace written with stage `0` (`abc:0`) comes back as the equivalent `abc`. `GET /status/{status}` omits `trace`, because the status index doesn't project it; fetch the single audit to read it.
 
-Getting or rerunning a single audit answers `404` when `{audit}` doesn't exist or belongs to a resource other than `{item}`. An audit's copy for a related resource has the id `{parentId}#{relatedApp}.{relatedType}#{relatedId}` and is found under that resource, `/apps/{relatedApp}/objects/{relatedType}/{relatedId}/{copyId}` (URL-encode the `#`s), not under the original audit's resource.
+Getting or rerunning a single audit answers `404` when `{audit}` doesn't exist or belongs to a resource other than `{item}`. An audit that lists a resource in `resources` also appears in that resource's listing, with the audit's `id` and its target as the `source`; fetch or rerun it under the source: `/apps/{source.app}/objects/{source.type}/{source.id}/{id}`.
 
 `GET /config` reads the `AuditConfigLayer` only, so its Lambda has no DynamoDB or EventBridge permissions. Its `version` comes from this package's `package.json` at synth time. Deployments from before the route was added answer `GET /config` with a `403` `{"message":"Missing Authentication Token"}` (API Gateway's response for an unknown route), not a `404`.
 
