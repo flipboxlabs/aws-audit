@@ -66,15 +66,7 @@ export default class extends Construct {
         type: dynamodb.AttributeType.NUMBER,
       },
       projectionType: dynamodb.ProjectionType.INCLUDE,
-      nonKeyAttributes: [
-        "operation",
-        "status",
-        "message",
-        "source",
-        "target",
-        "rerunable",
-        "createdAt",
-      ],
+      nonKeyAttributes: [...DynamoDB.Projections.LISTING],
     });
 
     // List by Resource
@@ -90,13 +82,7 @@ export default class extends Construct {
       },
       projectionType: dynamodb.ProjectionType.INCLUDE,
       nonKeyAttributes: [
-        "operation",
-        "status",
-        "message",
-        "source",
-        "target",
-        "rerunable",
-        "createdAt",
+        ...DynamoDB.Projections.LISTING,
         DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
         DynamoDB.Keys.GSI1_SN_SORT_KEY,
       ],
@@ -114,15 +100,7 @@ export default class extends Construct {
         type: dynamodb.AttributeType.STRING,
       },
       projectionType: dynamodb.ProjectionType.INCLUDE,
-      nonKeyAttributes: [
-        "operation",
-        "status",
-        "message",
-        "source",
-        "target",
-        "rerunable",
-        "createdAt",
-      ],
+      nonKeyAttributes: [...DynamoDB.Projections.LISTING],
     });
   }
 }

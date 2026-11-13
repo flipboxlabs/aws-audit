@@ -1954,6 +1954,56 @@ describe("AuditRepository", () => {
         expect(result.items.map((item) => item.id)).toEqual(["audit-1", "audit-2"]);
       });
 
+      it("should list audits that share an id in different partitions", async () => {
+        const otherTarget = { app: App.TestApp, type: ResourceType.USER, id: "u1" };
+        mockPage([
+          parentRow(traceKeys),
+          parentRow({
+            ...traceKeys,
+            PK: `${App.TestApp}.${ResourceType.USER}`,
+            target: otherTarget,
+          }),
+          relatedRow(traceKeys),
+        ]);
+
+        const result = await repository.listTraceItems({
+          trace: "trace-123",
+          resource: { id: "u1" },
+        });
+
+        expect(result.items.map((item) => [item.id, item.target])).toEqual([
+          ["audit-1", parentTarget],
+          ["audit-1", otherTarget],
+        ]);
+        expect(batchGetCommands()).toHaveLength(0);
+      });
+
+      it("should read a copy's parent when a different audit with the same id is on the page", async () => {
+        const otherTarget = { app: App.TestApp, type: ResourceType.USER, id: "u1" };
+        mockPage(
+          [
+            parentRow({
+              ...traceKeys,
+              PK: `${App.TestApp}.${ResourceType.USER}`,
+              target: otherTarget,
+            }),
+            relatedRow(traceKeys),
+          ],
+          [parentRow(traceKeys)],
+        );
+
+        const result = await repository.listTraceItems({ trace: "trace-123", app: App.TestApp });
+
+        const [batchGet] = batchGetCommands();
+        expect(batchGet.input.RequestItems?.[DynamoDB.Table.Name()]?.Keys).toEqual([
+          marshall({ PK: `${App.App1}.${ResourceType.ORDER}`, SK: "audit-1" }),
+        ]);
+        expect(result.items.map((item) => [item.id, item.target])).toEqual([
+          ["audit-1", otherTarget],
+          ["audit-1", parentTarget],
+        ]);
+      });
+
       it("should key the parent read with the tenant prefix", async () => {
         mockPage(
           [relatedRow({ ...traceKeys, PK: `org-1#${App.TestApp}.${ResourceType.USER}` })],
