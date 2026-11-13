@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.3](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.5.2...sdk-v1.5.3) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cdk:** answer 500 when rerun can't re-send the event ([18bb1df](https://github.com/flipboxlabs/aws-audit/commit/18bb1df802998a395af9c2a7f5e1a5e837ebd6ed))
+
 ## [1.5.2](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.5.1...sdk-v1.5.2) (2026-11-13)
 
 
