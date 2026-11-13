@@ -117,6 +117,22 @@ describe("BatchHandler", () => {
       expect(result).toEqual([]);
     });
 
+    it.each([0, 11, Number.NaN])(
+      "should log critical and return empty array for chunk %s",
+      async (chunk) => {
+        const entries = [{ DetailType: "Test", Detail: "{}", Source: "test" }];
+
+        const result = await handler.putEvents(entries, chunk);
+
+        expect(result).toEqual([]);
+        expect(mockClient.send).not.toHaveBeenCalled();
+        expect(mockLogger.critical).toHaveBeenCalledWith(
+          "Error pushing event bridge events",
+          expect.any(RangeError),
+        );
+      },
+    );
+
     it("should handle response without Entries", async () => {
       const mockOutput: PutEventsCommandOutput = {
         $metadata: {},

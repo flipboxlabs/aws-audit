@@ -84,9 +84,10 @@ export class BatchHandler {
    * at debug level. On failure, logs at critical level and returns an empty array.
    * Entries EventBridge rejected come back in the results (with an `ErrorCode`)
    * rather than throwing; use {@link putEventsOrThrow} to fail on either.
+   * A `chunk` that isn't an integer from 1 to 10 is a failure too: nothing is sent.
    *
    * @param entries - Array of EventBridge event entries to publish
-   * @param chunk - Batch size for chunking (default: 10)
+   * @param chunk - Batch size for chunking, an integer from 1 to 10 (default: 10)
    * @returns Array of result entries from EventBridge, or empty array on error
    *
    * @example
@@ -100,6 +101,8 @@ export class BatchHandler {
     chunk: number = CHUNK_SIZE,
   ): Promise<PutEventsResultEntry[]> {
     try {
+      assertChunkSize(chunk);
+
       const result = await this.sendEventsViaBatch(this.client, entries, chunk);
 
       this.logger.debug("Pushed event bridge events", {
