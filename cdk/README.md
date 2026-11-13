@@ -78,6 +78,8 @@ const auditConfigLayer = new AuditConfigLayer(this, "AuditConfigLayer", {
 });
 ```
 
+Your own Lambdas can attach `auditConfigLayer.layer` and import `apps` and `resourceTypes` from `AUDIT_CONFIG_LAYER_MODULE_PATH` (`/opt/nodejs/audit-config.mjs`); mark that path external when bundling. The earlier `AUDIT_CONFIG_LAYER_PATH` (`/opt/nodejs/audit-config.js`) still works, but relies on the layer's `nodejs/package.json`, which another layer shipping its own `nodejs/package.json` can replace.
+
 ### CloudWatchConstruct
 
 CloudWatch log subscription that captures audit logs and stores them in DynamoDB.

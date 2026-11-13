@@ -5,7 +5,7 @@ import * as nodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as logs from "aws-cdk-lib/aws-logs";
 import type { Construct } from "constructs";
 import type { CDKConfig } from "../constants.js";
-import { AUDIT_CONFIG_LAYER_PATH } from "./construct.js";
+import { AUDIT_CONFIG_LAYER_MODULE_PATH, AUDIT_CONFIG_LAYER_PATH } from "./construct.js";
 
 /**
  * Factory function that creates ESM Node.js Lambda functions with standard configuration.
@@ -29,8 +29,13 @@ export const ESMNodeFunctionFactory =
       bundling: {
         minify: true,
         metafile: false,
-        // Mark audit config layer path as external so esbuild doesn't try to bundle it
-        externalModules: ["aws-sdk", "@aws-sdk/*", AUDIT_CONFIG_LAYER_PATH],
+        // Mark audit config layer paths as external so esbuild doesn't try to bundle them
+        externalModules: [
+          "aws-sdk",
+          "@aws-sdk/*",
+          AUDIT_CONFIG_LAYER_MODULE_PATH,
+          AUDIT_CONFIG_LAYER_PATH,
+        ],
         format: nodejs.OutputFormat.ESM,
         platform: "node",
         target: "esnext",
