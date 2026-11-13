@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.6.0...sdk-v1.6.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **sdk:** include related-resource audits in filtered trace and status listings ([9a68373](https://github.com/flipboxlabs/aws-audit/commit/9a68373990a88fe16240c93860969fb37df5ab58))
+
 ## [1.6.0](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.5.4...sdk-v1.6.0) (2026-11-13)
 
 
