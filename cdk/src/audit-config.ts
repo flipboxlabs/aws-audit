@@ -1,6 +1,6 @@
 import { defineAuditConfig } from "@flipboxlabs/aws-audit-sdk";
 // @ts-expect-error - This import is resolved at runtime from the Lambda layer
-import { apps, resourceTypes } from "/opt/nodejs/audit-config.js";
+import { apps, resourceTypes } from "/opt/nodejs/audit-config.mjs";
 
 /**
  * Audit configuration loaded from the Lambda layer.

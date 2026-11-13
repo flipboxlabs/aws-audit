@@ -18,6 +18,18 @@ export interface AuditConfigLayerProps {
 /**
  * Path where handlers should import the audit config from.
  * This is the standard Lambda layer path for Node.js.
+ *
+ * The `.mjs` extension makes Node load it as an ES module no matter which
+ * `package.json` ends up at `/opt/nodejs` once Lambda merges every layer into `/opt`.
+ */
+export const AUDIT_CONFIG_LAYER_MODULE_PATH = "/opt/nodejs/audit-config.mjs";
+
+/**
+ * Earlier path of the audit config, kept for handlers that still import it.
+ *
+ * It loads as an ES module only through the layer's `nodejs/package.json`
+ * (`{"type":"module"}`), which another layer shipping its own
+ * `nodejs/package.json` can replace. Prefer {@link AUDIT_CONFIG_LAYER_MODULE_PATH}.
  */
 export const AUDIT_CONFIG_LAYER_PATH = "/opt/nodejs/audit-config.js";
 
@@ -56,7 +68,12 @@ export const resourceTypes = ${JSON.stringify(props.resourceTypes)};
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "audit-config-"));
     const nodejsDir = path.join(tempDir, "nodejs");
     fs.mkdirSync(nodejsDir);
+    fs.writeFileSync(path.join(nodejsDir, "audit-config.mjs"), configCode);
+    // Keep audit-config.js for handlers importing the earlier path; without the
+    // package.json Node loads it as CommonJS and they fail at init with
+    // "Named export 'apps' not found"
     fs.writeFileSync(path.join(nodejsDir, "audit-config.js"), configCode);
+    fs.writeFileSync(path.join(nodejsDir, "package.json"), JSON.stringify({ type: "module" }));
 
     this.layer = new lambda.LayerVersion(this, "Layer", {
       code: lambda.Code.fromAsset(tempDir),
