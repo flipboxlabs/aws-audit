@@ -426,6 +426,61 @@ describe("objects handler", () => {
       expect(JSON.parse(response.body as string)).toEqual(mockResponse);
     });
 
+    it("should return an audit whose target has no id for any item", async () => {
+      const mockResponse = {
+        id: "audit-456",
+        status: "success",
+        tier: 2,
+        operation: "testOp",
+        target: { app: App.App1, type: ResourceType.UNKNOWN },
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-02T00:00:00.000Z",
+      };
+      mockGetItem.mockResolvedValue(mockResponse);
+
+      const response = await handler(createDetailApiGatewayEvent(), mockContext);
+
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(response.body as string)).toEqual(mockResponse);
+    });
+
+    it("should return the audit of a listed related-resource entry under its source path", async () => {
+      // Listings return a related copy with the parent's id; its source is the parent's target
+      const listed = {
+        id: "audit-456",
+        target: { app: App.TestApp, type: ResourceType.USER, id: "user-789" },
+        source: { app: App.App1, type: ResourceType.UNKNOWN, id: "item-123" },
+      };
+      const mockResponse = {
+        id: listed.id,
+        status: "success",
+        tier: 2,
+        operation: "testOp",
+        target: listed.source,
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-02T00:00:00.000Z",
+      };
+      mockGetItem.mockResolvedValue(mockResponse);
+
+      const response = await handler(
+        createDetailApiGatewayEvent({
+          app: listed.source.app,
+          object: listed.source.type,
+          item: listed.source.id,
+          audit: listed.id,
+        }),
+        mockContext,
+      );
+
+      expect(mockGetItem).toHaveBeenCalledWith({
+        app: App.App1,
+        resourceType: ResourceType.UNKNOWN,
+        id: "audit-456",
+      });
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(response.body as string)).toEqual(mockResponse);
+    });
+
     it("should return a related-resource copy under the related resource's path", async () => {
       // upsertItem stores the copy under the related resource's app and type, with it as the target
       const auditId = `audit-456#${App.TestApp}.${ResourceType.USER}#user-789`;

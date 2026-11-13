@@ -277,6 +277,22 @@ describe("rerun handler", () => {
       expect(response.statusCode).toBe(204);
     });
 
+    it("should rerun an audit whose target has no id for any item", async () => {
+      mockGetItem.mockResolvedValue({
+        id: "audit-456",
+        target: { app: App.App1, type: ResourceType.UNKNOWN },
+        rerunable: true,
+        event: storedEvent({ k: 1 }),
+      });
+      mockPutEventsOrThrow.mockResolvedValue([{ EventId: "event-1" }]);
+
+      const event = createApiGatewayEvent();
+      const response = await handler(event, mockContext);
+
+      expect(mockPutEventsOrThrow).toHaveBeenCalled();
+      expect(response.statusCode).toBe(204);
+    });
+
     it("should find a related-resource copy under the related resource's path", async () => {
       // upsertItem stores the copy under the related resource's app and type, with it as the
       // target; the copy carries no event, so it is found but not rerunable.

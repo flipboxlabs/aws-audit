@@ -135,7 +135,8 @@ app.get(
     const item = await audits.getItem(identifiers);
 
     // The lookup ignores {item}, so an audit of another item is answered as missing.
-    if (item.target.id?.toString() !== itemId) {
+    // A target without an id can't be matched, so any {item} resolves it.
+    if (item.target.id !== undefined && String(item.target.id) !== itemId) {
       throw new AuditNotFoundError(identifiers);
     }
 
