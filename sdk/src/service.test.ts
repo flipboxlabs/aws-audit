@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { AuditNotFoundError } from "./errors.js";
+import { AuditEventBus, BatchHandler, PutEventsError } from "./events/index.js";
 import type { Audit } from "./schema/audit.js";
 import type { UpsertAuditInput } from "./schema/service.js";
 import { AuditService } from "./service.js";
@@ -27,6 +28,7 @@ vi.mock("./eventbridge.js", () => ({
 describe("AuditService", () => {
   let service: AuditService<typeof testConfig>;
   let mockLogger: {
+    critical: ReturnType<typeof vi.fn>;
     error: ReturnType<typeof vi.fn>;
     info: ReturnType<typeof vi.fn>;
     warn: ReturnType<typeof vi.fn>;
@@ -42,13 +44,14 @@ describe("AuditService", () => {
     listByStatus: ReturnType<typeof vi.fn>;
   };
   let mockEvents: {
-    upserted: ReturnType<typeof vi.fn>;
+    upsertedOrThrow: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
 
     mockLogger = {
+      critical: vi.fn(),
       error: vi.fn(),
       info: vi.fn(),
       warn: vi.fn(),
@@ -66,7 +69,7 @@ describe("AuditService", () => {
     };
 
     mockEvents = {
-      upserted: vi.fn(),
+      upsertedOrThrow: vi.fn(),
     };
 
     service = new AuditService(
@@ -231,7 +234,7 @@ describe("AuditService", () => {
         }),
       );
       expect(mockStorage.upsertBatch).not.toHaveBeenCalled();
-      expect(mockEvents.upserted).toHaveBeenCalledWith([
+      expect(mockEvents.upsertedOrThrow).toHaveBeenCalledWith([
         expect.objectContaining({
           operation: "createUser",
         }),
@@ -285,7 +288,7 @@ describe("AuditService", () => {
       expect(parentArg.id).toEqual(expect.any(String));
       expect(childArg.id).toBe(`${parentArg.id}#App1.Unknown#resource-1`);
       expect(childArg.id).not.toContain("undefined#");
-      expect(mockEvents.upserted).toHaveBeenCalledWith([
+      expect(mockEvents.upsertedOrThrow).toHaveBeenCalledWith([
         expect.objectContaining({ id: parentArg.id }),
       ]);
     });
@@ -370,7 +373,7 @@ describe("AuditService", () => {
       expect(batchArg[0].error).toBeUndefined();
     });
 
-    it("should not call events.upserted when events is null", async () => {
+    it("should not publish events when events is null", async () => {
       const serviceWithoutEvents = new AuditService(
         mockLogger as unknown as ConstructorParameters<typeof AuditService<typeof testConfig>>[0],
         testConfig,
@@ -397,6 +400,97 @@ describe("AuditService", () => {
         expect.any(Object),
       );
       expect(mockStorage.upsertBatch).not.toHaveBeenCalled();
+    });
+
+    describe("when the Upserted event is not published", () => {
+      const input: UpsertAuditInput = { ...baseInput, id: "audit-id" };
+
+      const expectCriticalLog = (extra: Record<string, unknown>) =>
+        expect(mockLogger.critical).toHaveBeenCalledWith(
+          "Audit stored but Upserted event not published",
+          {
+            tenantId: undefined,
+            id: "audit-id",
+            app: App.App1,
+            target: { type: ResourceType.UNKNOWN, id: "user-123" },
+            ...extra,
+          },
+        );
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it("should log critical with the identifiers and failed entries without throwing", async () => {
+        const failedEntries = [{ ErrorCode: "InternalFailure" }];
+        const error = new PutEventsError(
+          "EventBridge accepted 0 of 1 events after 3 attempts",
+          failedEntries,
+        );
+        mockEvents.upsertedOrThrow.mockRejectedValue(error);
+
+        await expect(service.upsertItem(input)).resolves.toBeUndefined();
+
+        expect(mockStorage.upsertItem).toHaveBeenCalledTimes(1);
+        expectCriticalLog({ failedEntries, error });
+      });
+
+      it("should include the tenantId in the critical log", async () => {
+        const error = new PutEventsError("EventBridge accepted 0 of 1 events after 1 attempt");
+        mockEvents.upsertedOrThrow.mockRejectedValue(error);
+
+        await service.upsertItem({ ...input, tenantId: "tenant-1" });
+
+        expectCriticalLog({ tenantId: "tenant-1", failedEntries: [], error });
+      });
+
+      it("should log critical for an error that isn't a PutEventsError", async () => {
+        const error = new Error("unexpected");
+        mockEvents.upsertedOrThrow.mockRejectedValue(error);
+
+        await expect(service.upsertItem(input)).resolves.toBeUndefined();
+
+        expectCriticalLog({ failedEntries: undefined, error });
+      });
+
+      it("should retry a persistently failing event 3 times, then log critical", async () => {
+        vi.useFakeTimers();
+
+        const send = vi.fn().mockResolvedValue({
+          $metadata: {},
+          FailedEntryCount: 1,
+          Entries: [{ ErrorCode: "InternalFailure", ErrorMessage: "Try again" }],
+        });
+        const logger = mockLogger as unknown as ConstructorParameters<typeof BatchHandler>[0];
+        const events = new AuditEventBus(
+          logger,
+          new BatchHandler(logger, { send } as unknown as ConstructorParameters<
+            typeof BatchHandler
+          >[1]),
+        );
+        const serviceWithEvents = new AuditService(
+          logger,
+          testConfig,
+          mockStorage as unknown as ConstructorParameters<
+            typeof AuditService<typeof testConfig>
+          >[2],
+          events,
+        );
+
+        const promise = serviceWithEvents.upsertItem(input);
+        await vi.runAllTimersAsync();
+        await expect(promise).resolves.toBeUndefined();
+
+        expect(send).toHaveBeenCalledTimes(3);
+        expect(mockStorage.upsertItem).toHaveBeenCalledTimes(1);
+        expectCriticalLog({
+          failedEntries: [{ ErrorCode: "InternalFailure", ErrorMessage: "Try again" }],
+          error: expect.objectContaining({
+            name: "PutEventsError",
+            message: "EventBridge accepted 0 of 1 events after 3 attempts",
+          }),
+        });
+      });
     });
 
     describe("attempt tracking", () => {

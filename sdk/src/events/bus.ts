@@ -6,7 +6,7 @@ import {
 } from "@aws-sdk/client-eventbridge";
 import { EventBridge } from "../constants.js";
 import type { UpsertAudit } from "../schema/service.js";
-import { BatchHandler } from "./batch-handler.js";
+import { BatchHandler, PutEventsError } from "./batch-handler.js";
 
 /**
  * Event detail payload structure for audit events.
@@ -42,11 +42,11 @@ export class AuditEventBus {
   /**
    * Creates a new AuditEventBus instance.
    *
-   * @param logger - Logger instance for the underlying BatchHandler
+   * @param logger - Logger instance for failed publishes and the underlying BatchHandler
    * @param handler - BatchHandler for EventBridge operations (defaults to new instance with EventBridgeClient)
    */
   constructor(
-    logger: Logger,
+    protected readonly logger: Logger,
     protected readonly handler: BatchHandler = new BatchHandler(
       logger,
       new EventBridgeClient({
@@ -85,9 +85,15 @@ export class AuditEventBus {
    *
    * Additional events can be included via the extraEvents parameter.
    *
+   * Events are sent like {@link upsertedOrThrow}, so throttled entries and
+   * internal failures are retried, but this never throws: when an event still
+   * isn't accepted it logs at critical level and returns what EventBridge
+   * answered, as {@link BatchHandler.putEvents} does.
+   *
    * @param items - Array of audit records to publish as upserted events
    * @param extraEvents - Optional additional EventBridge events to include in the batch
-   * @returns Array of result entries from EventBridge
+   * @returns Array of result entries from EventBridge (rejected ones carry an
+   *   `ErrorCode`), or an empty array when a PutEvents call threw
    *
    * @example
    * ```typescript
@@ -101,6 +107,46 @@ export class AuditEventBus {
     items: Array<UpsertAudit>,
     extraEvents?: PutEventsRequestEntry[],
   ): Promise<PutEventsResultEntry[]> {
+    try {
+      return await this.upsertedOrThrow(items, extraEvents);
+    } catch (error) {
+      this.logger.critical("Error pushing event bridge events", error as Error);
+
+      return error instanceof PutEventsError && error.cause === undefined ? error.results : [];
+    }
+  }
+
+  /**
+   * Publishes audit "upserted" events to EventBridge like {@link upserted},
+   * but throws when any event is not accepted instead of logging it.
+   *
+   * Events, extra events included, are sent with
+   * {@link BatchHandler.putEventsWithRetry} and its defaults: entries rejected
+   * for throttling or an internal failure are retried (3 attempts in total,
+   * with jittered backoff); other rejections, entries without a result entry,
+   * and PutEvents calls that throw fail without a resend.
+   *
+   * @param items - Array of audit records to publish as upserted events
+   * @param extraEvents - Optional additional EventBridge events to include in the batch
+   * @returns Array of result entries from EventBridge, all accepted, in request order
+   *   (audit events first, then extra events)
+   * @throws {PutEventsError} When any event is not accepted once retries are done
+   *
+   * @example
+   * ```typescript
+   * try {
+   *   await eventBus.upsertedOrThrow(audits);
+   * } catch (error) {
+   *   if (error instanceof PutEventsError) {
+   *     logger.critical("Upserted events not published", { failedEntries: error.failedEntries });
+   *   }
+   * }
+   * ```
+   */
+  public async upsertedOrThrow(
+    items: Array<UpsertAudit>,
+    extraEvents?: PutEventsRequestEntry[],
+  ): Promise<PutEventsResultEntry[]> {
     const events = items.map((audit) => ({
       EventBusName: EventBridge.Bus.Name(),
       Detail: this.createDetail(audit),
@@ -108,6 +154,6 @@ export class AuditEventBus {
       Source: EventBridge.Source,
     }));
 
-    return await this.handler.putEvents([...events, ...(extraEvents || [])]);
+    return await this.handler.putEventsWithRetry([...events, ...(extraEvents || [])]);
   }
 }

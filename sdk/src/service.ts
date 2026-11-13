@@ -1,6 +1,7 @@
 import type { Logger } from "@aws-lambda-powertools/logger";
 import type { AuditConfig } from "./config.js";
 import { AuditNotFoundError } from "./errors.js";
+import { PutEventsError } from "./events/batch-handler.js";
 import { AuditEventBus } from "./events/bus.js";
 import {
   AuditRepository,
@@ -131,6 +132,11 @@ export class AuditService<C extends AuditConfig> {
    * on `input` are accepted for backward compatibility but ignored.
    *
    * After storage, publishes an "Upserted" event to EventBridge (if events is configured).
+   * Throttled or internally failed events are retried (see {@link AuditEventBus.upsertedOrThrow}).
+   * If the event still isn't published, this logs at critical level with the message
+   * `"Audit stored but Upserted event not published"` and the audit's identifiers, and does
+   * not throw: the audit is already stored, and a throw would make callers upsert it again
+   * and record an extra attempt.
    *
    * @param input - The audit data to upsert
    *
@@ -194,7 +200,21 @@ export class AuditService<C extends AuditConfig> {
       await this.storage.upsertBatch(batch);
     }
 
-    await this.events?.upserted([item]);
+    try {
+      await this.events?.upsertedOrThrow([item]);
+    } catch (error) {
+      this.logger.critical("Audit stored but Upserted event not published", {
+        tenantId: item.tenantId,
+        id: item.id,
+        app: item.target.app,
+        target: {
+          type: item.target.type,
+          id: item.target.id,
+        },
+        failedEntries: error instanceof PutEventsError ? error.failedEntries : undefined,
+        error,
+      });
+    }
   }
 
   /**
