@@ -1521,7 +1521,7 @@ describe("AuditRepository", () => {
       expect(result.pagination?.nextToken).toBeDefined();
     });
 
-    it("should preserve trace when the status query item includes trace keys", async () => {
+    it("should return the projected status item fields", async () => {
       mockClient.send.mockResolvedValue({
         Items: [
           marshall({
@@ -1529,8 +1529,6 @@ describe("AuditRepository", () => {
             SK: "audit-123",
             GSI2_SS_PK: "fail",
             GSI2_SS_SK: "2024-01-02T00:00:00.000Z#audit-123",
-            GSI1_SN_PK: "trace-123",
-            GSI1_SN_SK: 2,
             operation: "statusOp",
             status: "fail",
             target: {
@@ -1550,7 +1548,6 @@ describe("AuditRepository", () => {
       const result = await repository.listByStatus({ status: "fail" });
 
       expect(result.items).toHaveLength(1);
-      expect(result.items[0].trace).toBe("trace-123:2");
       expect(result.items[0].createdAt).toBe("2024-01-02T00:00:00.000Z");
       expect(result.items[0].updatedAt).toBe("2024-01-03T00:00:00.000Z");
       expect(result.items[0].attempts).toEqual([
@@ -1642,6 +1639,28 @@ describe("AuditRepository", () => {
         expect((await getItem())?.trace).toBe("abc:1");
       });
 
+      it("should return a stored stage-0 trace as written, not rebuilt from the keys", async () => {
+        mockClient.send.mockResolvedValue({
+          Item: marshall(createMockAuditItem({ trace: "abc:0", GSI1_SN_PK: "abc", GSI1_SN_SK: 0 })),
+        });
+
+        expect((await getItem())?.trace).toBe("abc:0");
+      });
+
+      it("should omit trace when it's stored as NULL", async () => {
+        mockClient.send.mockResolvedValue({
+          Item: marshall(
+            createMockAuditItem({ trace: null, GSI1_SN_PK: undefined, GSI1_SN_SK: undefined }),
+            { removeUndefinedValues: true },
+          ),
+        });
+
+        const result = await getItem();
+
+        expect(result).toBeDefined();
+        expect(result).not.toHaveProperty("trace");
+      });
+
       it("should return a stage-less stored trace without a stage", async () => {
         mockClient.send.mockResolvedValue({
           Item: marshall(createMockAuditItem({ trace: "abc", GSI1_SN_PK: "abc", GSI1_SN_SK: 0 })),
@@ -1711,6 +1730,24 @@ describe("AuditRepository", () => {
         const result = await listObjects("t1");
 
         expect(result.items[0].trace).toBe("abc");
+      });
+
+      it("should return a stored stage-0 trace as written, not rebuilt from the keys", async () => {
+        mockQueryItems(createMockAuditItem({ trace: "abc:0", GSI1_SN_PK: "abc", GSI1_SN_SK: 0 }));
+
+        const result = await listObjects();
+
+        expect(result.items[0].trace).toBe("abc:0");
+      });
+
+      it("should omit trace when it's stored as NULL", async () => {
+        mockQueryItems(
+          createMockAuditItem({ trace: null, GSI1_SN_PK: undefined, GSI1_SN_SK: undefined }),
+        );
+
+        const result = await listObjects();
+
+        expect(result.items[0]).not.toHaveProperty("trace");
       });
 
       it("should omit trace when the audit has none", async () => {

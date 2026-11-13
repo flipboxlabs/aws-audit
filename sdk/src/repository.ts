@@ -205,8 +205,7 @@ type ListingItem = TraceListingItem & Pick<SecondaryKeys, "GSI1_SS_PK" | "GSI1_S
  */
 type StatusListingItem = ListingAttributes &
   Pick<DynamoDBPrimaryKey, "PK" | "SK"> &
-  Pick<SecondaryKeys, "GSI2_SS_PK" | "GSI2_SS_SK"> &
-  Partial<Pick<SecondaryKeys, "GSI1_SN_PK" | "GSI1_SN_SK">>;
+  Pick<SecondaryKeys, "GSI2_SS_PK" | "GSI2_SS_SK">;
 
 /**
  * Options for listing audit objects by resource with typed App and ResourceType.
@@ -934,9 +933,7 @@ export class AuditRepository<C extends AuditConfig> {
     );
 
     return PaginationCollectionSchema(AuditPayloadSchema).parse({
-      items: items?.map((i) =>
-        this.transformStatusListItem(unmarshall(i) as StatusListingItem, params.tenantId),
-      ),
+      items: items?.map((i) => this.transformStatusListItem(unmarshall(i) as StatusListingItem)),
       pagination: {
         nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
       },
@@ -1092,33 +1089,36 @@ export class AuditRepository<C extends AuditConfig> {
   }
 
   /**
-   * Resolves the `trace` to return for an audit read from storage.
+   * Replaces an item's stored `trace` with the one to return.
    *
-   * 1. A stored `trace` attribute is returned verbatim.
+   * 1. A stored string `trace` is returned verbatim.
    * 2. Otherwise, when both GSI1_SN keys are present, the trace is rebuilt from them:
    *    a leading `{tenantId}#` is stripped when the tenant is known (from the item, or the
    *    tenant the query was made with), and the stage is appended unless it's 0. A trace
    *    written as `abc:0` therefore comes back as `abc`, which is equivalent.
    *    When the tenant isn't known, the key is returned as-is rather than guessing a
    *    prefix by splitting on `#`.
-   * 3. Otherwise `trace` is omitted.
+   * 3. Otherwise the `trace` key is removed. This covers a trace stored as NULL
+   *    (an empty string written with `convertEmptyValues`).
    *
    * @param item - Raw DynamoDB item, or the attributes an index projects
    * @param tenantId - Tenant the query was made with, if any
-   * @returns An object to spread into the payload, with `trace` only when resolvable
+   * @returns The item, with `trace` only when resolvable
    * @internal
    */
-  private resolveTrace(
-    item: Partial<Pick<AuditStorage, "trace" | "tenantId">> &
-      Partial<Pick<SecondaryKeys, "GSI1_SN_PK" | "GSI1_SN_SK">>,
-    tenantId?: string,
-  ): { trace?: string } {
-    if (typeof item.trace === "string") {
-      return { trace: item.trace };
+  private resolveTrace<
+    T extends { trace?: unknown; tenantId?: string } & Partial<
+      Pick<SecondaryKeys, "GSI1_SN_PK" | "GSI1_SN_SK">
+    >,
+  >(item: T, tenantId?: string): Omit<T, "trace"> & { trace?: string } {
+    const { trace, ...rest } = item;
+
+    if (typeof trace === "string") {
+      return { ...rest, trace };
     }
 
     if (item.GSI1_SN_PK === undefined || item.GSI1_SN_SK === undefined) {
-      return {};
+      return rest;
     }
 
     const tenant = item.tenantId ?? tenantId;
@@ -1129,7 +1129,7 @@ export class AuditRepository<C extends AuditConfig> {
         : item.GSI1_SN_PK;
     const stage = Number(item.GSI1_SN_SK);
 
-    return { trace: stage === 0 ? id : `${id}:${stage}` };
+    return { ...rest, trace: stage === 0 ? id : `${id}:${stage}` };
   }
 
   /**
@@ -1144,7 +1144,6 @@ export class AuditRepository<C extends AuditConfig> {
    */
   private transformItem(item: DynamoDBItem): Audit {
     return AuditSchema.parse({
-      ...item,
       ...this.resolveTrace(item),
       id: item.id.split("#").pop(),
     });
@@ -1162,7 +1161,6 @@ export class AuditRepository<C extends AuditConfig> {
     const [id] = item.SK.split("#");
 
     return AuditPayloadSchema.parse({
-      ...item,
       ...this.resolveTrace(item, tenantId),
       id: id,
     });
@@ -1180,7 +1178,6 @@ export class AuditRepository<C extends AuditConfig> {
     const [id] = item.SK.split("#");
 
     return AuditPayloadSchema.parse({
-      ...item,
       ...this.resolveTrace(item, tenantId),
       id: id,
     });
@@ -1193,16 +1190,14 @@ export class AuditRepository<C extends AuditConfig> {
    * absent from status listings.
    *
    * @param item - Raw listing item from GSI2_SS query
-   * @param tenantId - Tenant the query was made with, if any
    * @returns Parsed audit list item payload
    * @internal
    */
-  private transformStatusListItem(item: StatusListingItem, tenantId?: string) {
+  private transformStatusListItem(item: StatusListingItem) {
     const [id] = item.SK.split("#");
 
     return AuditPayloadSchema.parse({
       ...item,
-      ...this.resolveTrace(item, tenantId),
       id: id,
     });
   }
