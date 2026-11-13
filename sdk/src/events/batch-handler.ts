@@ -13,6 +13,31 @@ import {
 const CHUNK_SIZE = 10;
 
 /**
+ * Thrown by {@link BatchHandler.putEventsOrThrow} when EventBridge did not
+ * accept every entry.
+ *
+ * Either the PutEvents call itself failed (the client error is the `cause`
+ * and `failedEntries` is empty), or EventBridge answered but did not accept
+ * every entry (`failedEntries` holds the result entries carrying an
+ * `ErrorCode`).
+ */
+export class PutEventsError extends Error {
+  /**
+   * @param message - Description of the failure
+   * @param failedEntries - Result entries EventBridge rejected (empty when the call threw)
+   * @param options - Error options; `cause` is the client error when the call threw
+   */
+  public constructor(
+    message: string,
+    public readonly failedEntries: PutEventsResultEntry[] = [],
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "PutEventsError";
+  }
+}
+
+/**
  * Handles batched EventBridge event publishing with automatic chunking.
  *
  * Provides a wrapper around the EventBridge PutEvents API that automatically
@@ -46,6 +71,8 @@ export class BatchHandler {
    * Events are automatically chunked into batches of the specified size
    * (default 10, the EventBridge maximum). On success, logs the results
    * at debug level. On failure, logs at critical level and returns an empty array.
+   * Entries EventBridge rejected come back in the results (with an `ErrorCode`)
+   * rather than throwing; use {@link putEventsOrThrow} to fail on either.
    *
    * @param entries - Array of EventBridge event entries to publish
    * @param chunk - Batch size for chunking (default: 10)
@@ -74,6 +101,62 @@ export class BatchHandler {
     }
 
     return [];
+  }
+
+  /**
+   * Publishes events to EventBridge like {@link putEvents}, but throws when
+   * any entry was not accepted instead of swallowing the failure.
+   *
+   * Use it when the caller must know whether the events were sent.
+   * {@link putEvents} keeps its never-throw behavior.
+   *
+   * @param entries - Array of EventBridge event entries to publish
+   * @param chunk - Batch size for chunking (default: 10)
+   * @returns Array of result entries from EventBridge, all accepted
+   * @throws {PutEventsError} When a PutEvents call throws (the client error is
+   *   the `cause`), or EventBridge accepts fewer entries than were sent (the
+   *   result entries carrying an `ErrorCode` are in `failedEntries`)
+   *
+   * @example
+   * ```typescript
+   * try {
+   *   await handler.putEventsOrThrow(events);
+   * } catch (error) {
+   *   if (error instanceof PutEventsError) {
+   *     logger.error("Events not sent", { failed: error.failedEntries, cause: error.cause });
+   *   }
+   * }
+   * ```
+   */
+  public async putEventsOrThrow(
+    entries: PutEventsRequestEntry[],
+    chunk: number = CHUNK_SIZE,
+  ): Promise<PutEventsResultEntry[]> {
+    let result: PutEventsResultEntry[];
+
+    try {
+      result = await this.sendEventsViaBatch(this.client, entries, chunk);
+    } catch (error) {
+      throw new PutEventsError("Error pushing event bridge events", [], { cause: error });
+    }
+
+    // EventBridge answers one result entry per request entry; a rejected one
+    // carries an ErrorCode (and counts toward FailedEntryCount).
+    const failedEntries = result.filter((entry) => entry.ErrorCode);
+    const accepted = result.length - failedEntries.length;
+
+    if (accepted !== entries.length) {
+      throw new PutEventsError(
+        `EventBridge accepted ${accepted} of ${entries.length} events`,
+        failedEntries,
+      );
+    }
+
+    this.logger.debug("Pushed event bridge events", {
+      events: result,
+    });
+
+    return result;
   }
 
   /**
