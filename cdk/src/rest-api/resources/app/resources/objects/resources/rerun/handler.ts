@@ -1,11 +1,13 @@
 import {
   BadRequestError,
   InternalServerError,
+  NotFoundError,
   Router,
 } from "@aws-lambda-powertools/event-handler/http";
 import { Logger } from "@aws-lambda-powertools/logger";
 import { EventBridgeClient } from "@aws-sdk/client-eventbridge";
 import {
+  AuditNotFoundError,
   AuditService,
   BatchHandler,
   EventBridge,
@@ -23,6 +25,10 @@ const logger = new Logger({
 });
 
 const app = new Router();
+
+app.errorHandler(AuditNotFoundError, () => {
+  throw new NotFoundError("Audit not found");
+});
 
 const audits = new AuditService(logger, auditConfig);
 const eventBus = new BatchHandler(logger, new EventBridgeClient({ logger: logger }));
