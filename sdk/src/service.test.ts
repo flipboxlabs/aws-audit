@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { AuditNotFoundError } from "./errors.js";
 import type { Audit } from "./schema/audit.js";
 import type { UpsertAuditInput } from "./schema/service.js";
 import { AuditService } from "./service.js";
@@ -139,16 +140,39 @@ describe("AuditService", () => {
       });
     });
 
-    it("should throw an error when audit is not found", async () => {
+    it("should throw an AuditNotFoundError when audit is not found", async () => {
       mockStorage.getItem.mockResolvedValue(null);
 
-      await expect(
-        service.getItem({
-          id: "missing-audit",
+      const identifiers = {
+        id: "missing-audit",
+        app: App.App1,
+        resourceType: ResourceType.UNKNOWN,
+      };
+      const error = await service.getItem(identifiers).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(AuditNotFoundError);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).toMatchObject({
+        name: "AuditNotFoundError",
+        message: `Unable to find Audit id:missing-audit | app:${App.App1} | resourceType:${ResourceType.UNKNOWN}`,
+        identifiers,
+      });
+    });
+
+    it("should rethrow storage errors without wrapping them", async () => {
+      const storageError = new Error("DynamoDB error");
+      mockStorage.getItem.mockRejectedValue(storageError);
+
+      const error = await service
+        .getItem({
+          id: "audit-123",
           app: App.App1,
           resourceType: ResourceType.UNKNOWN,
-        }),
-      ).rejects.toThrow("Unable to find Audit");
+        })
+        .catch((e: unknown) => e);
+
+      expect(error).toBe(storageError);
+      expect(error).not.toBeInstanceOf(AuditNotFoundError);
     });
 
     it("should include identifiers in error message", async () => {
@@ -166,13 +190,19 @@ describe("AuditService", () => {
     it("should throw when storage returns undefined", async () => {
       mockStorage.getItem.mockResolvedValue(undefined);
 
-      await expect(
-        service.getItem({
-          id: "audit-123",
-          app: App.App1,
-          resourceType: ResourceType.UNKNOWN,
-        }),
-      ).rejects.toThrow("Unable to find Audit");
+      const identifiers = {
+        id: "audit-123",
+        app: App.App1,
+        resourceType: ResourceType.UNKNOWN,
+      };
+      const error = await service.getItem(identifiers).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(AuditNotFoundError);
+      expect(error).toMatchObject({
+        name: "AuditNotFoundError",
+        message: `Unable to find Audit id:audit-123 | app:${App.App1} | resourceType:${ResourceType.UNKNOWN}`,
+        identifiers,
+      });
     });
   });
 

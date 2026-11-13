@@ -1,6 +1,6 @@
-import { Router } from "@aws-lambda-powertools/event-handler/http";
+import { NotFoundError, Router } from "@aws-lambda-powertools/event-handler/http";
 import { Logger } from "@aws-lambda-powertools/logger";
-import { AuditService } from "@flipboxlabs/aws-audit-sdk";
+import { AuditNotFoundError, AuditService } from "@flipboxlabs/aws-audit-sdk";
 import type { Context } from "aws-lambda";
 import { type App, auditConfig, type ResourceType } from "../../../../../audit-config.js";
 import { API_RESOURCE as BASE_API_RESOURCE } from "../../constants.js";
@@ -24,6 +24,10 @@ const logger = new Logger({
 const app = new Router();
 
 app.use(ResponseValidationMiddleware());
+
+app.errorHandler(AuditNotFoundError, () => {
+  throw new NotFoundError("Audit not found");
+});
 
 const audits = new AuditService(logger, auditConfig);
 

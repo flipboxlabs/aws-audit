@@ -1,3 +1,4 @@
+import { AuditNotFoundError } from "@flipboxlabs/aws-audit-sdk";
 import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { App, ResourceType, testConfig } from "../../../../../../../test-config.js";
@@ -203,6 +204,27 @@ describe("rerun handler", () => {
 
       expect(response.statusCode).toBe(422);
       expect(mockGetItem).not.toHaveBeenCalled();
+    });
+
+    it("should return 404 when the audit does not exist", async () => {
+      mockGetItem.mockRejectedValue(
+        new AuditNotFoundError({
+          app: App.App1,
+          resourceType: ResourceType.UNKNOWN,
+          id: "audit-456",
+        }),
+      );
+
+      const event = createApiGatewayEvent();
+      const response = await handler(event, mockContext);
+
+      expect(mockPutEventsOrThrow).not.toHaveBeenCalled();
+      expect(response.statusCode).toBe(404);
+      expect(JSON.parse(response.body as string)).toEqual({
+        statusCode: 404,
+        error: "NotFoundError",
+        message: "Audit not found",
+      });
     });
 
     it("should handle service errors when getting item", async () => {

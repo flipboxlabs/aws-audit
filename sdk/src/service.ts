@@ -1,5 +1,6 @@
 import type { Logger } from "@aws-lambda-powertools/logger";
 import type { AuditConfig } from "./config.js";
+import { AuditNotFoundError } from "./errors.js";
 import { AuditEventBus } from "./events/bus.js";
 import {
   AuditRepository,
@@ -90,7 +91,8 @@ export class AuditService<C extends AuditConfig> {
    *
    * @param identifiers - The audit identifiers (id, app, resourceType)
    * @returns The audit record
-   * @throws Error if the audit record is not found
+   * @throws {AuditNotFoundError} if the audit record is not found
+   * @throws The underlying storage error if the lookup fails
    *
    * @example
    * ```typescript
@@ -105,11 +107,7 @@ export class AuditService<C extends AuditConfig> {
     const result = await this.storage.getItem(identifiers);
 
     if (result == null) {
-      throw new Error(
-        `Unable to find Audit ${Array.from(Object.entries(identifiers))
-          .map(([key, value]) => `${key}:${value}`)
-          .join(" | ")}`,
-      );
+      throw new AuditNotFoundError(identifiers);
     }
 
     return result;

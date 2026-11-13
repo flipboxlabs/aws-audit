@@ -1,3 +1,4 @@
+import { AuditNotFoundError } from "@flipboxlabs/aws-audit-sdk";
 import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { App, ResourceType, testConfig } from "../../../../../test-config.js";
@@ -343,6 +344,57 @@ describe("objects handler", () => {
   });
 
   describe("GET /apps/:app/objects/:object/:item/:audit", () => {
+    const createDetailApiGatewayEvent = (): APIGatewayProxyEventV2 => {
+      const baseEvent = createApiGatewayEvent();
+      const rawPath = `/apps/${App.App1}/objects/${ResourceType.UNKNOWN}/item-123/audit-456`;
+
+      return createApiGatewayEvent({
+        routeKey: "GET /apps/{app}/objects/{object}/{item}/{audit}",
+        rawPath,
+        requestContext: {
+          ...baseEvent.requestContext,
+          routeKey: "GET /apps/{app}/objects/{object}/{item}/{audit}",
+          http: {
+            ...baseEvent.requestContext.http,
+            path: rawPath,
+          },
+        },
+        pathParameters: {
+          app: App.App1,
+          object: ResourceType.UNKNOWN,
+          item: "item-123",
+          audit: "audit-456",
+        },
+      });
+    };
+
+    it("should return 404 when the audit does not exist", async () => {
+      mockGetItem.mockRejectedValue(
+        new AuditNotFoundError({
+          app: App.App1,
+          resourceType: ResourceType.UNKNOWN,
+          id: "audit-456",
+        }),
+      );
+
+      const response = await handler(createDetailApiGatewayEvent(), mockContext);
+
+      expect(response.statusCode).toBe(404);
+      expect(JSON.parse(response.body as string)).toEqual({
+        statusCode: 404,
+        error: "NotFoundError",
+        message: "Audit not found",
+      });
+    });
+
+    it("should return 500 when the lookup fails", async () => {
+      mockGetItem.mockRejectedValue(new Error("DynamoDB error"));
+
+      const response = await handler(createDetailApiGatewayEvent(), mockContext);
+
+      expect(response.statusCode).toBe(500);
+    });
+
     it("should return audit detail for an audit id", async () => {
       const mockResponse = {
         id: "audit-456",
@@ -366,25 +418,7 @@ describe("objects handler", () => {
       };
       mockGetItem.mockResolvedValue(mockResponse);
 
-      const event = createApiGatewayEvent({
-        routeKey: "GET /apps/{app}/objects/{object}/{item}/{audit}",
-        rawPath: `/apps/${App.App1}/objects/${ResourceType.UNKNOWN}/item-123/audit-456`,
-        requestContext: {
-          ...createApiGatewayEvent().requestContext,
-          routeKey: "GET /apps/{app}/objects/{object}/{item}/{audit}",
-          http: {
-            ...createApiGatewayEvent().requestContext.http,
-            path: `/apps/${App.App1}/objects/${ResourceType.UNKNOWN}/item-123/audit-456`,
-          },
-        },
-        pathParameters: {
-          app: App.App1,
-          object: ResourceType.UNKNOWN,
-          item: "item-123",
-          audit: "audit-456",
-        },
-      });
-      const response = await handler(event, mockContext);
+      const response = await handler(createDetailApiGatewayEvent(), mockContext);
 
       expect(mockGetItem).toHaveBeenCalledWith({
         app: App.App1,
