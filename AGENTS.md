@@ -2,6 +2,7 @@
 
 - Before begging an issue, ensure the main branch is current and clear of any changes.
 - Create a new branch from main per issue following the structure `issue/<issueId>`.
+- Parallel issue work goes in worktrees under `.worktrees/`, made by `pnpm worktree <issueId>` (the `worktree` skill, `docs/worktrees.md`); never reset or clean another agent's checkout.
 - While performing work, ask questions within the issue to gain clarity and direction.
 - Commit frequently when an issue requires multiple steps or requires additional context.
 - Use the slash command `/commit` to build a conventional commit.
