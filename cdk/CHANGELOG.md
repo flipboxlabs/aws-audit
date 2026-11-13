@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.6.1](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.6.0...cdk-v1.6.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cdk:** send the stored event detail as-is when rerunning an audit ([716edcd](https://github.com/flipboxlabs/aws-audit/commit/716edcd2c7073c00b661ee12810650cfa061c215))
+* **cdk:** send the stored event detail as-is when rerunning an audit ([44adaa6](https://github.com/flipboxlabs/aws-audit/commit/44adaa60fbff256cef020b74b24d3897328add9a)), closes [#87](https://github.com/flipboxlabs/aws-audit/issues/87)
+* **sdk:** return the trace an audit was written with ([edb85ee](https://github.com/flipboxlabs/aws-audit/commit/edb85eead353f0f55e49db1d38329b8014b2abcd))
+
 ## [1.6.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.5.0...cdk-v1.6.0) (2026-11-13)
 
 
