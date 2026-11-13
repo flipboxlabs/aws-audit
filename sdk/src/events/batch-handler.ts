@@ -13,6 +13,17 @@ import {
 const CHUNK_SIZE = 10;
 
 /**
+ * Throws when `chunk` isn't a batch size EventBridge accepts (1 to 10).
+ *
+ * @internal
+ */
+const assertChunkSize = (chunk: number): void => {
+  if (!Number.isInteger(chunk) || chunk < 1 || chunk > CHUNK_SIZE) {
+    throw new RangeError(`chunk must be an integer from 1 to ${CHUNK_SIZE}, got ${chunk}`);
+  }
+};
+
+/**
  * Thrown by {@link BatchHandler.putEventsOrThrow} when EventBridge did not
  * accept every entry.
  *
@@ -111,8 +122,9 @@ export class BatchHandler {
    * {@link putEvents} keeps its never-throw behavior.
    *
    * @param entries - Array of EventBridge event entries to publish
-   * @param chunk - Batch size for chunking (default: 10)
+   * @param chunk - Batch size for chunking, an integer from 1 to 10 (default: 10)
    * @returns Array of result entries from EventBridge, all accepted
+   * @throws {RangeError} When `chunk` isn't an integer from 1 to 10 (nothing is sent)
    * @throws {PutEventsError} When a PutEvents call throws (the client error is
    *   the `cause`), or EventBridge accepts fewer entries than were sent (the
    *   result entries carrying an `ErrorCode` are in `failedEntries`)
@@ -123,8 +135,9 @@ export class BatchHandler {
    *   await handler.putEventsOrThrow(events);
    * } catch (error) {
    *   if (error instanceof PutEventsError) {
-   *     logger.error("Events not sent", { failed: error.failedEntries, cause: error.cause });
+   *     logger.error("Events not sent", error);
    *   }
+   *   throw error;
    * }
    * ```
    */
@@ -132,6 +145,8 @@ export class BatchHandler {
     entries: PutEventsRequestEntry[],
     chunk: number = CHUNK_SIZE,
   ): Promise<PutEventsResultEntry[]> {
+    assertChunkSize(chunk);
+
     let result: PutEventsResultEntry[];
 
     try {

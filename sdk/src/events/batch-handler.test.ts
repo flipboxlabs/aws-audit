@@ -211,6 +211,11 @@ describe("BatchHandler", () => {
       expect(mockClient.send).toHaveBeenCalledTimes(2);
     });
 
+    it.each([0, 11, Number.NaN])("should throw RangeError for chunk %s", async (chunk) => {
+      await expect(handler.putEventsOrThrow(entries, chunk)).rejects.toThrow(RangeError);
+      expect(mockClient.send).not.toHaveBeenCalled();
+    });
+
     it("should handle empty entries array", async () => {
       const result = await handler.putEventsOrThrow([]);
 

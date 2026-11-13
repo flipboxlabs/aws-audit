@@ -37,7 +37,7 @@ try {
   await events.putEventsOrThrow(entries);
 } catch (error) {
   if (error instanceof PutEventsError) {
-    logger.error("Events not sent", { error, failedEntries: error.failedEntries });
+    logger.error("Events not sent", error);
   }
   throw error;
 }
