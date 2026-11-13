@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.3](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.6.2...cdk-v1.6.3) (2026-11-13)
+
+
+### Bug Fixes
+
+* answer 404 when the requested audit doesn't exist ([d6b5ba0](https://github.com/flipboxlabs/aws-audit/commit/d6b5ba0cdbdf5806896567e235fc5996988e1b18))
+* **cdk:** answer 404 when the requested audit doesn't exist ([4100b89](https://github.com/flipboxlabs/aws-audit/commit/4100b891ce7ca4969ba1b899f0861fc40d847ec0)), closes [#90](https://github.com/flipboxlabs/aws-audit/issues/90)
+
 ## [1.6.2](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.6.1...cdk-v1.6.2) (2026-11-13)
 
 
