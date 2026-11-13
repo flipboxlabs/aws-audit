@@ -70,7 +70,8 @@ app.post(
 
 // The event was not re-sent (PutEvents threw or EventBridge rejected the entry).
 app.errorHandler(PutEventsError, async (error) => {
-  logger.error("Unable to rerun the event", { error, failedEntries: error.failedEntries });
+  // failedEntries is an enumerable property, so the logged error includes it.
+  logger.error("Unable to rerun the event", error);
 
   return new InternalServerError("Unable to rerun the event").toWebResponse();
 });
