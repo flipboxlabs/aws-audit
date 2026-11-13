@@ -46,7 +46,10 @@ export const UpsertAuditSchema = z.object({
   id: z.string().optional(),
   /** Whether the audited operation can be re-run/retried */
   rerunable: z.boolean().optional(),
-  /** Accepted for backward compatibility; ignored by upsertItem, which appends its own attempt */
+  /**
+   * @deprecated Ignored by upsertItem, which appends its own attempt. Accepted only for
+   * backward compatibility.
+   */
   attempts: z.array(AttemptSchema).optional(),
   /** Original creation timestamp (preserved on retries) */
   createdAt: DateTimeStringSchema.optional(),
@@ -104,7 +107,10 @@ export function createTypedUpsertAuditSchema<
     id: z.string().optional(),
     /** Whether the audited operation can be re-run/retried */
     rerunable: z.boolean().optional(),
-    /** Accepted for backward compatibility; ignored by upsertItem, which appends its own attempt */
+    /**
+     * @deprecated Ignored by upsertItem, which appends its own attempt. Accepted only for
+     * backward compatibility.
+     */
     attempts: z.array(AttemptSchema).optional(),
     /** Original creation timestamp (preserved on retries) */
     createdAt: DateTimeStringSchema.optional(),
