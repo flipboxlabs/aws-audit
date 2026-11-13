@@ -129,6 +129,9 @@ export class AuditService<C extends AuditConfig> {
    * - Preserves the original `createdAt` timestamp
    * - Increments the attempt number automatically
    *
+   * Attempts are system-managed: each call appends exactly one attempt. Any `attempts`
+   * on `input` are accepted for backward compatibility but ignored.
+   *
    * After storage, publishes an "Upserted" event to EventBridge (if events is configured).
    *
    * @param input - The audit data to upsert

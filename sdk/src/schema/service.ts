@@ -8,7 +8,7 @@ import { _BaseLogAuditSchema, createTypedLogAuditSchema } from "./log.js";
  * Extends _BaseLogAuditSchema with additional fields for service-layer operations:
  * - `id`: Optional identifier (auto-generated if not provided)
  * - `rerunable`: Flag indicating if the audit's operation can be retried
- * - `attempts`: History of execution attempts for retry tracking
+ * - `attempts`: Accepted for backward compatibility; ignored by upsertItem (system-managed)
  * - `createdAt`: Original creation timestamp (preserved on retries)
  *
  * This schema is used by {@link AuditService.upsertItem} for validating
@@ -46,7 +46,7 @@ export const UpsertAuditSchema = z.object({
   id: z.string().optional(),
   /** Whether the audited operation can be re-run/retried */
   rerunable: z.boolean().optional(),
-  /** History of execution attempts for retry tracking */
+  /** Accepted for backward compatibility; ignored by upsertItem, which appends its own attempt */
   attempts: z.array(AttemptSchema).optional(),
   /** Original creation timestamp (preserved on retries) */
   createdAt: DateTimeStringSchema.optional(),
@@ -104,7 +104,7 @@ export function createTypedUpsertAuditSchema<
     id: z.string().optional(),
     /** Whether the audited operation can be re-run/retried */
     rerunable: z.boolean().optional(),
-    /** History of execution attempts for retry tracking */
+    /** Accepted for backward compatibility; ignored by upsertItem, which appends its own attempt */
     attempts: z.array(AttemptSchema).optional(),
     /** Original creation timestamp (preserved on retries) */
     createdAt: DateTimeStringSchema.optional(),
