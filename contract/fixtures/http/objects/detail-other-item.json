@@ -1,0 +1,75 @@
+{
+  "description": "An audit of another item is the same 404 as a missing one",
+  "route": "GET /apps/{app}/objects/{object}/{item}/{audit}",
+  "request": {
+    "method": "GET",
+    "path": "/apps/App1/objects/Order/order-2/audit-1"
+  },
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "GetItem",
+      "input": {
+        "TableName": "TEST-Contract-Audit",
+        "Key": {
+          "PK": {
+            "S": "App1.Order"
+          },
+          "SK": {
+            "S": "audit-1"
+          }
+        }
+      },
+      "output": {
+        "Item": {
+          "PK": {
+            "S": "App1.Order"
+          },
+          "SK": {
+            "S": "audit-1"
+          },
+          "id": {
+            "S": "audit-1"
+          },
+          "operation": {
+            "S": "createOrder"
+          },
+          "status": {
+            "S": "fail"
+          },
+          "tier": {
+            "N": "2"
+          },
+          "target": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "type": {
+                "S": "Order"
+              },
+              "id": {
+                "S": "order-1"
+              }
+            }
+          },
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          }
+        }
+      }
+    }
+  ],
+  "response": {
+    "statusCode": 404,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 404,
+      "error": "NotFoundError",
+      "message": "Audit not found"
+    }
+  }
+}

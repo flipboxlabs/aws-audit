@@ -1,0 +1,141 @@
+{
+  "description": "One audit; event, attempts and error are included",
+  "route": "GET /apps/{app}/objects/{object}/{item}/{audit}",
+  "request": {
+    "method": "GET",
+    "path": "/apps/App1/objects/Order/order-1/audit-1"
+  },
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "GetItem",
+      "input": {
+        "TableName": "TEST-Contract-Audit",
+        "Key": {
+          "PK": {
+            "S": "App1.Order"
+          },
+          "SK": {
+            "S": "audit-1"
+          }
+        }
+      },
+      "output": {
+        "Item": {
+          "PK": {
+            "S": "App1.Order"
+          },
+          "SK": {
+            "S": "audit-1"
+          },
+          "id": {
+            "S": "audit-1"
+          },
+          "operation": {
+            "S": "createOrder"
+          },
+          "status": {
+            "S": "fail"
+          },
+          "tier": {
+            "N": "2"
+          },
+          "target": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "type": {
+                "S": "Order"
+              },
+              "id": {
+                "S": "order-1"
+              }
+            }
+          },
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "rerunable": {
+            "BOOL": true
+          },
+          "event": {
+            "M": {
+              "source": {
+                "S": "orders"
+              },
+              "detail-type": {
+                "S": "OrderCreated"
+              },
+              "detail": {
+                "S": "{\"orderId\":\"order-1\", \"n\":1.0}"
+              }
+            }
+          },
+          "trace": {
+            "S": "trace-1:2"
+          },
+          "error": {
+            "S": "Boom"
+          },
+          "attempts": {
+            "L": [
+              {
+                "M": {
+                  "number": {
+                    "N": "1"
+                  },
+                  "status": {
+                    "S": "fail"
+                  },
+                  "error": {
+                    "S": "Boom"
+                  },
+                  "at": {
+                    "S": "2026-01-02T03:04:05.678Z"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "response": {
+    "statusCode": 200,
+    "contentType": "application/json",
+    "body": {
+      "id": "audit-1",
+      "status": "fail",
+      "tier": 2,
+      "target": {
+        "app": "App1",
+        "id": "order-1",
+        "type": "Order"
+      },
+      "operation": "createOrder",
+      "rerunable": true,
+      "trace": "trace-1:2",
+      "event": {
+        "source": "orders",
+        "detail-type": "OrderCreated",
+        "detail": "{\"orderId\":\"order-1\", \"n\":1.0}"
+      },
+      "error": "Boom",
+      "attempts": [
+        {
+          "number": 1,
+          "status": "fail",
+          "error": "Boom",
+          "at": "2026-01-02T03:04:05.678Z"
+        }
+      ],
+      "updatedAt": "2026-01-02T03:04:05.678Z",
+      "createdAt": "2026-01-02T03:04:05.678Z"
+    }
+  }
+}

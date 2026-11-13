@@ -86,6 +86,8 @@
     "zod": "catalog:utilities"
   },
   "devDependencies": {
+    "@aws-sdk/client-dynamodb": "catalog:aws-sdk",
+    "@aws-sdk/util-dynamodb": "catalog:aws-sdk",
     "@tsconfig/node22": "catalog:build",
     "@types/aws-lambda": "catalog:types",
     "@types/node": "catalog:types",

@@ -12,6 +12,7 @@
     "lint": "vp lint",
     "fmt": "vp fmt",
     "build": "pnpm -r run build",
+    "contract:update": "pnpm -r exec vp test run src/contract.test.ts --update",
     "worktree": "bash scripts/worktree.sh",
     "cdk:synth:dev": "ENV=dev pnpm -r run cdk:synth",
     "cdk:deploy:dev": "ENV=dev pnpm -r run cdk:deploy --profile asug_middleware"

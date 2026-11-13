@@ -1,0 +1,31 @@
+{
+  "description": "Configured apps and resource types, and the package version",
+  "route": "GET /config",
+  "request": {
+    "method": "GET",
+    "path": "/config"
+  },
+  "calls": [],
+  "response": {
+    "statusCode": 200,
+    "contentType": "application/json",
+    "body": {
+      "apps": [
+        "App1",
+        "TestApp"
+      ],
+      "resourceTypes": [
+        "Unknown",
+        "User",
+        "Order"
+      ],
+      "statuses": [
+        "success",
+        "warn",
+        "fail",
+        "skip"
+      ],
+      "version": "0.0.0-contract"
+    }
+  }
+}

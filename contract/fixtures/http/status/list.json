@@ -1,0 +1,120 @@
+{
+  "description": "Audits with a status",
+  "route": "GET /status/{status}",
+  "request": {
+    "method": "GET",
+    "path": "/status/fail"
+  },
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "Query",
+      "input": {
+        "ScanIndexForward": false,
+        "IndexName": "GSI2_SS",
+        "ExpressionAttributeValues": {
+          ":PK": {
+            "S": "fail"
+          },
+          ":isParent": {
+            "S": "#"
+          }
+        },
+        "ExpressionAttributeNames": {
+          "#PK": "GSI2_SS_PK"
+        },
+        "KeyConditionExpression": "#PK = :PK",
+        "TableName": "TEST-Contract-Audit",
+        "Limit": 100,
+        "FilterExpression": "not contains(SK, :isParent)"
+      },
+      "output": {
+        "Items": [
+          {
+            "PK": {
+              "S": "App1.Order"
+            },
+            "SK": {
+              "S": "audit-1"
+            },
+            "id": {
+              "S": "audit-1"
+            },
+            "operation": {
+              "S": "createOrder"
+            },
+            "status": {
+              "S": "fail"
+            },
+            "tier": {
+              "N": "2"
+            },
+            "target": {
+              "M": {
+                "app": {
+                  "S": "App1"
+                },
+                "type": {
+                  "S": "Order"
+                },
+                "id": {
+                  "S": "order-1"
+                }
+              }
+            },
+            "createdAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            },
+            "updatedAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            },
+            "GSI2_SS_PK": {
+              "S": "fail"
+            },
+            "GSI2_SS_SK": {
+              "S": "2026-01-02T03:04:05.678Z#audit-1"
+            }
+          }
+        ],
+        "LastEvaluatedKey": {
+          "PK": {
+            "S": "App1.Order"
+          },
+          "SK": {
+            "S": "audit-1"
+          },
+          "GSI2_SS_PK": {
+            "S": "fail"
+          },
+          "GSI2_SS_SK": {
+            "S": "2026-01-02T03:04:05.678Z#audit-1"
+          }
+        }
+      }
+    }
+  ],
+  "response": {
+    "statusCode": 200,
+    "contentType": "application/json",
+    "body": {
+      "items": [
+        {
+          "id": "audit-1",
+          "status": "fail",
+          "tier": 2,
+          "target": {
+            "app": "App1",
+            "id": "order-1",
+            "type": "Order"
+          },
+          "operation": "createOrder",
+          "updatedAt": "2026-01-02T03:04:05.678Z",
+          "createdAt": "2026-01-02T03:04:05.678Z"
+        }
+      ],
+      "pagination": {
+        "nextToken": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJHU0kyX1NTX1BLIjoiZmFpbCIsIkdTSTJfU1NfU0siOiIyMDI2LTAxLTAyVDAzOjA0OjA1LjY3OFojYXVkaXQtMSJ9"
+      }
+    }
+  }
+}

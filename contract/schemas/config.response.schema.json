@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "apps": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "App1",
+          "TestApp"
+        ]
+      }
+    },
+    "resourceTypes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "Unknown",
+          "User",
+          "Order"
+        ]
+      }
+    },
+    "statuses": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "success",
+          "warn",
+          "fail",
+          "skip"
+        ]
+      }
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "apps",
+    "resourceTypes",
+    "statuses",
+    "version"
+  ],
+  "additionalProperties": false
+}

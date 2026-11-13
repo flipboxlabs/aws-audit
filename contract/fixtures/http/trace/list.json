@@ -1,0 +1,110 @@
+{
+  "description": "Audits of a trace; trace is rebuilt from the index keys",
+  "route": "GET /trace/{trace}",
+  "request": {
+    "method": "GET",
+    "path": "/trace/trace-1",
+    "query": {
+      "filter[app]": "App1"
+    }
+  },
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "Query",
+      "input": {
+        "ScanIndexForward": true,
+        "IndexName": "GSI1_SN",
+        "ExpressionAttributeValues": {
+          ":PK": {
+            "S": "trace-1"
+          },
+          ":app": {
+            "S": "App1"
+          }
+        },
+        "ExpressionAttributeNames": {
+          "#PK": "GSI1_SN_PK",
+          "#target": "target",
+          "#app": "app"
+        },
+        "KeyConditionExpression": "#PK=:PK",
+        "TableName": "TEST-Contract-Audit",
+        "Limit": 100,
+        "FilterExpression": "#target.#app = :app"
+      },
+      "output": {
+        "Items": [
+          {
+            "PK": {
+              "S": "App1.Order"
+            },
+            "SK": {
+              "S": "audit-1"
+            },
+            "id": {
+              "S": "audit-1"
+            },
+            "operation": {
+              "S": "createOrder"
+            },
+            "status": {
+              "S": "fail"
+            },
+            "tier": {
+              "N": "2"
+            },
+            "target": {
+              "M": {
+                "app": {
+                  "S": "App1"
+                },
+                "type": {
+                  "S": "Order"
+                },
+                "id": {
+                  "S": "order-1"
+                }
+              }
+            },
+            "createdAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            },
+            "updatedAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            },
+            "GSI1_SN_PK": {
+              "S": "trace-1"
+            },
+            "GSI1_SN_SK": {
+              "N": "1"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "response": {
+    "statusCode": 200,
+    "contentType": "application/json",
+    "body": {
+      "items": [
+        {
+          "id": "audit-1",
+          "status": "fail",
+          "tier": 2,
+          "target": {
+            "app": "App1",
+            "id": "order-1",
+            "type": "Order"
+          },
+          "operation": "createOrder",
+          "trace": "trace-1:1",
+          "updatedAt": "2026-01-02T03:04:05.678Z",
+          "createdAt": "2026-01-02T03:04:05.678Z"
+        }
+      ],
+      "pagination": {}
+    }
+  }
+}

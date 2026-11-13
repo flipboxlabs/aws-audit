@@ -1,0 +1,109 @@
+{
+  "description": "The stored event is re-sent with its detail string as stored; 204",
+  "route": "POST /apps/{app}/objects/{object}/{item}/{audit}/rerun",
+  "request": {
+    "method": "POST",
+    "path": "/apps/App1/objects/Order/order-1/audit-1/rerun"
+  },
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "GetItem",
+      "input": {
+        "TableName": "TEST-Contract-Audit",
+        "Key": {
+          "PK": {
+            "S": "App1.Order"
+          },
+          "SK": {
+            "S": "audit-1"
+          }
+        }
+      },
+      "output": {
+        "Item": {
+          "PK": {
+            "S": "App1.Order"
+          },
+          "SK": {
+            "S": "audit-1"
+          },
+          "id": {
+            "S": "audit-1"
+          },
+          "operation": {
+            "S": "createOrder"
+          },
+          "status": {
+            "S": "fail"
+          },
+          "tier": {
+            "N": "2"
+          },
+          "target": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "type": {
+                "S": "Order"
+              },
+              "id": {
+                "S": "order-1"
+              }
+            }
+          },
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "rerunable": {
+            "BOOL": true
+          },
+          "event": {
+            "M": {
+              "source": {
+                "S": "orders"
+              },
+              "detail-type": {
+                "S": "OrderCreated"
+              },
+              "detail": {
+                "S": "{\"orderId\":\"order-1\", \"n\":1.0}"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "service": "EventBridge",
+      "command": "PutEvents",
+      "input": {
+        "Entries": [
+          {
+            "Source": "orders",
+            "EventBusName": "TEST-Contract-Audit",
+            "Detail": "{\"orderId\":\"order-1\", \"n\":1.0}",
+            "DetailType": "OrderCreated"
+          }
+        ]
+      },
+      "output": {
+        "FailedEntryCount": 0,
+        "Entries": [
+          {
+            "EventId": "event-1"
+          }
+        ]
+      }
+    }
+  ],
+  "response": {
+    "statusCode": 204,
+    "contentType": "text/plain;charset=UTF-8",
+    "body": null
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "app": {
+      "type": "string",
+      "enum": [
+        "App1",
+        "TestApp"
+      ]
+    },
+    "object": {
+      "type": "string",
+      "enum": [
+        "Unknown",
+        "User",
+        "Order"
+      ]
+    }
+  },
+  "required": [
+    "app",
+    "object"
+  ]
+}

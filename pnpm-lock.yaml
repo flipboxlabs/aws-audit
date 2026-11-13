@@ -137,6 +137,12 @@ importers:
         specifier: catalog:utilities
         version: 4.3.6
     devDependencies:
+      '@aws-sdk/client-dynamodb':
+        specifier: catalog:aws-sdk
+        version: 3.1014.0
+      '@aws-sdk/util-dynamodb':
+        specifier: catalog:aws-sdk
+        version: 3.996.2(@aws-sdk/client-dynamodb@3.1014.0)
       '@tsconfig/node22':
         specifier: catalog:build
         version: 22.0.5

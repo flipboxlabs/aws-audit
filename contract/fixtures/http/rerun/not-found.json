@@ -1,0 +1,35 @@
+{
+  "description": "A missing audit is a 404 and nothing is sent",
+  "route": "POST /apps/{app}/objects/{object}/{item}/{audit}/rerun",
+  "request": {
+    "method": "POST",
+    "path": "/apps/App1/objects/Order/order-1/missing/rerun"
+  },
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "GetItem",
+      "input": {
+        "TableName": "TEST-Contract-Audit",
+        "Key": {
+          "PK": {
+            "S": "App1.Order"
+          },
+          "SK": {
+            "S": "missing"
+          }
+        }
+      },
+      "output": {}
+    }
+  ],
+  "response": {
+    "statusCode": 404,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 404,
+      "error": "NotFoundError",
+      "message": "Audit not found"
+    }
+  }
+}
