@@ -1586,4 +1586,223 @@ describe("AuditRepository", () => {
       expect(result.items[0].trace).toBeUndefined();
     });
   });
+
+  describe("trace resolution", () => {
+    const getItem = () =>
+      repository.getItem({
+        id: "audit-123",
+        app: App.App1,
+        resourceType: ResourceType.UNKNOWN,
+      });
+
+    const mockQueryItems = (...items: Record<string, unknown>[]) =>
+      mockClient.send.mockResolvedValue({
+        Items: items.map((item) => marshall(item, { removeUndefinedValues: true })),
+        LastEvaluatedKey: undefined,
+      });
+
+    // The attributes GSI1_SS and GSI1_SN project: no `trace` or `tenantId`
+    const createProjectedItem = (overrides: Record<string, unknown> = {}) => ({
+      PK: `${App.App1}.${ResourceType.UNKNOWN}`,
+      SK: "audit-123",
+      operation: "testOperation",
+      status: "success",
+      target: {
+        app: App.App1,
+        type: ResourceType.UNKNOWN,
+        id: "resource-123",
+      },
+      createdAt: "2024-01-01T00:00:00.000Z",
+      ...overrides,
+    });
+
+    const listItems = (tenantId?: string) =>
+      repository.listItems({
+        tenantId,
+        app: App.App1,
+        resource: { type: ResourceType.UNKNOWN, id: "resource-123" },
+      });
+
+    const listTraceItems = (tenantId?: string) =>
+      repository.listTraceItems({ tenantId, trace: "abc" });
+
+    describe("getItem", () => {
+      it("should return the stored trace verbatim", async () => {
+        mockClient.send.mockResolvedValue({
+          Item: marshall(
+            createMockAuditItem({
+              tenantId: "t1",
+              trace: "abc:1",
+              GSI1_SN_PK: "t1#abc",
+              GSI1_SN_SK: 1,
+            }),
+          ),
+        });
+
+        expect((await getItem())?.trace).toBe("abc:1");
+      });
+
+      it("should return a stage-less stored trace without a stage", async () => {
+        mockClient.send.mockResolvedValue({
+          Item: marshall(createMockAuditItem({ trace: "abc", GSI1_SN_PK: "abc", GSI1_SN_SK: 0 })),
+        });
+
+        expect((await getItem())?.trace).toBe("abc");
+      });
+
+      it("should omit trace when the audit has none", async () => {
+        mockClient.send.mockResolvedValue({
+          Item: marshall(createMockAuditItem({ GSI1_SN_PK: undefined, GSI1_SN_SK: undefined }), {
+            removeUndefinedValues: true,
+          }),
+        });
+
+        const result = await getItem();
+
+        expect(result).toBeDefined();
+        expect(result).not.toHaveProperty("trace");
+      });
+
+      it("should rebuild the trace from the keys without a stage when the stage is 0", async () => {
+        mockClient.send.mockResolvedValue({
+          Item: marshall(createMockAuditItem({ GSI1_SN_PK: "abc", GSI1_SN_SK: 0 })),
+        });
+
+        expect((await getItem())?.trace).toBe("abc");
+      });
+
+      it("should rebuild the trace from the keys with a non-zero stage", async () => {
+        mockClient.send.mockResolvedValue({
+          Item: marshall(createMockAuditItem({ GSI1_SN_PK: "abc", GSI1_SN_SK: 2 })),
+        });
+
+        expect((await getItem())?.trace).toBe("abc:2");
+      });
+
+      it("should strip the item's tenant prefix when rebuilding the trace", async () => {
+        mockClient.send.mockResolvedValue({
+          Item: marshall(
+            createMockAuditItem({ tenantId: "t1", GSI1_SN_PK: "t1#abc", GSI1_SN_SK: 1 }),
+          ),
+        });
+
+        expect((await getItem())?.trace).toBe("abc:1");
+      });
+    });
+
+    describe("listObjects", () => {
+      const listObjects = (tenantId?: string) =>
+        repository.listObjects({
+          tenantId,
+          app: App.App1,
+          resource: { type: ResourceType.UNKNOWN },
+        });
+
+      it("should return the stored trace verbatim", async () => {
+        mockQueryItems(
+          createMockAuditItem({
+            tenantId: "t1",
+            trace: "abc",
+            GSI1_SN_PK: "t1#abc",
+            GSI1_SN_SK: 0,
+          }),
+        );
+
+        const result = await listObjects("t1");
+
+        expect(result.items[0].trace).toBe("abc");
+      });
+
+      it("should omit trace when the audit has none", async () => {
+        mockQueryItems(createMockAuditItem({ GSI1_SN_PK: undefined, GSI1_SN_SK: undefined }));
+
+        const result = await listObjects();
+
+        expect(result.items[0]).not.toHaveProperty("trace");
+      });
+    });
+
+    describe("listItems", () => {
+      it("should rebuild the trace without a stage when the stage is 0", async () => {
+        mockQueryItems(createProjectedItem({ GSI1_SN_PK: "abc", GSI1_SN_SK: 0 }));
+
+        const result = await listItems();
+
+        expect(result.items[0].trace).toBe("abc");
+      });
+
+      it("should rebuild the trace with a non-zero stage", async () => {
+        mockQueryItems(createProjectedItem({ GSI1_SN_PK: "abc", GSI1_SN_SK: 2 }));
+
+        const result = await listItems();
+
+        expect(result.items[0].trace).toBe("abc:2");
+      });
+
+      it("should strip the queried tenant's prefix", async () => {
+        mockQueryItems(createProjectedItem({ GSI1_SN_PK: "t1#abc", GSI1_SN_SK: 1 }));
+
+        const result = await listItems("t1");
+
+        expect(result.items[0].trace).toBe("abc:1");
+      });
+
+      it("should not guess a tenant prefix when the tenant isn't known", async () => {
+        mockQueryItems(createProjectedItem({ GSI1_SN_PK: "t1#abc", GSI1_SN_SK: 1 }));
+
+        const result = await listItems();
+
+        expect(result.items[0].trace).toBe("t1#abc:1");
+      });
+
+      it("should omit trace when the audit has none", async () => {
+        mockQueryItems(createProjectedItem());
+
+        const result = await listItems();
+
+        expect(result.items[0]).not.toHaveProperty("trace");
+      });
+    });
+
+    describe("listTraceItems", () => {
+      it("should rebuild the trace without a stage when the stage is 0", async () => {
+        mockQueryItems(createProjectedItem({ GSI1_SN_PK: "abc", GSI1_SN_SK: 0 }));
+
+        const result = await listTraceItems();
+
+        expect(result.items[0].trace).toBe("abc");
+      });
+
+      it("should rebuild the trace with a non-zero stage", async () => {
+        mockQueryItems(createProjectedItem({ GSI1_SN_PK: "abc", GSI1_SN_SK: 2 }));
+
+        const result = await listTraceItems();
+
+        expect(result.items[0].trace).toBe("abc:2");
+      });
+
+      it("should strip the queried tenant's prefix", async () => {
+        mockQueryItems(createProjectedItem({ GSI1_SN_PK: "t1#abc", GSI1_SN_SK: 0 }));
+
+        const result = await listTraceItems("t1");
+
+        expect(result.items[0].trace).toBe("abc");
+      });
+    });
+
+    describe("listByStatus", () => {
+      it("should omit trace, which the status index doesn't project", async () => {
+        mockQueryItems(
+          createProjectedItem({
+            GSI2_SS_PK: "t1#success",
+            GSI2_SS_SK: "2024-01-01T00:00:00.000Z#audit-123",
+          }),
+        );
+
+        const result = await repository.listByStatus({ tenantId: "t1", status: "success" });
+
+        expect(result.items[0]).not.toHaveProperty("trace");
+      });
+    });
+  });
 });
