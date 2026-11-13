@@ -38,7 +38,12 @@ vi.mock("@aws-sdk/client-eventbridge", () => ({
   EventBridgeClient: class MockEventBridgeClient {},
 }));
 
+import { EventBridgeEventSchema } from "@flipboxlabs/aws-audit-sdk";
 import { handler } from "./handler.js";
+
+// Shape `event` the way getItem returns it: parsed through the real schema, which stores detail as a JSON string
+const storedEvent = (detail: string | Record<string, unknown>) =>
+  EventBridgeEventSchema.parse({ source: "test-source", "detail-type": "TestEvent", detail });
 
 const createApiGatewayEvent = (
   overrides: Partial<APIGatewayProxyEventV2> = {},
@@ -108,11 +113,7 @@ describe("rerun handler", () => {
       const mockAuditItem = {
         id: "audit-456",
         rerunable: true,
-        event: {
-          source: "test-source",
-          "detail-type": "TestEvent",
-          detail: { key: "value" },
-        },
+        event: storedEvent({ k: 1 }),
       };
       mockGetItem.mockResolvedValue(mockAuditItem);
       mockPutEvents.mockResolvedValue({});
@@ -129,7 +130,7 @@ describe("rerun handler", () => {
         {
           Source: "test-source",
           EventBusName: "test-event-bus",
-          Detail: JSON.stringify({ key: "value" }),
+          Detail: '{"k":1}',
           DetailType: "TestEvent",
         },
       ]);
@@ -140,11 +141,7 @@ describe("rerun handler", () => {
       const mockAuditItem = {
         id: "audit-456",
         rerunable: false,
-        event: {
-          source: "test-source",
-          "detail-type": "TestEvent",
-          detail: {},
-        },
+        event: storedEvent({}),
       };
       mockGetItem.mockResolvedValue(mockAuditItem);
 
@@ -217,11 +214,7 @@ describe("rerun handler", () => {
       const mockAuditItem = {
         id: "audit-456",
         rerunable: true,
-        event: {
-          source: "test-source",
-          "detail-type": "TestEvent",
-          detail: {},
-        },
+        event: storedEvent({}),
       };
       mockGetItem.mockResolvedValue(mockAuditItem);
       mockPutEvents.mockRejectedValue(new Error("EventBridge error"));
