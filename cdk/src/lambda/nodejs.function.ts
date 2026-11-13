@@ -5,6 +5,7 @@ import * as nodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as logs from "aws-cdk-lib/aws-logs";
 import type { Construct } from "constructs";
 import type { CDKConfig } from "../constants.js";
+import { CDK_VERSION } from "../version.js";
 import { AUDIT_CONFIG_LAYER_PATH } from "./construct.js";
 
 /**
@@ -35,6 +36,10 @@ export const ESMNodeFunctionFactory =
         platform: "node",
         target: "esnext",
         mainFields: ["module", "main"],
+        // Inline the CDK package version so handlers can report it without reading package.json
+        define: {
+          "process.env.AWS_AUDIT_CDK_VERSION": JSON.stringify(CDK_VERSION),
+        },
         esbuildArgs: {
           "--conditions": "module",
           "--tree-shaking": "true",

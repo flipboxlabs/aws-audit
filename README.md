@@ -108,13 +108,43 @@ export const handler = async (event: Event) => {
 
 ### 5. Query audits via REST API
 
+Every route requires an API key (`x-api-key` header).
+
 ```bash
+# Discover the deployment's apps, resource types, statuses and version
+GET /config
+
+# List audits for a resource type
+GET /apps/{app}/objects/{resourceType}
+
 # List audits for a resource
-GET /app/{app}/{resourceType}/{resourceId}
+GET /apps/{app}/objects/{resourceType}/{resourceId}
+
+# Get a single audit
+GET /apps/{app}/objects/{resourceType}/{resourceId}/{auditId}
+
+# Rerun an audit's event
+POST /apps/{app}/objects/{resourceType}/{resourceId}/{auditId}/rerun
+
+# List audits by status (success, warn, fail, skip)
+GET /status/{status}
 
 # List audits by trace ID
 GET /trace/{traceId}
 ```
+
+`GET /config` answers:
+
+```json
+{
+  "apps": ["Orders", "Inventory"],
+  "resourceTypes": ["Order", "Product"],
+  "statuses": ["success", "warn", "fail", "skip"],
+  "version": "1.6.0"
+}
+```
+
+`version` is the `@flipboxlabs/aws-audit-cdk` version the deployment was built from. Deployments from before `GET /config` was added answer it with API Gateway's response for an unknown route, a `403` `{"message":"Missing Authentication Token"}` rather than a `404`, so treat that as "not supported" and fall back to configured values.
 
 ## SDK Package
 
