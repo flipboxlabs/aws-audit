@@ -43,6 +43,26 @@ try {
 }
 ```
 
+`putEventsWithRetry` works like `putEventsOrThrow` but retries first. Entries
+EventBridge rejects, and every entry of a chunk whose PutEvents call throws, are
+resent after a jittered exponential backoff; accepted entries are not resent. It
+makes 3 attempts in total by default (`attempts`), starting from a 100ms delay
+(`baseDelay`), and throws a `PutEventsError` describing the final attempt if
+entries are still not accepted.
+
+```typescript
+const results = await events.putEventsWithRetry(entries, { attempts: 5, baseDelay: 50 });
+```
+
+`AuditEventBus.upserted` publishes with `putEventsWithRetry`, extra events
+included, so it throws a `PutEventsError` when an event can't be published.
+`AuditService.upsertItem` catches that error instead of throwing: the audit is
+already stored, and a throw would make callers upsert it again and record an
+extra attempt. It logs at critical level with the stable message
+`"Audit stored but Upserted event not published"`, the audit's `id`, `app` and
+`target` (`type`, `id`), the `failedEntries`, and the `error`. Use that message
+for a CloudWatch metric filter or alarm.
+
 ## Errors
 
 `AuditService.getItem` throws `AuditNotFoundError` when no audit matches the identifiers. It extends `Error` and carries the `identifiers` that were looked up. Storage failures (DynamoDB errors, records that fail schema parsing) are rethrown as-is, so they can be told apart from a missing audit.

@@ -4,11 +4,11 @@ import { EventBridge } from "../constants.js";
 import type { UpsertAudit } from "../schema/service.js";
 import { App, ResourceType } from "../test-config.js";
 // Import from index.ts to ensure barrel file coverage
-import { AuditEventBus, type BatchHandler } from "./index.js";
+import { AuditEventBus, type BatchHandler, PutEventsError } from "./index.js";
 
 describe("AuditEventBus", () => {
   let mockHandler: {
-    putEvents: ReturnType<typeof vi.fn>;
+    putEventsWithRetry: ReturnType<typeof vi.fn>;
   };
   let mockLogger: {
     debug: ReturnType<typeof vi.fn>;
@@ -34,7 +34,7 @@ describe("AuditEventBus", () => {
     vi.clearAllMocks();
 
     mockHandler = {
-      putEvents: vi.fn().mockResolvedValue([]),
+      putEventsWithRetry: vi.fn().mockResolvedValue([]),
     };
 
     mockLogger = {
@@ -67,8 +67,8 @@ describe("AuditEventBus", () => {
 
       await eventBus.upserted([audit]);
 
-      expect(mockHandler.putEvents).toHaveBeenCalledTimes(1);
-      expect(mockHandler.putEvents).toHaveBeenCalledWith([
+      expect(mockHandler.putEventsWithRetry).toHaveBeenCalledTimes(1);
+      expect(mockHandler.putEventsWithRetry).toHaveBeenCalledWith([
         expect.objectContaining({
           EventBusName: EventBridge.Bus.Name(),
           DetailType: EventBridge.DetailType.UPSERTED,
@@ -83,7 +83,7 @@ describe("AuditEventBus", () => {
 
       await eventBus.upserted([audit]);
 
-      const callArgs = mockHandler.putEvents.mock.calls[0][0];
+      const callArgs = mockHandler.putEventsWithRetry.mock.calls[0][0];
       const detail = JSON.parse(callArgs[0].Detail);
 
       expect(detail).toEqual({
@@ -102,8 +102,8 @@ describe("AuditEventBus", () => {
 
       await eventBus.upserted(audits);
 
-      expect(mockHandler.putEvents).toHaveBeenCalledTimes(1);
-      const callArgs = mockHandler.putEvents.mock.calls[0][0];
+      expect(mockHandler.putEventsWithRetry).toHaveBeenCalledTimes(1);
+      const callArgs = mockHandler.putEventsWithRetry.mock.calls[0][0];
       expect(callArgs).toHaveLength(3);
     });
 
@@ -120,7 +120,7 @@ describe("AuditEventBus", () => {
 
       await eventBus.upserted([audit], extraEvents);
 
-      const callArgs = mockHandler.putEvents.mock.calls[0][0];
+      const callArgs = mockHandler.putEventsWithRetry.mock.calls[0][0];
       expect(callArgs).toHaveLength(3); // 1 audit + 2 extra
       expect(callArgs[1]).toEqual(extraEvents[0]);
       expect(callArgs[2]).toEqual(extraEvents[1]);
@@ -131,7 +131,7 @@ describe("AuditEventBus", () => {
 
       await eventBus.upserted([audit], []);
 
-      const callArgs = mockHandler.putEvents.mock.calls[0][0];
+      const callArgs = mockHandler.putEventsWithRetry.mock.calls[0][0];
       expect(callArgs).toHaveLength(1);
     });
 
@@ -140,13 +140,13 @@ describe("AuditEventBus", () => {
 
       await eventBus.upserted([audit], undefined);
 
-      const callArgs = mockHandler.putEvents.mock.calls[0][0];
+      const callArgs = mockHandler.putEventsWithRetry.mock.calls[0][0];
       expect(callArgs).toHaveLength(1);
     });
 
     it("should return results from handler", async () => {
       const expectedResults = [{ EventId: "event-1" }, { EventId: "event-2" }];
-      mockHandler.putEvents.mockResolvedValue(expectedResults);
+      mockHandler.putEventsWithRetry.mockResolvedValue(expectedResults);
 
       const audit = createMockAudit();
       const result = await eventBus.upserted([audit]);
@@ -154,10 +154,19 @@ describe("AuditEventBus", () => {
       expect(result).toEqual(expectedResults);
     });
 
+    it("should throw the PutEventsError when events are not accepted after retries", async () => {
+      const error = new PutEventsError("EventBridge accepted 0 of 1 events after 3 attempts", [
+        { ErrorCode: "InternalFailure" },
+      ]);
+      mockHandler.putEventsWithRetry.mockRejectedValue(error);
+
+      await expect(eventBus.upserted([createMockAudit()])).rejects.toBe(error);
+    });
+
     it("should handle empty audits array", async () => {
       await eventBus.upserted([]);
 
-      expect(mockHandler.putEvents).toHaveBeenCalledWith([]);
+      expect(mockHandler.putEventsWithRetry).toHaveBeenCalledWith([]);
     });
 
     it("should use correct EventBridge configuration", async () => {
@@ -165,7 +174,7 @@ describe("AuditEventBus", () => {
 
       await eventBus.upserted([audit]);
 
-      const callArgs = mockHandler.putEvents.mock.calls[0][0];
+      const callArgs = mockHandler.putEventsWithRetry.mock.calls[0][0];
       expect(callArgs[0].EventBusName).toBe(EventBridge.Bus.Name());
       expect(callArgs[0].DetailType).toBe("Upserted");
       expect(callArgs[0].Source).toBe("Audit");
@@ -182,7 +191,7 @@ describe("AuditEventBus", () => {
 
       await eventBus.upserted([audit]);
 
-      const callArgs = mockHandler.putEvents.mock.calls[0][0];
+      const callArgs = mockHandler.putEventsWithRetry.mock.calls[0][0];
       const detail = JSON.parse(callArgs[0].Detail);
 
       expect(detail).toHaveProperty("audit");

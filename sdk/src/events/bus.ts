@@ -85,9 +85,16 @@ export class AuditEventBus {
    *
    * Additional events can be included via the extraEvents parameter.
    *
+   * Events are sent with {@link BatchHandler.putEventsWithRetry}: entries
+   * EventBridge rejects, and entries whose PutEvents call throws, are retried
+   * (3 attempts in total, with jittered backoff). Extra events are retried the
+   * same way.
+   *
    * @param items - Array of audit records to publish as upserted events
    * @param extraEvents - Optional additional EventBridge events to include in the batch
-   * @returns Array of result entries from EventBridge
+   * @returns Array of result entries from EventBridge, all accepted, in request order
+   *   (audit events first, then extra events)
+   * @throws {PutEventsError} When any event is still not accepted after the retries
    *
    * @example
    * ```typescript
@@ -108,6 +115,6 @@ export class AuditEventBus {
       Source: EventBridge.Source,
     }));
 
-    return await this.handler.putEvents([...events, ...(extraEvents || [])]);
+    return await this.handler.putEventsWithRetry([...events, ...(extraEvents || [])]);
   }
 }
