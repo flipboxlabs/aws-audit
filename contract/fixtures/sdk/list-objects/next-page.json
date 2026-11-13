@@ -1,0 +1,55 @@
+{
+  "description": "nextToken and pageSize feed ExclusiveStartKey and Limit",
+  "operation": "listObjects",
+  "args": [
+    {
+      "app": "App1",
+      "resource": {
+        "type": "Order"
+      }
+    },
+    {
+      "pageSize": 2,
+      "nextToken": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJMU0kxX05fU0siOiIyMTc2NzMyMzQ0NTY3OCJ9"
+    }
+  ],
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "Query",
+      "input": {
+        "ScanIndexForward": false,
+        "IndexName": "LSI1_N",
+        "ExpressionAttributeValues": {
+          ":PK": {
+            "S": "App1.Order"
+          }
+        },
+        "ExpressionAttributeNames": {
+          "#PK": "PK"
+        },
+        "KeyConditionExpression": "#PK=:PK",
+        "TableName": "TEST-Contract-Audit",
+        "Limit": 2,
+        "ExclusiveStartKey": {
+          "PK": {
+            "S": "App1.Order"
+          },
+          "SK": {
+            "S": "audit-1"
+          },
+          "LSI1_N_SK": {
+            "S": "21767323445678"
+          }
+        }
+      },
+      "output": {
+        "Items": []
+      }
+    }
+  ],
+  "result": {
+    "items": [],
+    "pagination": {}
+  }
+}

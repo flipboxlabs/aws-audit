@@ -1,0 +1,33 @@
+{
+  "description": "GetItem without an Item fails with AuditNotFoundError",
+  "operation": "getItem",
+  "args": [
+    {
+      "app": "App1",
+      "resourceType": "Order",
+      "id": "missing"
+    }
+  ],
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "GetItem",
+      "input": {
+        "TableName": "TEST-Contract-Audit",
+        "Key": {
+          "PK": {
+            "S": "App1.Order"
+          },
+          "SK": {
+            "S": "missing"
+          }
+        }
+      },
+      "output": {}
+    }
+  ],
+  "error": {
+    "name": "AuditNotFoundError",
+    "message": "Unable to find Audit app:App1 | resourceType:Order | id:missing"
+  }
+}

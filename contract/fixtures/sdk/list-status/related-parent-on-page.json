@@ -1,0 +1,143 @@
+{
+  "description": "A matching copy whose parent is on the page is folded into it without a read",
+  "operation": "listByStatus",
+  "args": [
+    {
+      "status": "fail",
+      "app": "App1"
+    }
+  ],
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "Query",
+      "input": {
+        "ScanIndexForward": false,
+        "IndexName": "GSI2_SS",
+        "ExpressionAttributeValues": {
+          ":PK": {
+            "S": "fail"
+          },
+          ":app": {
+            "S": "App1"
+          }
+        },
+        "ExpressionAttributeNames": {
+          "#PK": "GSI2_SS_PK",
+          "#target": "target",
+          "#app": "app"
+        },
+        "KeyConditionExpression": "#PK = :PK",
+        "TableName": "TEST-Contract-Audit",
+        "Limit": 100,
+        "FilterExpression": "#target.#app = :app"
+      },
+      "output": {
+        "Items": [
+          {
+            "PK": {
+              "S": "App1.Order"
+            },
+            "SK": {
+              "S": "audit-1"
+            },
+            "GSI2_SS_PK": {
+              "S": "fail"
+            },
+            "GSI2_SS_SK": {
+              "S": "2026-01-02T03:04:05.678Z#audit-1"
+            },
+            "operation": {
+              "S": "createOrder"
+            },
+            "status": {
+              "S": "fail"
+            },
+            "target": {
+              "M": {
+                "app": {
+                  "S": "App1"
+                },
+                "type": {
+                  "S": "Order"
+                },
+                "id": {
+                  "S": "order-1"
+                }
+              }
+            },
+            "createdAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            }
+          },
+          {
+            "PK": {
+              "S": "App1.Unknown"
+            },
+            "SK": {
+              "S": "audit-1#App1.Unknown#7"
+            },
+            "GSI2_SS_PK": {
+              "S": "fail"
+            },
+            "GSI2_SS_SK": {
+              "S": "2026-01-02T03:04:05.678Z#audit-1"
+            },
+            "operation": {
+              "S": "createOrder"
+            },
+            "status": {
+              "S": "fail"
+            },
+            "source": {
+              "M": {
+                "app": {
+                  "S": "App1"
+                },
+                "type": {
+                  "S": "Order"
+                },
+                "id": {
+                  "S": "order-1"
+                }
+              }
+            },
+            "target": {
+              "M": {
+                "app": {
+                  "S": "App1"
+                },
+                "type": {
+                  "S": "Unknown"
+                },
+                "id": {
+                  "N": "7"
+                }
+              }
+            },
+            "createdAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "result": {
+    "items": [
+      {
+        "id": "audit-1",
+        "status": "fail",
+        "tier": 2,
+        "target": {
+          "app": "App1",
+          "id": "order-1",
+          "type": "Order"
+        },
+        "operation": "createOrder",
+        "createdAt": "2026-01-02T03:04:05.678Z"
+      }
+    ],
+    "pagination": {}
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "description": "GetItem by app, type and id; a stored string trace is returned as stored",
+  "operation": "getItem",
+  "args": [
+    {
+      "app": "App1",
+      "resourceType": "Order",
+      "id": "audit-1"
+    }
+  ],
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "GetItem",
+      "input": {
+        "TableName": "TEST-Contract-Audit",
+        "Key": {
+          "PK": {
+            "S": "App1.Order"
+          },
+          "SK": {
+            "S": "audit-1"
+          }
+        }
+      },
+      "output": {
+        "Item": {
+          "PK": {
+            "S": "App1.Order"
+          },
+          "SK": {
+            "S": "audit-1"
+          },
+          "id": {
+            "S": "audit-1"
+          },
+          "operation": {
+            "S": "createOrder"
+          },
+          "status": {
+            "S": "success"
+          },
+          "tier": {
+            "N": "2"
+          },
+          "target": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "type": {
+                "S": "Order"
+              },
+              "id": {
+                "S": "order-1"
+              }
+            }
+          },
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "trace": {
+            "S": "trace-1:0"
+          },
+          "GSI1_SN_PK": {
+            "S": "trace-1"
+          },
+          "GSI1_SN_SK": {
+            "N": "0"
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "id": "audit-1",
+    "status": "success",
+    "tier": 2,
+    "target": {
+      "app": "App1",
+      "id": "order-1",
+      "type": "Order"
+    },
+    "operation": "createOrder",
+    "trace": "trace-1:0",
+    "updatedAt": "2026-01-02T03:04:05.678Z",
+    "createdAt": "2026-01-02T03:04:05.678Z"
+  }
+}

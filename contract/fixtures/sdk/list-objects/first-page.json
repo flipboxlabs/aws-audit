@@ -1,0 +1,114 @@
+{
+  "description": "Audits of a resource type, newest first by tier; LastEvaluatedKey becomes nextToken",
+  "operation": "listObjects",
+  "args": [
+    {
+      "app": "App1",
+      "resource": {
+        "type": "Order"
+      }
+    }
+  ],
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "Query",
+      "input": {
+        "ScanIndexForward": false,
+        "IndexName": "LSI1_N",
+        "ExpressionAttributeValues": {
+          ":PK": {
+            "S": "App1.Order"
+          }
+        },
+        "ExpressionAttributeNames": {
+          "#PK": "PK"
+        },
+        "KeyConditionExpression": "#PK=:PK",
+        "TableName": "TEST-Contract-Audit",
+        "Limit": 100
+      },
+      "output": {
+        "Items": [
+          {
+            "PK": {
+              "S": "App1.Order"
+            },
+            "SK": {
+              "S": "audit-1"
+            },
+            "id": {
+              "S": "audit-1"
+            },
+            "operation": {
+              "S": "createOrder"
+            },
+            "status": {
+              "S": "success"
+            },
+            "tier": {
+              "N": "2"
+            },
+            "target": {
+              "M": {
+                "app": {
+                  "S": "App1"
+                },
+                "type": {
+                  "S": "Order"
+                },
+                "id": {
+                  "S": "order-1"
+                }
+              }
+            },
+            "createdAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            },
+            "updatedAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            },
+            "LSI1_N_SK": {
+              "N": "21767323445678"
+            },
+            "trace": {
+              "S": "trace-1"
+            }
+          }
+        ],
+        "LastEvaluatedKey": {
+          "PK": {
+            "S": "App1.Order"
+          },
+          "SK": {
+            "S": "audit-1"
+          },
+          "LSI1_N_SK": {
+            "N": "21767323445678"
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "items": [
+      {
+        "id": "audit-1",
+        "status": "success",
+        "tier": 2,
+        "target": {
+          "app": "App1",
+          "id": "order-1",
+          "type": "Order"
+        },
+        "operation": "createOrder",
+        "trace": "trace-1",
+        "updatedAt": "2026-01-02T03:04:05.678Z",
+        "createdAt": "2026-01-02T03:04:05.678Z"
+      }
+    ],
+    "pagination": {
+      "nextToken": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJMU0kxX05fU0siOjIxNzY3MzIzNDQ1Njc4fQ"
+    }
+  }
+}
