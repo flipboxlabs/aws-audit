@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.5.0...cdk-v1.6.0) (2026-11-13)
+
+
+### Features
+
+* **cdk:** add GET /config REST route to discover a deployment's configuration ([b3ce45d](https://github.com/flipboxlabs/aws-audit/commit/b3ce45dfbb8ed855d01f185c22db3a38f9efe534))
+* **cdk:** add GET /config REST route to discover a deployment's configuration ([72ea005](https://github.com/flipboxlabs/aws-audit/commit/72ea005579c37f72336dc0655ba29d15332d0187)), closes [#82](https://github.com/flipboxlabs/aws-audit/issues/82)
+
 ## [1.5.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.4.0...cdk-v1.5.0) (2026-11-12)
 
 
