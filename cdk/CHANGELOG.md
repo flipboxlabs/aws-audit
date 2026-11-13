@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.6.4](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.6.3...cdk-v1.6.4) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cdk:** answer 404 when the audit doesn't belong to {item} ([7f1d3b4](https://github.com/flipboxlabs/aws-audit/commit/7f1d3b4da152d35930c128419bc3ff7b01080e20))
+* **cdk:** answer 404 when the audit doesn't belong to {item} ([f08bbaf](https://github.com/flipboxlabs/aws-audit/commit/f08bbaff91daca25e38858782f6296a2636da99c)), closes [#105](https://github.com/flipboxlabs/aws-audit/issues/105)
+* **cdk:** keep audits without a target id reachable ([af4a6d7](https://github.com/flipboxlabs/aws-audit/commit/af4a6d73e18b7a0558cdd9b872f5e392a2aab7bb))
+* **cdk:** load the audit config layer from audit-config.mjs ([13c7af4](https://github.com/flipboxlabs/aws-audit/commit/13c7af4b9bb4c226572bcdfbc50346b8d9438830))
+* **cdk:** mark the audit config layer as an ES module package ([8132434](https://github.com/flipboxlabs/aws-audit/commit/813243487bda32a199a922a032a4f5b0ad67072a))
+* **cdk:** mark the audit config layer as an ES module package ([d88c521](https://github.com/flipboxlabs/aws-audit/commit/d88c5210fd1cb75e30ef144f26648a7fcd3a80dd)), closes [#114](https://github.com/flipboxlabs/aws-audit/issues/114)
+
 ## [1.6.3](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.6.2...cdk-v1.6.3) (2026-11-13)
 
 

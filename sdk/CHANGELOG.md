@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.6.0](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.5.4...sdk-v1.6.0) (2026-11-13)
+
+
+### Features
+
+* **sdk:** add BatchHandler.putEventsWithRetry ([f305ba6](https://github.com/flipboxlabs/aws-audit/commit/f305ba65a3313ff7a959edc06e7f8ec40513ed1e)), closes [#108](https://github.com/flipboxlabs/aws-audit/issues/108)
+
+
+### Bug Fixes
+
+* **sdk:** keep AuditEventBus.upserted never-throw and add upsertedOrThrow ([439c220](https://github.com/flipboxlabs/aws-audit/commit/439c220b3a3cdda6c4885ea1f2eff30441a98422)), closes [#108](https://github.com/flipboxlabs/aws-audit/issues/108)
+* **sdk:** only retry transient EventBridge rejections in putEventsWithRetry ([67c6ae9](https://github.com/flipboxlabs/aws-audit/commit/67c6ae9b8bba8ff93559d455de2fb98139305537)), closes [#108](https://github.com/flipboxlabs/aws-audit/issues/108)
+* **sdk:** retry rejected Upserted events and log when they can't be published ([c81e756](https://github.com/flipboxlabs/aws-audit/commit/c81e75644a057b34f3857cee6f6f6b520beeb5e5))
+* **sdk:** retry rejected Upserted events and log when they can't be published ([9f93fea](https://github.com/flipboxlabs/aws-audit/commit/9f93fea5936fbafa3624c525b85e3e5404ec67f3)), closes [#108](https://github.com/flipboxlabs/aws-audit/issues/108)
+
 ## [1.5.4](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.5.3...sdk-v1.5.4) (2026-11-13)
 
 
