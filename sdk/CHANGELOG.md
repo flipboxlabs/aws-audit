@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.5.2](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.5.1...sdk-v1.5.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* **sdk:** drop a NULL trace instead of failing to parse the audit ([e4bc654](https://github.com/flipboxlabs/aws-audit/commit/e4bc6543938299967b00f71a38eb8387e2bd902d)), closes [#91](https://github.com/flipboxlabs/aws-audit/issues/91)
+* **sdk:** filter trace listings on the nested audit target ([02b3072](https://github.com/flipboxlabs/aws-audit/commit/02b30727ab7ae3ecea61491c8a0b4ca6f57c0dc0))
+* **sdk:** filter trace listings on the nested audit target ([24d380e](https://github.com/flipboxlabs/aws-audit/commit/24d380e4a3aaeb2052de849fc57343c526117f80)), closes [#89](https://github.com/flipboxlabs/aws-audit/issues/89)
+* **sdk:** ignore caller-supplied attempts in upsertItem ([1b88393](https://github.com/flipboxlabs/aws-audit/commit/1b883939c4487b766766e6956b177de5adea96d8))
+* **sdk:** ignore caller-supplied attempts in upsertItem ([26efbf1](https://github.com/flipboxlabs/aws-audit/commit/26efbf10defac53dcad419ab1aaa8e6db013fe36)), closes [#92](https://github.com/flipboxlabs/aws-audit/issues/92)
+* **sdk:** return the trace an audit was written with ([edb85ee](https://github.com/flipboxlabs/aws-audit/commit/edb85eead353f0f55e49db1d38329b8014b2abcd))
+* **sdk:** return the trace an audit was written with ([091d022](https://github.com/flipboxlabs/aws-audit/commit/091d02245a0dda9aff1c216e0156765b62bf538f)), closes [#91](https://github.com/flipboxlabs/aws-audit/issues/91)
+
 ## [1.5.1](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.5.0...sdk-v1.5.1) (2026-11-12)
 
 
