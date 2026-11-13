@@ -1185,6 +1185,47 @@ describe("AuditRepository", () => {
       expect(command.input.UpdateExpression).not.toContain("#attempts = :attempts");
     });
 
+    it("should renumber a retry on an existing item and ignore caller-supplied attempts", async () => {
+      mockClient.send.mockResolvedValue({
+        Attributes: marshall({
+          attempts: [
+            { number: 1, status: "fail", at: "2024-01-01T00:00:00Z" },
+            { number: 2, status: "fail", at: "2024-01-02T00:00:00Z" },
+            { number: 1, status: "success", at: "2024-01-03T00:00:00Z" },
+          ],
+        }),
+      });
+
+      const item = createMockUpsertInput({
+        attempts: [{ number: 9, status: "fail", at: "2023-12-31T00:00:00Z" }],
+      });
+      const attempt = { number: 1, status: "success", at: "2024-01-03T00:00:00Z" };
+
+      await expect(repository.upsertItem(item, attempt)).resolves.toBe(3);
+      expect(mockClient.send).toHaveBeenCalledTimes(2);
+
+      const [update, renumber] = mockClient.send.mock.calls.map(
+        ([command]) => (command as UpdateItemCommand).input,
+      );
+      expect(update.ExpressionAttributeValues).not.toHaveProperty(":attempts");
+      expect(update.ExpressionAttributeValues?.[":newAttempt"]).toEqual(
+        marshall({ v: [attempt] }).v,
+      );
+
+      expect(renumber.Key).toEqual(update.Key);
+      expect(renumber.UpdateExpression).toBe("SET #attempts[2].#number = :attemptNumber");
+      expect(renumber.ExpressionAttributeNames).toEqual({
+        "#attempts": "attempts",
+        "#number": "number",
+      });
+      expect(renumber.ExpressionAttributeValues).toEqual({ ":attemptNumber": { N: "3" } });
+
+      // The caller's attempt (number 9, 2023-12-31) reaches neither request
+      for (const input of [update, renumber]) {
+        expect(JSON.stringify(input)).not.toContain("2023-12-31");
+      }
+    });
+
     it.each<[string, Partial<UpsertAuditInput>]>([
       ["minimal", {}],
       [
