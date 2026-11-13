@@ -4,6 +4,7 @@ import * as apigateway from "aws-cdk-lib/aws-apigateway";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
 import { Construct } from "constructs";
 import { ESMNodeFunctionFactory } from "../../../lambda/nodejs.function.js";
+import { CDK_VERSION } from "../../../version.js";
 import { API_RESOURCE } from "./constants.js";
 
 type Props = {
@@ -38,6 +39,9 @@ export default class extends Construct {
 
     // Logger / Metrics / Tracing
     lambdaFn.addEnvironment("POWERTOOLS_SERVICE_NAME", "Config");
+
+    // Version reported by GET /config
+    lambdaFn.addEnvironment("AWS_AUDIT_CDK_VERSION", CDK_VERSION);
 
     // Integration
     const integration = new apigateway.LambdaIntegration(lambdaFn);

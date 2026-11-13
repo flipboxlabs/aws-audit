@@ -17,7 +17,7 @@ app.get(
       apps: [...auditConfig.apps],
       resourceTypes: [...auditConfig.resourceTypes],
       statuses: Object.values(Status),
-      // Replaced with a string literal at bundle time (see ESMNodeFunctionFactory)
+      // Set by the Config construct from the CDK package version
       version: process.env.AWS_AUDIT_CDK_VERSION as string,
     };
 
