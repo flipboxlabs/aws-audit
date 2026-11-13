@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.4](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.5.3...sdk-v1.5.4) (2026-11-13)
+
+
+### Bug Fixes
+
+* answer 404 when the requested audit doesn't exist ([d6b5ba0](https://github.com/flipboxlabs/aws-audit/commit/d6b5ba0cdbdf5806896567e235fc5996988e1b18))
+* **sdk:** log getItem read failures accurately and copy not-found identifiers ([3f8d263](https://github.com/flipboxlabs/aws-audit/commit/3f8d2638b6c030c681d14330bef6d5985d2406ea))
+
 ## [1.5.3](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.5.2...sdk-v1.5.3) (2026-11-13)
 
 
