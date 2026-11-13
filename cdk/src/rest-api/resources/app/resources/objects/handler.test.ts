@@ -344,9 +344,16 @@ describe("objects handler", () => {
   });
 
   describe("GET /apps/:app/objects/:object/:item/:audit", () => {
-    const createDetailApiGatewayEvent = (): APIGatewayProxyEventV2 => {
+    const createDetailApiGatewayEvent = ({
+      app = App.App1,
+      object = ResourceType.UNKNOWN,
+      item = "item-123",
+      audit = "audit-456",
+    }: Partial<
+      Record<"app" | "object" | "item" | "audit", string>
+    > = {}): APIGatewayProxyEventV2 => {
       const baseEvent = createApiGatewayEvent();
-      const rawPath = `/apps/${App.App1}/objects/${ResourceType.UNKNOWN}/item-123/audit-456`;
+      const rawPath = `/apps/${app}/objects/${object}/${item}/${encodeURIComponent(audit)}`;
 
       return createApiGatewayEvent({
         routeKey: "GET /apps/{app}/objects/{object}/{item}/{audit}",
@@ -359,13 +366,14 @@ describe("objects handler", () => {
             path: rawPath,
           },
         },
-        pathParameters: {
-          app: App.App1,
-          object: ResourceType.UNKNOWN,
-          item: "item-123",
-          audit: "audit-456",
-        },
+        pathParameters: { app, object, item, audit },
       });
+    };
+
+    const notFound = {
+      statusCode: 404,
+      error: "NotFoundError",
+      message: "Audit not found",
     };
 
     it("should return 404 when the audit does not exist", async () => {
@@ -380,11 +388,76 @@ describe("objects handler", () => {
       const response = await handler(createDetailApiGatewayEvent(), mockContext);
 
       expect(response.statusCode).toBe(404);
-      expect(JSON.parse(response.body as string)).toEqual({
-        statusCode: 404,
-        error: "NotFoundError",
-        message: "Audit not found",
+      expect(JSON.parse(response.body as string)).toEqual(notFound);
+    });
+
+    it("should return 404 when the audit belongs to another item", async () => {
+      mockGetItem.mockResolvedValue({
+        id: "audit-456",
+        status: "success",
+        tier: 2,
+        operation: "testOp",
+        target: { app: App.App1, type: ResourceType.UNKNOWN, id: "other-item" },
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-02T00:00:00.000Z",
       });
+
+      const response = await handler(createDetailApiGatewayEvent(), mockContext);
+
+      expect(response.statusCode).toBe(404);
+      expect(JSON.parse(response.body as string)).toEqual(notFound);
+    });
+
+    it("should match a numeric target id against the item as a string", async () => {
+      const mockResponse = {
+        id: "audit-456",
+        status: "success",
+        tier: 2,
+        operation: "testOp",
+        target: { app: App.App1, type: ResourceType.UNKNOWN, id: 12345 },
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-02T00:00:00.000Z",
+      };
+      mockGetItem.mockResolvedValue(mockResponse);
+
+      const response = await handler(createDetailApiGatewayEvent({ item: "12345" }), mockContext);
+
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(response.body as string)).toEqual(mockResponse);
+    });
+
+    it("should return a related-resource copy under the related resource's path", async () => {
+      // upsertItem stores the copy under the related resource's app and type, with it as the target
+      const auditId = `audit-456#${App.TestApp}.${ResourceType.USER}#user-789`;
+      const mockResponse = {
+        id: auditId,
+        status: "success",
+        tier: 2,
+        operation: "testOp",
+        target: { app: App.TestApp, type: ResourceType.USER, id: "user-789" },
+        source: { app: App.App1, type: ResourceType.UNKNOWN, id: "item-123" },
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-02T00:00:00.000Z",
+      };
+      mockGetItem.mockResolvedValue(mockResponse);
+
+      const response = await handler(
+        createDetailApiGatewayEvent({
+          app: App.TestApp,
+          object: ResourceType.USER,
+          item: "user-789",
+          audit: auditId,
+        }),
+        mockContext,
+      );
+
+      expect(mockGetItem).toHaveBeenCalledWith({
+        app: App.TestApp,
+        resourceType: ResourceType.USER,
+        id: auditId,
+      });
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(response.body as string)).toEqual(mockResponse);
     });
 
     it("should return 500 when the lookup fails", async () => {

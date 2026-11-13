@@ -123,14 +123,21 @@ app.get(
     const {
       [BASE_API_RESOURCE.RESOURCE_WILDCARD]: appId,
       [API_RESOURCE.RESOURCE_WILDCARD]: objectType,
+      [API_RESOURCE.RESOURCE_WILDCARD_ITEM]: itemId,
       [API_RESOURCE.RESOURCE_WILDCARD_ITEM_AUDIT]: auditId,
     } = reqCtx.valid.req.path;
 
-    const item = await audits.getItem({
+    const identifiers = {
       app: appId as App,
       resourceType: objectType as ResourceType,
       id: auditId,
-    });
+    };
+    const item = await audits.getItem(identifiers);
+
+    // The lookup ignores {item}, so an audit of another item is answered as missing.
+    if (item.target.id?.toString() !== itemId) {
+      throw new AuditNotFoundError(identifiers);
+    }
 
     return Response.json(item, { status: 200 }) as unknown as ResponseDetail;
   },

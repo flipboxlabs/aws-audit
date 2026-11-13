@@ -49,6 +49,9 @@ import { handler } from "./handler.js";
 const storedEvent = (detail: string | Record<string, unknown>) =>
   EventBridgeEventSchema.parse({ source: "test-source", "detail-type": "TestEvent", detail });
 
+// The item in the default request path
+const target = { app: App.App1, type: ResourceType.UNKNOWN, id: "item-123" };
+
 const createApiGatewayEvent = (
   overrides: Partial<APIGatewayProxyEventV2> = {},
 ): APIGatewayProxyEventV2 =>
@@ -116,6 +119,7 @@ describe("rerun handler", () => {
     it("should rerun a rerunable audit event", async () => {
       const mockAuditItem = {
         id: "audit-456",
+        target,
         rerunable: true,
         event: storedEvent({ k: 1 }),
       };
@@ -145,6 +149,7 @@ describe("rerun handler", () => {
     it("should return 400 when item is not rerunable", async () => {
       const mockAuditItem = {
         id: "audit-456",
+        target,
         rerunable: false,
         event: storedEvent({}),
       };
@@ -161,6 +166,7 @@ describe("rerun handler", () => {
     it("should return 400 when item has no event", async () => {
       const mockAuditItem = {
         id: "audit-456",
+        target,
         rerunable: true,
         event: null,
       };
@@ -227,6 +233,81 @@ describe("rerun handler", () => {
       });
     });
 
+    it("should return 404 without publishing when the audit belongs to another item", async () => {
+      mockGetItem.mockResolvedValue({
+        id: "audit-456",
+        target: { ...target, id: "other-item" },
+        rerunable: true,
+        event: storedEvent({ k: 1 }),
+      });
+
+      const event = createApiGatewayEvent();
+      const response = await handler(event, mockContext);
+
+      expect(mockPutEventsOrThrow).not.toHaveBeenCalled();
+      expect(response.statusCode).toBe(404);
+      expect(JSON.parse(response.body as string)).toEqual({
+        statusCode: 404,
+        error: "NotFoundError",
+        message: "Audit not found",
+      });
+    });
+
+    it("should match a numeric target id against the item as a string", async () => {
+      mockGetItem.mockResolvedValue({
+        id: "audit-456",
+        target: { ...target, id: 12345 },
+        rerunable: true,
+        event: storedEvent({ k: 1 }),
+      });
+      mockPutEventsOrThrow.mockResolvedValue([{ EventId: "event-1" }]);
+
+      const event = createApiGatewayEvent({
+        rawPath: `/apps/${App.App1}/objects/${ResourceType.UNKNOWN}/12345/audit-456/rerun`,
+        pathParameters: {
+          app: App.App1,
+          object: ResourceType.UNKNOWN,
+          item: "12345",
+          audit: "audit-456",
+        },
+      });
+      const response = await handler(event, mockContext);
+
+      expect(mockPutEventsOrThrow).toHaveBeenCalled();
+      expect(response.statusCode).toBe(204);
+    });
+
+    it("should find a related-resource copy under the related resource's path", async () => {
+      // upsertItem stores the copy under the related resource's app and type, with it as the
+      // target; the copy carries no event, so it is found but not rerunable.
+      const auditId = `audit-456#${App.TestApp}.${ResourceType.USER}#user-789`;
+      mockGetItem.mockResolvedValue({
+        id: auditId,
+        target: { app: App.TestApp, type: ResourceType.USER, id: "user-789" },
+        source: target,
+        rerunable: true,
+      });
+
+      const event = createApiGatewayEvent({
+        rawPath: `/apps/${App.TestApp}/objects/${ResourceType.USER}/user-789/${encodeURIComponent(auditId)}/rerun`,
+        pathParameters: {
+          app: App.TestApp,
+          object: ResourceType.USER,
+          item: "user-789",
+          audit: auditId,
+        },
+      });
+      const response = await handler(event, mockContext);
+
+      expect(mockGetItem).toHaveBeenCalledWith({
+        app: App.TestApp,
+        resourceType: ResourceType.USER,
+        id: auditId,
+      });
+      expect(mockPutEventsOrThrow).not.toHaveBeenCalled();
+      expect(response.statusCode).toBe(400);
+    });
+
     it("should handle service errors when getting item", async () => {
       mockGetItem.mockRejectedValue(new Error("Service error"));
 
@@ -246,6 +327,7 @@ describe("rerun handler", () => {
       beforeEach(() => {
         mockGetItem.mockResolvedValue({
           id: "audit-456",
+          target,
           rerunable: true,
           event: storedEvent({}),
         });
