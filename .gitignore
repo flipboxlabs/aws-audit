@@ -33,3 +33,7 @@ coverage/
 # Cache
 .cache/
 *.tsbuildinfo
+
+# Parallel checkouts (docs/worktrees.md); .claude/worktrees is Claude Code's own location
+/.worktrees/
+/.claude/worktrees/
