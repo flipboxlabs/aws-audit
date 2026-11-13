@@ -26,6 +26,29 @@ const RETRY_ATTEMPTS = 3;
 const RETRY_BASE_DELAY = 100;
 
 /**
+ * Longest delay in milliseconds before a retry in {@link BatchHandler.putEventsWithRetry}.
+ */
+const RETRY_MAX_DELAY = 30_000;
+
+/**
+ * Result entry error codes worth resending the entry for.
+ *
+ * EventBridge documents `InternalFailure` and `ThrottlingException` as the
+ * retryable PutEvents entry errors; `InternalException` and
+ * `ServiceUnavailable` are its other transient service errors. Every other
+ * code (`MalformedDetail`, `InvalidArgument`, `AccessDeniedException`, ...)
+ * fails the same way when resent.
+ *
+ * @internal
+ */
+const RETRYABLE_ERROR_CODES: ReadonlySet<string> = new Set([
+  "InternalException",
+  "InternalFailure",
+  "ServiceUnavailable",
+  "ThrottlingException",
+]);
+
+/**
  * Throws when `chunk` isn't a batch size EventBridge accepts (1 to 10).
  *
  * @internal
@@ -45,10 +68,19 @@ export interface PutEventsRetryOptions {
   /** Total PutEvents attempts per entry, including the first, an integer of at least 1 (default: 3) */
   attempts?: number;
   /**
-   * Delay in milliseconds before the first retry (default: 100). It doubles on
-   * each later retry, and each delay is jittered to between half and all of it.
+   * Delay in milliseconds before the first retry, a finite number of at least 0
+   * (default: 100). It doubles on each later retry up to 30 seconds, and each
+   * delay is jittered to between half and all of it.
    */
   baseDelay?: number;
+}
+
+/**
+ * Options for {@link PutEventsError}.
+ */
+export interface PutEventsErrorOptions extends ErrorOptions {
+  /** Result entries EventBridge returned, accepted and rejected, in request order */
+  results?: PutEventsResultEntry[];
 }
 
 /**
@@ -58,22 +90,33 @@ export interface PutEventsRetryOptions {
  *
  * Either a PutEvents call itself failed (the client error is the `cause`),
  * or EventBridge answered but did not accept every entry (`failedEntries`
- * holds the result entries carrying an `ErrorCode`). After retries, both
- * can be true: `failedEntries` and `cause` describe the final attempt.
+ * holds the result entries carrying an `ErrorCode`). With
+ * {@link BatchHandler.putEventsWithRetry} both can be true, since it keeps
+ * sending the other chunks after one throws.
  */
 export class PutEventsError extends Error {
   /**
+   * Result entries EventBridge returned, accepted and rejected, in request
+   * order. Entries without one (their call threw, or EventBridge sent none
+   * back) are left out. {@link BatchHandler.putEventsOrThrow} leaves it empty
+   * when a call threw.
+   */
+  public readonly results: PutEventsResultEntry[];
+
+  /**
    * @param message - Description of the failure
    * @param failedEntries - Result entries EventBridge rejected (empty when the call threw)
-   * @param options - Error options; `cause` is the client error when the call threw
+   * @param options - Error options; `cause` is the client error when a call threw,
+   *   and `results` the result entries EventBridge returned
    */
   public constructor(
     message: string,
     public readonly failedEntries: PutEventsResultEntry[] = [],
-    options?: ErrorOptions,
+    { results = [], ...options }: PutEventsErrorOptions = {},
   ) {
     super(message, options);
     this.name = "PutEventsError";
+    this.results = results;
   }
 }
 
@@ -196,6 +239,7 @@ export class BatchHandler {
       throw new PutEventsError(
         `EventBridge accepted ${accepted} of ${entries.length} events`,
         failedEntries,
+        { results: result },
       );
     }
 
@@ -208,25 +252,29 @@ export class BatchHandler {
 
   /**
    * Publishes events to EventBridge like {@link putEventsOrThrow}, retrying
-   * the entries that were not accepted before giving up.
+   * entries EventBridge rejected for a transient reason before giving up.
    *
-   * An entry fails when EventBridge rejects it (its result entry carries an
-   * `ErrorCode`, or no result entry came back for it) or when the PutEvents
-   * call for its chunk throws. Only failed entries are resent, after a jittered
-   * exponential backoff, until every entry is accepted or `attempts` run out.
-   * Result entries line up with request entries by position, so the returned
-   * array is in the same order as `entries` whichever attempt accepted them.
+   * Only rejected entries whose `ErrorCode` is retryable (throttling or an
+   * internal failure) are resent, after a jittered exponential backoff, until
+   * they are accepted or `attempts` run out. Result entries line up with
+   * request entries by position, which is how the rejected ones are picked.
    *
-   * Thrown PutEvents calls are retried here on top of the EventBridge client's
-   * own retry strategy.
+   * Nothing that might already have been published is resent, since PutEvents
+   * isn't idempotent:
+   * - A PutEvents call that throws (after the EventBridge client's own
+   *   retries) fails its whole chunk; the other chunks are still sent.
+   * - An entry EventBridge returned no result entry for fails.
+   * - An entry rejected with any other `ErrorCode` fails without a retry.
    *
    * @param entries - Array of EventBridge event entries to publish
    * @param options - Batch size, attempts and backoff delay
    * @returns Array of result entries from EventBridge, all accepted, in `entries` order
-   * @throws {RangeError} When `chunk` isn't an integer from 1 to 10, or `attempts`
-   *   isn't an integer of at least 1 (nothing is sent)
-   * @throws {PutEventsError} When entries are still not accepted after the last
-   *   attempt (see {@link PutEventsError} for what it carries)
+   * @throws {RangeError} When `chunk` isn't an integer from 1 to 10, `attempts`
+   *   isn't an integer of at least 1, or `baseDelay` isn't a finite number of at
+   *   least 0 (nothing is sent)
+   * @throws {PutEventsError} When any entry is not accepted once retries are
+   *   done. `failedEntries` holds the final rejected result entries, `results`
+   *   every result entry returned, and `cause` the last client error if a call threw.
    *
    * @example
    * ```typescript
@@ -253,17 +301,20 @@ export class BatchHandler {
       throw new RangeError(`attempts must be an integer of at least 1, got ${attempts}`);
     }
 
-    const result: PutEventsResultEntry[] = [];
+    if (!Number.isFinite(baseDelay) || baseDelay < 0) {
+      throw new RangeError(`baseDelay must be a finite number of at least 0, got ${baseDelay}`);
+    }
 
-    // Positions in `entries` that still have to be accepted
+    // The latest result entry for each position in `entries`
+    const results: PutEventsResultEntry[] = [];
+
+    // Positions in `entries` to send on this attempt
     let pending = entries.map((_, index) => index);
-    let failedEntries: PutEventsResultEntry[] = [];
     let cause: unknown;
+    let attempt = 1;
 
-    for (let attempt = 1; ; attempt++) {
-      const failed: number[] = [];
-      failedEntries = [];
-      cause = undefined;
+    for (; ; attempt++) {
+      const retry: number[] = [];
 
       for (let i = 0, j = pending.length; i < j; i += chunk) {
         const indexes = pending.slice(i, i + chunk);
@@ -277,59 +328,64 @@ export class BatchHandler {
             }),
           );
         } catch (error) {
-          // A thrown call means none of the chunk's entries were accepted
+          // The call may have been published before it failed (a timeout, say),
+          // so the chunk fails without a resend.
           cause = error;
-          failed.push(...indexes);
           continue;
         }
 
         indexes.forEach((index, position) => {
           const entry = output.Entries?.[position];
 
-          if (entry && !entry.ErrorCode) {
-            result[index] = entry;
+          // No result entry: it may have been accepted, so it isn't resent
+          if (!entry) {
             return;
           }
 
-          failed.push(index);
+          results[index] = entry;
 
-          if (entry) {
-            failedEntries.push(entry);
+          if (entry.ErrorCode && RETRYABLE_ERROR_CODES.has(entry.ErrorCode)) {
+            retry.push(index);
           }
         });
       }
 
-      if (failed.length === 0) {
+      if (retry.length === 0 || attempt >= attempts) {
         break;
       }
 
-      if (attempt >= attempts) {
-        throw new PutEventsError(
-          `EventBridge accepted ${entries.length - failed.length} of ${entries.length} events after ${attempts} attempts`,
-          failedEntries,
-          cause === undefined ? undefined : { cause },
-        );
-      }
-
-      // Jittered exponential backoff: between half and all of baseDelay * 2^(attempt - 1)
-      const ceiling = baseDelay * 2 ** (attempt - 1);
+      // Jittered exponential backoff: between half and all of baseDelay * 2^(attempt - 1), capped
+      const ceiling = Math.min(baseDelay * 2 ** (attempt - 1), RETRY_MAX_DELAY);
       const delayMs = Math.round(ceiling / 2 + (Math.random() * ceiling) / 2);
 
       this.logger.warn("Retrying event bridge events", {
-        count: failed.length,
+        count: retry.length,
         attempt,
         delayMs,
       });
 
       await new Promise((resolve) => setTimeout(resolve, delayMs));
-      pending = failed;
+      pending = retry;
+    }
+
+    // Drop the positions that have no result entry
+    const returned = results.filter((entry) => entry !== undefined);
+    const failedEntries = returned.filter((entry) => entry.ErrorCode);
+    const accepted = returned.length - failedEntries.length;
+
+    if (accepted !== entries.length) {
+      throw new PutEventsError(
+        `EventBridge accepted ${accepted} of ${entries.length} events after ${attempt} ${attempt === 1 ? "attempt" : "attempts"}`,
+        failedEntries,
+        cause === undefined ? { results: returned } : { cause, results: returned },
+      );
     }
 
     this.logger.debug("Pushed event bridge events", {
-      events: result,
+      events: returned,
     });
 
-    return result;
+    return returned;
   }
 
   /**

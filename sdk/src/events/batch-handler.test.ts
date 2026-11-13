@@ -248,7 +248,7 @@ describe("BatchHandler", () => {
       const thrown = await handler.putEventsOrThrow(entries).catch((e: unknown) => e);
 
       expect(thrown).toBeInstanceOf(PutEventsError);
-      expect(thrown).toMatchObject({ cause: error, failedEntries: [] });
+      expect(thrown).toMatchObject({ cause: error, failedEntries: [], results: [] });
       expect(mockLogger.critical).not.toHaveBeenCalled();
     });
 
@@ -269,6 +269,10 @@ describe("BatchHandler", () => {
       expect(thrown).toMatchObject({
         message: "EventBridge accepted 1 of 2 events",
         failedEntries: [{ ErrorCode: "ThrottlingException", ErrorMessage: "Rate exceeded" }],
+        results: [
+          { EventId: "event-1" },
+          { ErrorCode: "ThrottlingException", ErrorMessage: "Rate exceeded" },
+        ],
       });
     });
 
@@ -305,6 +309,14 @@ describe("BatchHandler", () => {
 
     /** Request entries sent by the nth PutEvents call */
     const sentEntries = (call: number) => mockClient.send.mock.calls[call][0].input.Entries;
+
+    /** A PutEvents response rejecting every entry sent with `ErrorCode` */
+    const rejectAll =
+      (ErrorCode: string) => async (command: { input: { Entries: unknown[] } }) => ({
+        $metadata: {},
+        FailedEntryCount: command.input.Entries.length,
+        Entries: command.input.Entries.map(() => ({ ErrorCode })),
+      });
 
     beforeEach(() => {
       vi.useFakeTimers();
@@ -346,7 +358,7 @@ describe("BatchHandler", () => {
       expect(result).toEqual([]);
     });
 
-    it("should retry only the rejected entries and return results in request order", async () => {
+    it("should retry only the throttled entries and return results in request order", async () => {
       mockClient.send
         .mockResolvedValueOnce({
           $metadata: {},
@@ -371,72 +383,57 @@ describe("BatchHandler", () => {
       });
     });
 
-    it("should retry entries that came back without a result entry", async () => {
-      mockClient.send.mockResolvedValueOnce({ $metadata: {} }).mockResolvedValueOnce({
-        $metadata: {},
-        Entries: [{ EventId: "event-1" }, { EventId: "event-2" }],
-      });
-
-      const result = await run(entries);
-
-      expect(result).toEqual([{ EventId: "event-1" }, { EventId: "event-2" }]);
-      expect(sentEntries(1)).toEqual(entries);
-    });
-
-    it("should retry a thrown call", async () => {
-      mockClient.send.mockRejectedValueOnce(new Error("EventBridge error")).mockResolvedValueOnce({
-        $metadata: {},
-        Entries: [{ EventId: "event-1" }, { EventId: "event-2" }],
-      });
-
-      const result = await run(entries);
-
-      expect(result).toEqual([{ EventId: "event-1" }, { EventId: "event-2" }]);
-      expect(mockClient.send).toHaveBeenCalledTimes(2);
-      expect(sentEntries(1)).toEqual(entries);
-    });
-
-    it("should resend every entry of a thrown chunk and none of an accepted one", async () => {
-      mockClient.send
-        .mockResolvedValueOnce({ $metadata: {}, Entries: [{ EventId: "event-1" }] })
-        .mockRejectedValueOnce(new Error("EventBridge error"))
-        .mockResolvedValueOnce({ $metadata: {}, Entries: [{ EventId: "event-2" }] });
-
-      const result = await run(entries, { chunk: 1 });
-
-      expect(result).toEqual([{ EventId: "event-1" }, { EventId: "event-2" }]);
-      expect(mockClient.send).toHaveBeenCalledTimes(3);
-      expect(sentEntries(2)).toEqual([entries[1]]);
-    });
-
-    it("should throw PutEventsError after 3 attempts when an entry is always rejected", async () => {
-      mockClient.send
-        .mockResolvedValueOnce({
+    it.each(["InternalException", "InternalFailure", "ServiceUnavailable", "ThrottlingException"])(
+      "should retry an entry rejected with %s",
+      async (ErrorCode) => {
+        mockClient.send.mockImplementationOnce(rejectAll(ErrorCode)).mockResolvedValueOnce({
           $metadata: {},
-          FailedEntryCount: 1,
-          Entries: [{ EventId: "event-1" }, { ErrorCode: "InternalFailure" }],
-        })
-        .mockResolvedValue({
-          $metadata: {},
-          FailedEntryCount: 1,
-          Entries: [{ ErrorCode: "InternalFailure", ErrorMessage: "Try again" }],
+          Entries: [{ EventId: "event-1" }, { EventId: "event-2" }],
         });
+
+        const result = await run(entries);
+
+        expect(result).toEqual([{ EventId: "event-1" }, { EventId: "event-2" }]);
+        expect(mockClient.send).toHaveBeenCalledTimes(2);
+      },
+    );
+
+    it.each(["MalformedDetail", "InvalidArgument", "AccessDeniedException"])(
+      "should fail an entry rejected with %s without a retry",
+      async (ErrorCode) => {
+        mockClient.send.mockResolvedValue({
+          $metadata: {},
+          FailedEntryCount: 1,
+          Entries: [{ EventId: "event-1" }, { ErrorCode }],
+        });
+
+        const thrown = await run(entries);
+
+        expect(thrown).toBeInstanceOf(PutEventsError);
+        expect(thrown).toMatchObject({
+          message: "EventBridge accepted 1 of 2 events after 1 attempt",
+          failedEntries: [{ ErrorCode }],
+          results: [{ EventId: "event-1" }, { ErrorCode }],
+        });
+        expect(mockClient.send).toHaveBeenCalledTimes(1);
+        expect(mockLogger.warn).not.toHaveBeenCalled();
+      },
+    );
+
+    it("should fail entries without a result entry without resending them", async () => {
+      mockClient.send.mockResolvedValue({ $metadata: {}, Entries: [{ EventId: "event-1" }] });
 
       const thrown = await run(entries);
 
-      expect(thrown).toBeInstanceOf(PutEventsError);
       expect(thrown).toMatchObject({
-        message: "EventBridge accepted 1 of 2 events after 3 attempts",
-        failedEntries: [{ ErrorCode: "InternalFailure", ErrorMessage: "Try again" }],
+        message: "EventBridge accepted 1 of 2 events after 1 attempt",
+        failedEntries: [],
+        results: [{ EventId: "event-1" }],
       });
-      expect((thrown as PutEventsError).cause).toBeUndefined();
-      expect(mockClient.send).toHaveBeenCalledTimes(3);
-      expect(sentEntries(1)).toEqual([entries[1]]);
-      expect(sentEntries(2)).toEqual([entries[1]]);
-      expect(mockLogger.warn).toHaveBeenCalledTimes(2);
+      expect(mockClient.send).toHaveBeenCalledTimes(1);
     });
 
-    it("should throw PutEventsError with the last client error as cause", async () => {
+    it("should not resend a thrown call", async () => {
       const error = new Error("EventBridge error");
       mockClient.send.mockRejectedValue(error);
 
@@ -444,16 +441,85 @@ describe("BatchHandler", () => {
 
       expect(thrown).toBeInstanceOf(PutEventsError);
       expect(thrown).toMatchObject({
-        message: "EventBridge accepted 0 of 2 events after 3 attempts",
+        message: "EventBridge accepted 0 of 2 events after 1 attempt",
         failedEntries: [],
+        results: [],
         cause: error,
       });
-      expect(mockClient.send).toHaveBeenCalledTimes(3);
+      expect(mockClient.send).toHaveBeenCalledTimes(1);
       expect(mockLogger.critical).not.toHaveBeenCalled();
     });
 
+    it("should keep sending the other chunks after one throws", async () => {
+      const error = new Error("EventBridge error");
+      mockClient.send
+        .mockRejectedValueOnce(error)
+        .mockResolvedValueOnce({ $metadata: {}, Entries: [{ EventId: "event-2" }] });
+
+      const thrown = await run(entries, { chunk: 1 });
+
+      expect(thrown).toMatchObject({
+        message: "EventBridge accepted 1 of 2 events after 1 attempt",
+        results: [{ EventId: "event-2" }],
+        cause: error,
+      });
+      expect(mockClient.send).toHaveBeenCalledTimes(2);
+      expect(sentEntries(1)).toEqual([entries[1]]);
+    });
+
+    it("should not resend a retry that throws", async () => {
+      const error = new Error("EventBridge error");
+      mockClient.send
+        .mockResolvedValueOnce({
+          $metadata: {},
+          FailedEntryCount: 1,
+          Entries: [{ EventId: "event-1" }, { ErrorCode: "ThrottlingException" }],
+        })
+        .mockRejectedValueOnce(error);
+
+      const thrown = await run(entries);
+
+      expect(thrown).toMatchObject({
+        message: "EventBridge accepted 1 of 2 events after 2 attempts",
+        failedEntries: [{ ErrorCode: "ThrottlingException" }],
+        cause: error,
+      });
+      expect(mockClient.send).toHaveBeenCalledTimes(2);
+    });
+
+    it("should throw PutEventsError after 3 attempts when an entry is always throttled", async () => {
+      mockClient.send
+        .mockResolvedValueOnce({
+          $metadata: {},
+          FailedEntryCount: 1,
+          Entries: [{ EventId: "event-1" }, { ErrorCode: "ThrottlingException" }],
+        })
+        .mockResolvedValue({
+          $metadata: {},
+          FailedEntryCount: 1,
+          Entries: [{ ErrorCode: "ThrottlingException", ErrorMessage: "Rate exceeded" }],
+        });
+
+      const thrown = await run(entries);
+
+      expect(thrown).toBeInstanceOf(PutEventsError);
+      expect(thrown).toMatchObject({
+        message: "EventBridge accepted 1 of 2 events after 3 attempts",
+        failedEntries: [{ ErrorCode: "ThrottlingException", ErrorMessage: "Rate exceeded" }],
+        results: [
+          { EventId: "event-1" },
+          { ErrorCode: "ThrottlingException", ErrorMessage: "Rate exceeded" },
+        ],
+      });
+      expect(thrown).not.toHaveProperty("cause");
+      expect(mockClient.send).toHaveBeenCalledTimes(3);
+      expect(sentEntries(1)).toEqual([entries[1]]);
+      expect(sentEntries(2)).toEqual([entries[1]]);
+      expect(mockLogger.warn).toHaveBeenCalledTimes(2);
+    });
+
     it("should make as many attempts as configured", async () => {
-      mockClient.send.mockRejectedValue(new Error("EventBridge error"));
+      mockClient.send.mockImplementation(rejectAll("ThrottlingException"));
 
       const thrown = await run(entries, { attempts: 1 });
 
@@ -462,27 +528,39 @@ describe("BatchHandler", () => {
     });
 
     it("should double the jittered delay on each retry", async () => {
-      vi.spyOn(Math, "random").mockReturnValue(1);
-      mockClient.send.mockRejectedValue(new Error("EventBridge error"));
+      mockClient.send.mockImplementation(rejectAll("ThrottlingException"));
 
+      vi.spyOn(Math, "random").mockReturnValue(1);
       await run(entries, { attempts: 3, baseDelay: 200 });
 
       expect(mockLogger.warn.mock.calls.map(([, { delayMs }]) => delayMs)).toEqual([200, 400]);
 
       vi.spyOn(Math, "random").mockReturnValue(0);
       mockLogger.warn.mockClear();
-
       await run(entries, { attempts: 3, baseDelay: 200 });
 
       expect(mockLogger.warn.mock.calls.map(([, { delayMs }]) => delayMs)).toEqual([100, 200]);
     });
 
+    it("should cap the delay at 30 seconds", async () => {
+      mockClient.send.mockImplementation(rejectAll("ThrottlingException"));
+      vi.spyOn(Math, "random").mockReturnValue(1);
+
+      await run(entries, { attempts: 4, baseDelay: 20_000 });
+
+      expect(mockLogger.warn.mock.calls.map(([, { delayMs }]) => delayMs)).toEqual([
+        20_000, 30_000, 30_000,
+      ]);
+    });
+
     it("should wait out the delay before retrying", async () => {
       vi.spyOn(Math, "random").mockReturnValue(1);
-      mockClient.send.mockRejectedValueOnce(new Error("EventBridge error")).mockResolvedValueOnce({
-        $metadata: {},
-        Entries: [{ EventId: "event-1" }, { EventId: "event-2" }],
-      });
+      mockClient.send
+        .mockImplementationOnce(rejectAll("ThrottlingException"))
+        .mockResolvedValueOnce({
+          $metadata: {},
+          Entries: [{ EventId: "event-1" }, { EventId: "event-2" }],
+        });
 
       const promise = handler.putEventsWithRetry(entries);
       await vi.advanceTimersByTimeAsync(99);
@@ -497,6 +575,16 @@ describe("BatchHandler", () => {
       await expect(handler.putEventsWithRetry(entries, { attempts })).rejects.toThrow(RangeError);
       expect(mockClient.send).not.toHaveBeenCalled();
     });
+
+    it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])(
+      "should throw RangeError for baseDelay %s",
+      async (baseDelay) => {
+        await expect(handler.putEventsWithRetry(entries, { baseDelay })).rejects.toThrow(
+          RangeError,
+        );
+        expect(mockClient.send).not.toHaveBeenCalled();
+      },
+    );
 
     it.each([0, 11])("should throw RangeError for chunk %s", async (chunk) => {
       await expect(handler.putEventsWithRetry(entries, { chunk })).rejects.toThrow(RangeError);
