@@ -190,13 +190,19 @@ describe("AuditService", () => {
     it("should throw when storage returns undefined", async () => {
       mockStorage.getItem.mockResolvedValue(undefined);
 
-      await expect(
-        service.getItem({
-          id: "audit-123",
-          app: App.App1,
-          resourceType: ResourceType.UNKNOWN,
-        }),
-      ).rejects.toThrow(AuditNotFoundError);
+      const identifiers = {
+        id: "audit-123",
+        app: App.App1,
+        resourceType: ResourceType.UNKNOWN,
+      };
+      const error = await service.getItem(identifiers).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(AuditNotFoundError);
+      expect(error).toMatchObject({
+        name: "AuditNotFoundError",
+        message: `Unable to find Audit id:audit-123 | app:${App.App1} | resourceType:${ResourceType.UNKNOWN}`,
+        identifiers,
+      });
     });
   });
 
