@@ -1,5 +1,6 @@
 import type { Logger } from "@aws-lambda-powertools/logger";
 import {
+  BatchGetItemCommand,
   BatchWriteItemCommand,
   DynamoDBClient,
   GetItemCommand,
@@ -186,6 +187,21 @@ type ListingAttributes = Pick<
 >;
 
 /**
+ * Non-key attributes the listing indexes project (see `cdk/src/dynamodb/audit.ts`).
+ * Parent audits read from the table for a listing are limited to these, so they
+ * have the same shape as rows read from the index.
+ */
+const LISTING_INDEX_ATTRIBUTES = [
+  "operation",
+  "status",
+  "message",
+  "source",
+  "target",
+  "rerunable",
+  "createdAt",
+] as const satisfies ReadonlyArray<keyof ListingAttributes>;
+
+/**
  * Item structure returned from trace-based queries.
  * Includes listing attributes plus trace GSI keys for ordering.
  */
@@ -285,7 +301,10 @@ export type TypedListByStatusOptions<C extends AuditConfig> = {
  * App and resource values live on the nested `target` map (`target.app`,
  * `target.type`, `target.id`), so the filters address them through expression
  * attribute names. Audits recorded against additional resources carry a
- * compound sort key and are always excluded.
+ * compound sort key. Without a target filter they are excluded, so each audit
+ * is listed once. With one they are kept, so an audit matches on any of its
+ * resources; the listing maps them back to their parent with
+ * {@link AuditRepository.resolveRelatedItems}.
  *
  * @param params - Optional app and resource filters
  * @returns Filter conditions plus the attribute names and values they reference
@@ -323,9 +342,12 @@ function buildTargetFilter(params: { app?: string; resource?: { type?: string; i
     filters.push("#target.#app = :app");
   }
 
-  // Audits with other resources will have a compound id, filter these out
-  Object.assign(ExpressionAttributeValues, { ":isParent": "#" });
-  filters.push("not contains(SK, :isParent)");
+  // Audits with other resources will have a compound id, filter these out unless a target
+  // filter could match them (the listing maps them back to their parent)
+  if (filters.length === 0) {
+    Object.assign(ExpressionAttributeValues, { ":isParent": "#" });
+    filters.push("not contains(SK, :isParent)");
+  }
 
   return {
     FilterExpression: filters.join(" AND "),
@@ -583,6 +605,163 @@ export class AuditRepository<C extends AuditConfig> {
   }
 
   /**
+   * Reads items by primary key in batches, with exponential backoff retry for unprocessed keys.
+   *
+   * Keys are chunked into batches of 100 (DynamoDB's BatchGetItem limit). Items that
+   * don't exist are absent from the result.
+   *
+   * @param keys - Primary keys of the items to read
+   * @param attributes - Attributes to project
+   * @param maxRetries - Maximum number of retry attempts per batch (default: 8)
+   * @param baseDelayMs - Initial delay in milliseconds before first retry (default: 100)
+   * @returns The items found, unmarshalled
+   * @throws Error if unprocessed keys remain after maxRetries attempts
+   * @internal
+   */
+  private async getBatchWithRetry(
+    keys: DynamoDBPrimaryKey[],
+    attributes: ReadonlyArray<string>,
+    maxRetries = 8,
+    baseDelayMs = 100,
+  ): Promise<UnmarshalledAttributes[]> {
+    const BATCH_SIZE = 100;
+    const tableName = DynamoDB.Table.Name();
+
+    const ExpressionAttributeNames = Object.fromEntries(
+      attributes.map((attribute, i) => [`#a${i}`, attribute]),
+    );
+    const ProjectionExpression = Object.keys(ExpressionAttributeNames).join(", ");
+
+    const items: UnmarshalledAttributes[] = [];
+
+    for (let i = 0; i < keys.length; i += BATCH_SIZE) {
+      let requestKeys = keys.slice(i, i + BATCH_SIZE).map((key) => marshall(key));
+      let attempt = 0;
+      let delayMs = baseDelayMs;
+
+      while (requestKeys.length > 0) {
+        const response = await this.client.send(
+          new BatchGetItemCommand({
+            RequestItems: {
+              [tableName]: { Keys: requestKeys, ProjectionExpression, ExpressionAttributeNames },
+            },
+          }),
+        );
+
+        items.push(...(response.Responses?.[tableName] ?? []).map((item) => unmarshall(item)));
+
+        requestKeys = response.UnprocessedKeys?.[tableName]?.Keys ?? [];
+        if (requestKeys.length === 0) {
+          break;
+        }
+
+        attempt++;
+        if (attempt > maxRetries) {
+          this.logger.error("BatchGetItem: unprocessed keys remain after max retries", {
+            unprocessed: requestKeys.length,
+            attempt,
+          });
+          throw new Error(`BatchGetItem failed: unprocessed keys after ${maxRetries} retries`);
+        }
+
+        this.logger.warn("BatchGetItem: retrying unprocessed keys", {
+          count: requestKeys.length,
+          attempt,
+          delayMs,
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        delayMs = Math.min(delayMs * 2, 30_000); // cap at 30 seconds
+      }
+    }
+
+    return items;
+  }
+
+  /**
+   * Replaces related-resource rows in a listing page with their parent audits.
+   *
+   * `AuditService.upsertItem` writes a copy of an audit per additional resource, with a
+   * compound sort key (`{parentId}#{app}.{type}#{resourceId}`), the resource as `target`
+   * and the parent's target as `source`. When a target filter matches such a copy, the
+   * parent is listed in its place. Parents not already on the page are read from the
+   * table, keyed by the copy's `source`, and kept only while they're still in the queried
+   * index partition (a copy can be stale, e.g. after the audit moves to another status).
+   * Each parent is listed once, at the position of its first matching row.
+   *
+   * Deduplication is per page: when an audit's rows match on different pages, the audit is
+   * listed on each of them.
+   *
+   * @param items - Listing page, in index order
+   * @param partition - Index partition key attribute and the value queried, plus the
+   *   index keys to read for fetched parents
+   * @param tenantId - Tenant the query was made with, if any
+   * @returns The page with related-resource rows mapped to their parents
+   * @internal
+   */
+  private async resolveRelatedItems<
+    T extends Pick<DynamoDBPrimaryKey, "PK" | "SK"> & Pick<ListingAttributes, "source">,
+  >(
+    items: T[],
+    partition: { key: string; value: string; attributes: ReadonlyArray<string> },
+    tenantId?: string,
+  ): Promise<T[]> {
+    const parentId = (item: T) => item.SK.split("#")[0];
+    const isRelated = (item: T) => item.SK.includes("#");
+
+    if (!items.some(isRelated)) {
+      return items;
+    }
+
+    const parents = new Map(items.filter((i) => !isRelated(i)).map((i) => [i.SK, i]));
+
+    const keys = new Map<string, DynamoDBPrimaryKey>();
+    for (const item of items) {
+      const id = parentId(item);
+      if (!isRelated(item) || !item.source || parents.has(id) || keys.has(id)) continue;
+
+      keys.set(
+        id,
+        this.constructPrimaryKey({
+          tenantId,
+          id,
+          app: item.source.app,
+          resourceType: item.source.type,
+        }),
+      );
+    }
+
+    const fetched = await this.getBatchWithRetry(
+      [...keys.values()],
+      [
+        DynamoDB.Keys.PARTITION_KEY,
+        DynamoDB.Keys.SORT_KEY,
+        ...partition.attributes,
+        ...LISTING_INDEX_ATTRIBUTES,
+      ],
+    );
+    for (const parent of fetched) {
+      if (parent[partition.key] === partition.value) {
+        parents.set(parent[DynamoDB.Keys.SORT_KEY], parent as T);
+      }
+    }
+
+    const listed = new Set<string>();
+    return items.flatMap((item) => {
+      const id = parentId(item);
+      const parent = parents.get(id);
+      if (!parent) {
+        this.logger.debug("Skipping related audit without a listable parent", { SK: item.SK });
+        return [];
+      }
+      if (listed.has(id)) return [];
+
+      listed.add(id);
+      return [parent];
+    });
+  }
+
+  /**
    * Upserts a single audit record with atomic attempt tracking.
    *
    * Uses DynamoDB UpdateItem with conditional expressions to:
@@ -834,6 +1013,8 @@ export class AuditRepository<C extends AuditConfig> {
    * Queries the GSI1_SN index to retrieve all audits sharing
    * the same trace ID, ordered by trace stage/depth.
    * Supports optional filtering by app, resource type, and resource ID.
+   * A filter matches an audit's target or any of its additional resources;
+   * each matching audit is listed once per page.
    *
    * This is useful for viewing the complete audit trail of a
    * distributed operation across multiple services or resources.
@@ -887,10 +1068,18 @@ export class AuditRepository<C extends AuditConfig> {
       }),
     );
 
+    const resolved = await this.resolveRelatedItems(
+      (items ?? []).map((i) => unmarshall(i) as TraceListingItem),
+      {
+        key: DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
+        value: pk,
+        attributes: [DynamoDB.Keys.GSI1_SN_PARTITION_KEY, DynamoDB.Keys.GSI1_SN_SORT_KEY],
+      },
+      params.tenantId,
+    );
+
     return PaginationCollectionSchema(AuditPayloadSchema).parse({
-      items: items?.map((i) =>
-        this.transformTraceListItem(unmarshall(i) as TraceListingItem, params.tenantId),
-      ),
+      items: resolved.map((i) => this.transformTraceListItem(i, params.tenantId)),
       pagination: {
         nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
       },
@@ -903,6 +1092,8 @@ export class AuditRepository<C extends AuditConfig> {
    * Queries the GSI2_SS index to retrieve all audits with a specific status,
    * ordered by creation date (most recent first by default).
    * Supports optional filtering by app, resource type, and resource ID.
+   * A filter matches an audit's target or any of its additional resources;
+   * each matching audit is listed once per page.
    *
    * Items don't include `trace`: GSI2_SS projects neither the trace nor the
    * trace keys. Fetch the audit with {@link getItem} when the trace is needed.
@@ -941,8 +1132,18 @@ export class AuditRepository<C extends AuditConfig> {
       }),
     );
 
+    const resolved = await this.resolveRelatedItems(
+      (items ?? []).map((i) => unmarshall(i) as StatusListingItem),
+      {
+        key: DynamoDB.Keys.GSI2_SS_PARTITION_KEY,
+        value: pk,
+        attributes: [DynamoDB.Keys.GSI2_SS_PARTITION_KEY, DynamoDB.Keys.GSI2_SS_SORT_KEY],
+      },
+      params.tenantId,
+    );
+
     return PaginationCollectionSchema(AuditPayloadSchema).parse({
-      items: items?.map((i) => this.transformStatusListItem(unmarshall(i) as StatusListingItem)),
+      items: resolved.map((i) => this.transformStatusListItem(i)),
       pagination: {
         nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
       },

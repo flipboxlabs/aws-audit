@@ -1,5 +1,6 @@
 import type { Logger } from "@aws-lambda-powertools/logger";
 import {
+  BatchGetItemCommand,
   BatchWriteItemCommand,
   type DynamoDBClient,
   GetItemCommand,
@@ -1343,9 +1344,7 @@ describe("AuditRepository", () => {
       await repository.listTraceItems(params);
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
-      expect(command.input.FilterExpression).toBe(
-        "#target.#id = :resourceId AND not contains(SK, :isParent)",
-      );
+      expect(command.input.FilterExpression).toBe("#target.#id = :resourceId");
       expect(command.input.ExpressionAttributeNames).toEqual({
         "#PK": DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
         "#target": "target",
@@ -1354,7 +1353,6 @@ describe("AuditRepository", () => {
       expect(command.input.ExpressionAttributeValues).toEqual({
         ":PK": { S: "trace-123" },
         ":resourceId": { S: "resource-456" },
-        ":isParent": { S: "#" },
       });
     });
 
@@ -1374,9 +1372,7 @@ describe("AuditRepository", () => {
       await repository.listTraceItems(params);
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
-      expect(command.input.FilterExpression).toBe(
-        "#target.#type = :resourceType AND not contains(SK, :isParent)",
-      );
+      expect(command.input.FilterExpression).toBe("#target.#type = :resourceType");
       expect(command.input.ExpressionAttributeNames).toEqual({
         "#PK": DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
         "#target": "target",
@@ -1385,7 +1381,6 @@ describe("AuditRepository", () => {
       expect(command.input.ExpressionAttributeValues).toEqual({
         ":PK": { S: "trace-123" },
         ":resourceType": { S: ResourceType.UNKNOWN },
-        ":isParent": { S: "#" },
       });
     });
 
@@ -1403,9 +1398,7 @@ describe("AuditRepository", () => {
       await repository.listTraceItems(params);
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
-      expect(command.input.FilterExpression).toBe(
-        "#target.#app = :app AND not contains(SK, :isParent)",
-      );
+      expect(command.input.FilterExpression).toBe("#target.#app = :app");
       expect(command.input.ExpressionAttributeNames).toEqual({
         "#PK": DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
         "#target": "target",
@@ -1414,7 +1407,6 @@ describe("AuditRepository", () => {
       expect(command.input.ExpressionAttributeValues).toEqual({
         ":PK": { S: "trace-123" },
         ":app": { S: App.App1 },
-        ":isParent": { S: "#" },
       });
     });
 
@@ -1535,7 +1527,7 @@ describe("AuditRepository", () => {
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
       expect(command.input.FilterExpression).toBe(
-        "#target.#id = :resourceId AND #target.#type = :resourceType AND #target.#app = :app AND not contains(SK, :isParent)",
+        "#target.#id = :resourceId AND #target.#type = :resourceType AND #target.#app = :app",
       );
       expect(command.input.ExpressionAttributeNames).toEqual({
         "#PK": DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
@@ -1549,7 +1541,6 @@ describe("AuditRepository", () => {
         ":resourceId": { S: "resource-456" },
         ":resourceType": { S: ResourceType.UNKNOWN },
         ":app": { S: App.App1 },
-        ":isParent": { S: "#" },
       });
     });
 
@@ -1695,7 +1686,7 @@ describe("AuditRepository", () => {
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
       expect(command.input.FilterExpression).toBe(
-        "#target.#id = :resourceId AND #target.#type = :resourceType AND #target.#app = :app AND not contains(SK, :isParent)",
+        "#target.#id = :resourceId AND #target.#type = :resourceType AND #target.#app = :app",
       );
       expect(command.input.ExpressionAttributeNames).toEqual({
         "#PK": DynamoDB.Keys.GSI2_SS_PARTITION_KEY,
@@ -1709,7 +1700,6 @@ describe("AuditRepository", () => {
         ":resourceId": { S: "resource-456" },
         ":resourceType": { S: ResourceType.UNKNOWN },
         ":app": { S: App.App1 },
-        ":isParent": { S: "#" },
       });
     });
 
@@ -1805,6 +1795,310 @@ describe("AuditRepository", () => {
 
       expect(result.items).toHaveLength(1);
       expect(result.items[0].trace).toBeUndefined();
+    });
+  });
+
+  describe("related resources", () => {
+    // An audit with target App1/Order/order-1 and resources [TestApp/User/u1]
+    const parentTarget = { app: App.App1, type: ResourceType.ORDER, id: "order-1" };
+    const relatedTarget = { app: App.TestApp, type: ResourceType.USER, id: "u1" };
+
+    const parentRow = (overrides: Record<string, unknown> = {}) => ({
+      PK: `${App.App1}.${ResourceType.ORDER}`,
+      SK: "audit-1",
+      operation: "createOrder",
+      status: "fail",
+      target: parentTarget,
+      createdAt: "2024-01-01T00:00:00.000Z",
+      ...overrides,
+    });
+
+    const relatedRow = (overrides: Record<string, unknown> = {}) => ({
+      PK: `${App.TestApp}.${ResourceType.USER}`,
+      SK: `audit-1#${App.TestApp}.${ResourceType.USER}#u1`,
+      operation: "createOrder",
+      status: "fail",
+      target: relatedTarget,
+      source: parentTarget,
+      createdAt: "2024-01-01T00:00:00.001Z",
+      ...overrides,
+    });
+
+    const traceKeys = { GSI1_SN_PK: "trace-123", GSI1_SN_SK: 1 };
+    const statusKeys = (sk = "audit-1") => ({
+      GSI2_SS_PK: "fail",
+      GSI2_SS_SK: `2024-01-01T00:00:00.000Z#${sk}`,
+    });
+
+    const mockPage = (
+      rows: Array<Record<string, unknown>>,
+      parents: Array<Record<string, unknown>> = [],
+    ) => {
+      mockClient.send.mockImplementation(async (command: unknown) => {
+        if (command instanceof BatchGetItemCommand) {
+          return {
+            Responses: { [DynamoDB.Table.Name()]: parents.map((parent) => marshall(parent)) },
+          };
+        }
+
+        return { Items: rows.map((row) => marshall(row)), LastEvaluatedKey: undefined };
+      });
+    };
+
+    const batchGetCommands = () =>
+      mockClient.send.mock.calls
+        .map(([command]) => command)
+        .filter(
+          (command): command is BatchGetItemCommand => command instanceof BatchGetItemCommand,
+        );
+
+    describe("listTraceItems", () => {
+      it("should list the parent audit when the app filter matches an additional resource", async () => {
+        mockPage([relatedRow(traceKeys)], [parentRow(traceKeys)]);
+
+        const result = await repository.listTraceItems({ trace: "trace-123", app: App.TestApp });
+
+        const query = mockClient.send.mock.calls[0][0] as QueryCommand;
+        expect(query.input.FilterExpression).toBe("#target.#app = :app");
+
+        expect(result.items).toHaveLength(1);
+        expect(result.items[0].id).toBe("audit-1");
+        expect(result.items[0].target).toEqual(parentTarget);
+        expect(result.items[0].createdAt).toBe("2024-01-01T00:00:00.000Z");
+        expect(result.items[0].trace).toBe("trace-123:1");
+
+        const [batchGet] = batchGetCommands();
+        const request = batchGet.input.RequestItems?.[DynamoDB.Table.Name()];
+        expect(request?.Keys).toEqual([
+          marshall({ PK: `${App.App1}.${ResourceType.ORDER}`, SK: "audit-1" }),
+        ]);
+        expect(Object.values(request?.ExpressionAttributeNames ?? {})).toEqual(
+          expect.arrayContaining(["PK", "SK", "GSI1_SN_PK", "GSI1_SN_SK", "target", "source"]),
+        );
+        expect(Object.values(request?.ExpressionAttributeNames ?? {})).not.toContain("event");
+      });
+
+      it("should list the parent audit when the resource id filter matches an additional resource", async () => {
+        mockPage([relatedRow(traceKeys)], [parentRow(traceKeys)]);
+
+        const result = await repository.listTraceItems({
+          trace: "trace-123",
+          resource: { id: "u1" },
+        });
+
+        const query = mockClient.send.mock.calls[0][0] as QueryCommand;
+        expect(query.input.FilterExpression).toBe("#target.#id = :resourceId");
+
+        expect(result.items).toHaveLength(1);
+        expect(result.items[0].id).toBe("audit-1");
+        expect(result.items[0].target).toEqual(parentTarget);
+      });
+
+      it("should list an audit once when both its parent row and a related row match", async () => {
+        mockPage([
+          parentRow(traceKeys),
+          relatedRow({
+            ...traceKeys,
+            PK: `${App.App1}.${ResourceType.USER}`,
+            SK: `audit-1#${App.App1}.${ResourceType.USER}#u2`,
+            target: { app: App.App1, type: ResourceType.USER, id: "u2" },
+          }),
+        ]);
+
+        const result = await repository.listTraceItems({ trace: "trace-123", app: App.App1 });
+
+        expect(result.items).toHaveLength(1);
+        expect(result.items[0].id).toBe("audit-1");
+        expect(result.items[0].target).toEqual(parentTarget);
+        expect(batchGetCommands()).toHaveLength(0);
+      });
+
+      it("should read the parent once when several related rows match", async () => {
+        mockPage(
+          [
+            relatedRow(traceKeys),
+            relatedRow({
+              ...traceKeys,
+              SK: `audit-1#${App.TestApp}.${ResourceType.USER}#u2`,
+              target: { ...relatedTarget, id: "u2" },
+            }),
+          ],
+          [parentRow(traceKeys)],
+        );
+
+        const result = await repository.listTraceItems({
+          trace: "trace-123",
+          resource: { type: ResourceType.USER },
+        });
+
+        expect(result.items).toHaveLength(1);
+        const [batchGet] = batchGetCommands();
+        expect(batchGet.input.RequestItems?.[DynamoDB.Table.Name()]?.Keys).toHaveLength(1);
+      });
+
+      it("should keep each audit at the position of its first matching row", async () => {
+        mockPage(
+          [
+            relatedRow(traceKeys),
+            parentRow({
+              ...traceKeys,
+              SK: "audit-2",
+              target: { app: App.TestApp, type: ResourceType.USER, id: "u1" },
+            }),
+          ],
+          [parentRow(traceKeys)],
+        );
+
+        const result = await repository.listTraceItems({ trace: "trace-123", app: App.TestApp });
+
+        expect(result.items.map((item) => item.id)).toEqual(["audit-1", "audit-2"]);
+      });
+
+      it("should key the parent read with the tenant prefix", async () => {
+        mockPage(
+          [relatedRow({ ...traceKeys, PK: `org-1#${App.TestApp}.${ResourceType.USER}` })],
+          [
+            parentRow({
+              PK: `org-1#${App.App1}.${ResourceType.ORDER}`,
+              GSI1_SN_PK: "org-1#trace-123",
+              GSI1_SN_SK: 1,
+            }),
+          ],
+        );
+
+        const result = await repository.listTraceItems({
+          tenantId: "org-1",
+          trace: "trace-123",
+          app: App.TestApp,
+        });
+
+        const [batchGet] = batchGetCommands();
+        expect(batchGet.input.RequestItems?.[DynamoDB.Table.Name()]?.Keys).toEqual([
+          marshall({ PK: `org-1#${App.App1}.${ResourceType.ORDER}`, SK: "audit-1" }),
+        ]);
+        expect(result.items).toHaveLength(1);
+        expect(result.items[0].trace).toBe("trace-123:1");
+      });
+
+      it("should drop a related row whose parent is missing", async () => {
+        mockPage([relatedRow(traceKeys)]);
+
+        const result = await repository.listTraceItems({ trace: "trace-123", app: App.TestApp });
+
+        expect(result.items).toHaveLength(0);
+      });
+
+      it("should retry unprocessed parent keys", async () => {
+        vi.useFakeTimers();
+
+        const tableName = DynamoDB.Table.Name();
+        const parentKey = marshall({ PK: `${App.App1}.${ResourceType.ORDER}`, SK: "audit-1" });
+
+        mockClient.send
+          .mockResolvedValueOnce({ Items: [marshall(relatedRow(traceKeys))] })
+          .mockResolvedValueOnce({ UnprocessedKeys: { [tableName]: { Keys: [parentKey] } } })
+          .mockResolvedValueOnce({ Responses: { [tableName]: [marshall(parentRow(traceKeys))] } });
+
+        const promise = repository.listTraceItems({ trace: "trace-123", app: App.TestApp });
+        await vi.runAllTimersAsync();
+        const result = await promise;
+
+        vi.useRealTimers();
+
+        expect(result.items).toHaveLength(1);
+        expect(batchGetCommands()).toHaveLength(2);
+        expect(batchGetCommands()[1].input.RequestItems?.[tableName]?.Keys).toEqual([parentKey]);
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+          "BatchGetItem: retrying unprocessed keys",
+          expect.objectContaining({ attempt: 1, count: 1 }),
+        );
+      });
+
+      it("should leave unfiltered listings unchanged", async () => {
+        mockPage([parentRow(traceKeys)]);
+
+        const result = await repository.listTraceItems({ trace: "trace-123" });
+
+        const query = mockClient.send.mock.calls[0][0] as QueryCommand;
+        expect(query.input.FilterExpression).toBe("not contains(SK, :isParent)");
+        expect(result.items).toHaveLength(1);
+        expect(result.items[0].id).toBe("audit-1");
+        expect(batchGetCommands()).toHaveLength(0);
+      });
+    });
+
+    describe("listByStatus", () => {
+      it("should list the parent audit when the app filter matches an additional resource", async () => {
+        mockPage([relatedRow(statusKeys(relatedRow().SK))], [parentRow(statusKeys())]);
+
+        const result = await repository.listByStatus({ status: "fail", app: App.TestApp });
+
+        const query = mockClient.send.mock.calls[0][0] as QueryCommand;
+        expect(query.input.FilterExpression).toBe("#target.#app = :app");
+
+        expect(result.items).toHaveLength(1);
+        expect(result.items[0].id).toBe("audit-1");
+        expect(result.items[0].target).toEqual(parentTarget);
+        expect(result.items[0].trace).toBeUndefined();
+
+        const [batchGet] = batchGetCommands();
+        const names = Object.values(
+          batchGet.input.RequestItems?.[DynamoDB.Table.Name()]?.ExpressionAttributeNames ?? {},
+        );
+        expect(names).toEqual(expect.arrayContaining(["GSI2_SS_PK", "GSI2_SS_SK"]));
+        expect(names).not.toContain("GSI1_SN_PK");
+        expect(names).not.toContain("trace");
+      });
+
+      it("should list the parent audit when the resource id filter matches an additional resource", async () => {
+        mockPage([relatedRow(statusKeys(relatedRow().SK))], [parentRow(statusKeys())]);
+
+        const result = await repository.listByStatus({ status: "fail", resource: { id: "u1" } });
+
+        expect(result.items).toHaveLength(1);
+        expect(result.items[0].id).toBe("audit-1");
+      });
+
+      it("should list an audit once when both its parent row and a related row match", async () => {
+        mockPage([
+          relatedRow({
+            ...statusKeys(`audit-1#${App.App1}.${ResourceType.USER}#u2`),
+            PK: `${App.App1}.${ResourceType.USER}`,
+            SK: `audit-1#${App.App1}.${ResourceType.USER}#u2`,
+            target: { app: App.App1, type: ResourceType.USER, id: "u2" },
+          }),
+          parentRow(statusKeys()),
+        ]);
+
+        const result = await repository.listByStatus({ status: "fail", app: App.App1 });
+
+        expect(result.items).toHaveLength(1);
+        expect(result.items[0].id).toBe("audit-1");
+        expect(result.items[0].target).toEqual(parentTarget);
+        expect(batchGetCommands()).toHaveLength(0);
+      });
+
+      it("should drop a related row whose parent has moved to another status", async () => {
+        mockPage(
+          [relatedRow(statusKeys(relatedRow().SK))],
+          [parentRow({ ...statusKeys(), status: "success", GSI2_SS_PK: "success" })],
+        );
+
+        const result = await repository.listByStatus({ status: "fail", app: App.TestApp });
+
+        expect(result.items).toHaveLength(0);
+      });
+
+      it("should leave unfiltered listings unchanged", async () => {
+        mockPage([parentRow(statusKeys())]);
+
+        const result = await repository.listByStatus({ status: "fail" });
+
+        const query = mockClient.send.mock.calls[0][0] as QueryCommand;
+        expect(query.input.FilterExpression).toBe("not contains(SK, :isParent)");
+        expect(result.items).toHaveLength(1);
+        expect(batchGetCommands()).toHaveLength(0);
+      });
     });
   });
 

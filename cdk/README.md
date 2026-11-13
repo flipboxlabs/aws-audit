@@ -110,6 +110,8 @@ An audit's `trace` is the trace it was written with, and is omitted when it has 
 
 Getting or rerunning a single audit answers `404` when `{audit}` doesn't exist or belongs to a resource other than `{item}`. An audit that lists a resource in `resources` also appears in that resource's listing, with the audit's `id` and its target as the `source`; fetch or rerun it under the source: `/apps/{source.app}/objects/{source.type}/{source.id}/{id}`.
 
+`GET /status/{status}` and `GET /trace/{trace}` take a `filter[app]` query parameter, and `GET /status/{status}` also takes `filter[resourceType]`. A filter matches an audit's target or any of its additional `resources`, and the audit is returned with its own target. Each audit appears once per page, but it can appear again on another page when more than one of its resources matches.
+
 `GET /config` reads the `AuditConfigLayer` only, so its Lambda has no DynamoDB or EventBridge permissions. Its `version` comes from this package's `package.json` at synth time. Deployments from before the route was added answer `GET /config` with a `403` `{"message":"Missing Authentication Token"}` (API Gateway's response for an unknown route), not a `404`.
 
 > **Upgrading:** `RestApiConstruct` always adds a `/config` resource at the API root. If your stack already adds its own `config` resource to `restApi.root`, synth fails after upgrading, with a duplicate construct or path error. Rename or remove your route before upgrading.
