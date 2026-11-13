@@ -536,7 +536,10 @@ export class AuditRepository<C extends AuditConfig> {
    *
    * This is atomic and race-condition safe for retry tracking.
    *
-   * @param item - The audit record to upsert
+   * Attempts are system-managed: each call appends exactly one attempt (`currentAttempt`).
+   * Any `attempts` on `item` are ignored; they are neither written nor appended.
+   *
+   * @param item - The audit record to upsert (its `attempts`, if any, are ignored)
    * @param currentAttempt - The current attempt to append
    * @returns The attempt number (1 for new items, incremented for existing)
    *
@@ -594,11 +597,15 @@ export class AuditRepository<C extends AuditConfig> {
       ttl: ttlAttribute.ttl,
     };
 
-    // Fields that need special handling (already in setClauses)
-    const specialFields = new Set(["attempts", "createdAt"]);
+    // Caller-supplied attempts are ignored; the list_append clause above owns the field.
+    // Adding them would leave an unused `:attempts` value, which DynamoDB rejects.
+    const ignoredFields = new Set(["attempts"]);
+
+    // Fields that already have a clause in setClauses; their values still feed it (`:createdAt`)
+    const specialFields = new Set(["createdAt"]);
 
     for (const [key, value] of Object.entries(allFields)) {
-      if (value === undefined) continue;
+      if (value === undefined || ignoredFields.has(key)) continue;
 
       expressionAttributeNames[`#${key}`] = key;
       expressionAttributeValues[`:${key}`] = value;

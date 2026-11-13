@@ -1161,6 +1161,115 @@ describe("AuditRepository", () => {
       expect(ttl).toBeGreaterThanOrEqual(before + customTtlSeconds);
       expect(ttl).toBeLessThanOrEqual(after + customTtlSeconds);
     });
+
+    it("should ignore caller-supplied attempts", async () => {
+      mockClient.send.mockResolvedValue({
+        Attributes: marshall({
+          attempts: [{ number: 1, status: "success", at: "2024-01-01T00:00:00Z" }],
+        }),
+      });
+
+      const item = createMockUpsertInput({
+        attempts: [
+          { number: 1, status: "fail", at: "2023-12-31T00:00:00Z" },
+          { number: 2, status: "fail", at: "2023-12-31T01:00:00Z" },
+        ],
+      });
+      const attempt = { number: 1, status: "success", at: "2024-01-01T00:00:00Z" };
+
+      await expect(repository.upsertItem(item, attempt)).resolves.toBe(1);
+
+      const command = mockClient.send.mock.calls[0][0] as UpdateItemCommand;
+      expect(command.input.ExpressionAttributeValues).not.toHaveProperty(":attempts");
+      expect(command.input.ExpressionAttributeValues?.[":newAttempt"]?.L).toHaveLength(1);
+      expect(command.input.UpdateExpression).not.toContain("#attempts = :attempts");
+    });
+
+    it("should renumber a retry on an existing item and ignore caller-supplied attempts", async () => {
+      mockClient.send.mockResolvedValue({
+        Attributes: marshall({
+          attempts: [
+            { number: 1, status: "fail", at: "2024-01-01T00:00:00Z" },
+            { number: 2, status: "fail", at: "2024-01-02T00:00:00Z" },
+            { number: 1, status: "success", at: "2024-01-03T00:00:00Z" },
+          ],
+        }),
+      });
+
+      const item = createMockUpsertInput({
+        attempts: [{ number: 9, status: "fail", at: "2023-12-31T00:00:00Z" }],
+      });
+      const attempt = { number: 1, status: "success", at: "2024-01-03T00:00:00Z" };
+
+      await expect(repository.upsertItem(item, attempt)).resolves.toBe(3);
+      expect(mockClient.send).toHaveBeenCalledTimes(2);
+
+      const [update, renumber] = mockClient.send.mock.calls.map(
+        ([command]) => (command as UpdateItemCommand).input,
+      );
+      expect(update.ExpressionAttributeValues).not.toHaveProperty(":attempts");
+      expect(update.ExpressionAttributeValues?.[":newAttempt"]).toEqual(
+        marshall({ v: [attempt] }).v,
+      );
+
+      expect(renumber.Key).toEqual(update.Key);
+      expect(renumber.UpdateExpression).toBe("SET #attempts[2].#number = :attemptNumber");
+      expect(renumber.ExpressionAttributeNames).toEqual({
+        "#attempts": "attempts",
+        "#number": "number",
+      });
+      expect(renumber.ExpressionAttributeValues).toEqual({ ":attemptNumber": { N: "3" } });
+
+      // The caller's attempt (number 9, 2023-12-31) reaches neither request
+      for (const input of [update, renumber]) {
+        expect(JSON.stringify(input)).not.toContain("2023-12-31");
+      }
+    });
+
+    it.each<[string, Partial<UpsertAuditInput>]>([
+      ["minimal", {}],
+      [
+        "full",
+        {
+          id: "audit-full",
+          message: "Full input",
+          rerunable: true,
+          trace: "trace-123:2",
+          source: { app: App.App1, type: ResourceType.USER, id: "user-1" },
+          context: { region: "us-east-1", nested: { count: 2 } },
+          event: { source: "test.service", "detail-type": "Tested", detail: { a: 1 } },
+          error: "Connection timeout",
+          attempts: [{ number: 1, status: "fail", at: "2023-12-31T00:00:00Z" }],
+          createdAt: "2023-12-31T00:00:00.000Z",
+        },
+      ],
+      ["tenant", { tenantId: "tenant-abc" }],
+    ])(
+      "should only send expression names and values the update expression uses (%s)",
+      async (_label, overrides) => {
+        mockClient.send.mockResolvedValue({
+          Attributes: marshall({
+            attempts: [{ number: 1, status: "success", at: "2024-01-01T00:00:00Z" }],
+          }),
+        });
+
+        const attempt = { number: 1, status: "success", at: "2024-01-01T00:00:00Z" };
+        await repository.upsertItem(createMockUpsertInput(overrides), attempt);
+
+        const { UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues } = (
+          mockClient.send.mock.calls[0][0] as UpdateItemCommand
+        ).input;
+        const tokens = new Set(UpdateExpression?.match(/[#:][A-Za-z0-9_]+/g));
+
+        // DynamoDB rejects names or values the expression doesn't use, and vice versa
+        expect(new Set(Object.keys(ExpressionAttributeNames ?? {}))).toEqual(
+          new Set([...tokens].filter((token) => token.startsWith("#"))),
+        );
+        expect(new Set(Object.keys(ExpressionAttributeValues ?? {}))).toEqual(
+          new Set([...tokens].filter((token) => token.startsWith(":"))),
+        );
+      },
+    );
   });
 
   describe("listTraceItems", () => {
