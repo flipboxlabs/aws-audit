@@ -1,5 +1,6 @@
 import type { Logger } from "@aws-lambda-powertools/logger";
 import {
+  BatchGetItemCommand,
   BatchWriteItemCommand,
   DynamoDBClient,
   GetItemCommand,
@@ -285,7 +286,10 @@ export type TypedListByStatusOptions<C extends AuditConfig> = {
  * App and resource values live on the nested `target` map (`target.app`,
  * `target.type`, `target.id`), so the filters address them through expression
  * attribute names. Audits recorded against additional resources carry a
- * compound sort key and are always excluded.
+ * compound sort key. Without a target filter they are excluded, so each audit
+ * is listed once. With one they are kept, so an audit matches on any of its
+ * resources; the listing maps them back to their parent with
+ * {@link AuditRepository.resolveRelatedItems}.
  *
  * @param params - Optional app and resource filters
  * @returns Filter conditions plus the attribute names and values they reference
@@ -323,9 +327,12 @@ function buildTargetFilter(params: { app?: string; resource?: { type?: string; i
     filters.push("#target.#app = :app");
   }
 
-  // Audits with other resources will have a compound id, filter these out
-  Object.assign(ExpressionAttributeValues, { ":isParent": "#" });
-  filters.push("not contains(SK, :isParent)");
+  // Audits with other resources will have a compound id, filter these out unless a target
+  // filter could match them (the listing maps them back to their parent)
+  if (filters.length === 0) {
+    Object.assign(ExpressionAttributeValues, { ":isParent": "#" });
+    filters.push("not contains(SK, :isParent)");
+  }
 
   return {
     FilterExpression: filters.join(" AND "),
@@ -529,57 +536,238 @@ export class AuditRepository<C extends AuditConfig> {
   }
 
   /**
-   * Writes a batch of items to DynamoDB with exponential backoff retry for unprocessed items.
+   * Sends a batch request, resending its unprocessed part with exponential backoff.
    *
-   * DynamoDB's BatchWriteItem can return unprocessed items when throttled or under transient
-   * errors without throwing an exception. This method retries those items automatically.
+   * DynamoDB's batch operations can return unprocessed items when throttled or under
+   * transient errors without throwing an exception. This method retries them automatically.
    *
-   * @param items - Array of WriteRequests to send
-   * @param tableName - Target DynamoDB table name
+   * @param label - Operation and item noun for logs and errors (e.g. `BatchWriteItem`, `items`)
+   * @param request - The first request to send
+   * @param send - Sends a request and returns its unprocessed part with its size, or
+   *   undefined when everything was processed
    * @param maxRetries - Maximum number of retry attempts (default: 8)
    * @param baseDelayMs - Initial delay in milliseconds before first retry (default: 100)
    * @throws Error if unprocessed items remain after maxRetries attempts
    * @internal
    */
-  private async writeBatchWithRetry(
-    items: WriteRequest[],
-    tableName: string,
+  private async sendBatchWithRetry<R>(
+    label: { operation: string; noun: string },
+    request: R,
+    send: (request: R) => Promise<{ unprocessed: R; count: number } | undefined>,
     maxRetries = 8,
     baseDelayMs = 100,
   ): Promise<void> {
-    let requestItems: Record<string, WriteRequest[]> = { [tableName]: items };
     let attempt = 0;
     let delayMs = baseDelayMs;
 
-    while (attempt <= maxRetries) {
-      const response = await this.client.send(
-        new BatchWriteItemCommand({ RequestItems: requestItems }),
-      );
-
-      const unprocessed = response.UnprocessedItems;
-      if (!unprocessed || Object.keys(unprocessed).length === 0) {
-        return; // all items written successfully
+    for (;;) {
+      const remaining = await send(request);
+      if (!remaining) {
+        return; // all items processed
       }
 
       attempt++;
       if (attempt > maxRetries) {
-        this.logger.error("BatchWriteItem: unprocessed items remain after max retries", {
-          unprocessed,
-          attempt,
-        });
-        throw new Error(`BatchWriteItem failed: unprocessed items after ${maxRetries} retries`);
+        this.logger.error(
+          `${label.operation}: unprocessed ${label.noun} remain after max retries`,
+          {
+            unprocessed: remaining.unprocessed,
+            attempt,
+          },
+        );
+        throw new Error(
+          `${label.operation} failed: unprocessed ${label.noun} after ${maxRetries} retries`,
+        );
       }
 
-      this.logger.warn("BatchWriteItem: retrying unprocessed items", {
-        count: Object.values(unprocessed).flat().length,
+      this.logger.warn(`${label.operation}: retrying unprocessed ${label.noun}`, {
+        count: remaining.count,
         attempt,
         delayMs,
       });
 
       await new Promise((resolve) => setTimeout(resolve, delayMs));
       delayMs = Math.min(delayMs * 2, 30_000); // cap at 30 seconds
-      requestItems = unprocessed as Record<string, WriteRequest[]>;
+      request = remaining.unprocessed;
     }
+  }
+
+  /**
+   * Writes a batch of items to DynamoDB, retrying unprocessed items with exponential backoff.
+   *
+   * @param items - Array of WriteRequests to send
+   * @param tableName - Target DynamoDB table name
+   * @throws Error if unprocessed items remain after the maximum retries
+   * @internal
+   */
+  private async writeBatchWithRetry(items: WriteRequest[], tableName: string): Promise<void> {
+    await this.sendBatchWithRetry(
+      { operation: "BatchWriteItem", noun: "items" },
+      { [tableName]: items },
+      async (RequestItems) => {
+        const { UnprocessedItems: unprocessed } = await this.client.send(
+          new BatchWriteItemCommand({ RequestItems }),
+        );
+
+        return unprocessed && Object.keys(unprocessed).length > 0
+          ? {
+              unprocessed: unprocessed as Record<string, WriteRequest[]>,
+              count: Object.values(unprocessed).flat().length,
+            }
+          : undefined;
+      },
+    );
+  }
+
+  /**
+   * Reads items by primary key, retrying unprocessed keys with exponential backoff.
+   *
+   * Keys are chunked into batches of 100 (DynamoDB's BatchGetItem limit). Items that
+   * don't exist are absent from the result.
+   *
+   * @param keys - Primary keys of the items to read
+   * @param attributes - Attributes to project
+   * @returns The items found, unmarshalled
+   * @throws Error if unprocessed keys remain after the maximum retries
+   * @internal
+   */
+  private async getBatchWithRetry(
+    keys: DynamoDBPrimaryKey[],
+    attributes: ReadonlyArray<string>,
+  ): Promise<UnmarshalledAttributes[]> {
+    const BATCH_SIZE = 100;
+    const tableName = DynamoDB.Table.Name();
+
+    const ExpressionAttributeNames = Object.fromEntries(
+      attributes.map((attribute, i) => [`#a${i}`, attribute]),
+    );
+    const ProjectionExpression = Object.keys(ExpressionAttributeNames).join(", ");
+
+    const items: UnmarshalledAttributes[] = [];
+
+    for (let i = 0; i < keys.length; i += BATCH_SIZE) {
+      await this.sendBatchWithRetry(
+        { operation: "BatchGetItem", noun: "keys" },
+        keys.slice(i, i + BATCH_SIZE).map((key) => marshall(key)),
+        async (Keys) => {
+          const response = await this.client.send(
+            new BatchGetItemCommand({
+              RequestItems: {
+                [tableName]: { Keys, ProjectionExpression, ExpressionAttributeNames },
+              },
+            }),
+          );
+
+          items.push(...(response.Responses?.[tableName] ?? []).map((item) => unmarshall(item)));
+
+          const unprocessed = response.UnprocessedKeys?.[tableName]?.Keys ?? [];
+          return unprocessed.length > 0 ? { unprocessed, count: unprocessed.length } : undefined;
+        },
+      );
+    }
+
+    return items;
+  }
+
+  /**
+   * Replaces related-resource rows in a listing page with their parent audits.
+   *
+   * `AuditService.upsertItem` writes a copy of an audit per additional resource, with a
+   * compound sort key (`{parentId}#{app}.{type}#{resourceId}`), the resource as `target`
+   * and the parent's target as `source`. When a target filter matches such a copy, the
+   * parent is listed in its place. Parents are identified by their full primary key (ids
+   * are only unique within a partition): a parent row's own key, or for a copy
+   * `[{tenantId}#]{source.app}.{source.type}` and the parent id.
+   *
+   * Parents not already on the page are read from the table, limited to the attributes the
+   * listing indexes project so they have the same shape as index rows. They're kept only
+   * while they're still in the queried index partition (a copy can be stale, e.g. after the
+   * audit moves to another status). Each parent is listed once, at the position of its first
+   * matching row.
+   *
+   * Limitations:
+   * - Deduplication is per page: when an audit's rows match on different pages, the audit
+   *   is listed on each of them.
+   * - A fetched parent takes its copy's position, which follows the copy's index sort key.
+   *   Copies are rewritten on every upsert, so in a status listing a copy's sort key can
+   *   carry a newer `createdAt` than its parent's, placing the parent out of date order.
+   *
+   * @param items - Listing page, in index order
+   * @param partition - Index partition key attribute and the value queried, plus the
+   *   index keys to read for fetched parents
+   * @param tenantId - Tenant the query was made with, if any
+   * @returns The page with related-resource rows mapped to their parents
+   * @internal
+   */
+  private async resolveRelatedItems<
+    T extends Pick<DynamoDBPrimaryKey, "PK" | "SK"> & Pick<ListingAttributes, "source">,
+  >(
+    items: T[],
+    partition: { key: string; value: string; attributes: ReadonlyArray<string> },
+    tenantId?: string,
+  ): Promise<T[]> {
+    const isRelated = (item: T) => item.SK.includes("#");
+
+    if (!items.some(isRelated)) {
+      return items;
+    }
+
+    const keyOf = (key: Pick<DynamoDBPrimaryKey, "PK" | "SK">) => JSON.stringify([key.PK, key.SK]);
+
+    // Primary key of the audit each row lists; a copy without a source has none
+    const parentKeys = items.map((item) => {
+      if (!isRelated(item)) {
+        return { PK: item.PK, SK: item.SK };
+      }
+
+      return item.source
+        ? this.constructPrimaryKey({
+            tenantId,
+            id: item.SK.split("#")[0],
+            app: item.source.app,
+            resourceType: item.source.type,
+          })
+        : undefined;
+    });
+
+    const parents = new Map(items.filter((i) => !isRelated(i)).map((i) => [keyOf(i), i]));
+
+    const missing = new Map<string, DynamoDBPrimaryKey>();
+    for (const key of parentKeys) {
+      if (key && !parents.has(keyOf(key))) missing.set(keyOf(key), key);
+    }
+
+    const fetched = await this.getBatchWithRetry(
+      [...missing.values()],
+      [
+        DynamoDB.Keys.PARTITION_KEY,
+        DynamoDB.Keys.SORT_KEY,
+        ...partition.attributes,
+        ...DynamoDB.Projections.LISTING,
+      ],
+    );
+    for (const parent of fetched) {
+      if (parent[partition.key] === partition.value) {
+        parents.set(keyOf(parent as T), parent as T);
+      }
+    }
+
+    const listed = new Set<string>();
+    return items.flatMap((item, i) => {
+      const key = parentKeys[i] && keyOf(parentKeys[i]);
+      const parent = key && parents.get(key);
+      if (!key || !parent) {
+        this.logger.debug("Skipping related audit without a listable parent", {
+          PK: item.PK,
+          SK: item.SK,
+        });
+        return [];
+      }
+      if (listed.has(key)) return [];
+
+      listed.add(key);
+      return [parent];
+    });
   }
 
   /**
@@ -834,6 +1022,8 @@ export class AuditRepository<C extends AuditConfig> {
    * Queries the GSI1_SN index to retrieve all audits sharing
    * the same trace ID, ordered by trace stage/depth.
    * Supports optional filtering by app, resource type, and resource ID.
+   * A filter matches an audit's target or any of its additional resources;
+   * each matching audit is listed once per page.
    *
    * This is useful for viewing the complete audit trail of a
    * distributed operation across multiple services or resources.
@@ -887,10 +1077,18 @@ export class AuditRepository<C extends AuditConfig> {
       }),
     );
 
+    const resolved = await this.resolveRelatedItems(
+      (items ?? []).map((i) => unmarshall(i) as TraceListingItem),
+      {
+        key: DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
+        value: pk,
+        attributes: [DynamoDB.Keys.GSI1_SN_PARTITION_KEY, DynamoDB.Keys.GSI1_SN_SORT_KEY],
+      },
+      params.tenantId,
+    );
+
     return PaginationCollectionSchema(AuditPayloadSchema).parse({
-      items: items?.map((i) =>
-        this.transformTraceListItem(unmarshall(i) as TraceListingItem, params.tenantId),
-      ),
+      items: resolved.map((i) => this.transformTraceListItem(i, params.tenantId)),
       pagination: {
         nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
       },
@@ -903,6 +1101,8 @@ export class AuditRepository<C extends AuditConfig> {
    * Queries the GSI2_SS index to retrieve all audits with a specific status,
    * ordered by creation date (most recent first by default).
    * Supports optional filtering by app, resource type, and resource ID.
+   * A filter matches an audit's target or any of its additional resources;
+   * each matching audit is listed once per page.
    *
    * Items don't include `trace`: GSI2_SS projects neither the trace nor the
    * trace keys. Fetch the audit with {@link getItem} when the trace is needed.
@@ -941,8 +1141,18 @@ export class AuditRepository<C extends AuditConfig> {
       }),
     );
 
+    const resolved = await this.resolveRelatedItems(
+      (items ?? []).map((i) => unmarshall(i) as StatusListingItem),
+      {
+        key: DynamoDB.Keys.GSI2_SS_PARTITION_KEY,
+        value: pk,
+        attributes: [DynamoDB.Keys.GSI2_SS_PARTITION_KEY, DynamoDB.Keys.GSI2_SS_SORT_KEY],
+      },
+      params.tenantId,
+    );
+
     return PaginationCollectionSchema(AuditPayloadSchema).parse({
-      items: items?.map((i) => this.transformStatusListItem(unmarshall(i) as StatusListingItem)),
+      items: resolved.map((i) => this.transformStatusListItem(i)),
       pagination: {
         nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
       },

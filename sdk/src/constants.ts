@@ -107,6 +107,14 @@ export const DynamoDB = {
     /** Local Secondary Index 1 - Numeric sort key */
     LSI1_N: "LSI1_N",
   },
+  /** Index projections */
+  Projections: {
+    /**
+     * Non-key attributes the listing GSIs (GSI1_SN, GSI1_SS, GSI2_SS) project.
+     * GSI1_SS also projects the GSI1_SN keys.
+     */
+    LISTING: ["operation", "status", "message", "source", "target", "rerunable", "createdAt"],
+  },
   /** Special attribute names */
   Attributes: {
     /** Time-to-live attribute for automatic item expiration */
