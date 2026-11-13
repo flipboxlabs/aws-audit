@@ -205,8 +205,7 @@ type ListingItem = TraceListingItem & Pick<SecondaryKeys, "GSI1_SS_PK" | "GSI1_S
  */
 type StatusListingItem = ListingAttributes &
   Pick<DynamoDBPrimaryKey, "PK" | "SK"> &
-  Pick<SecondaryKeys, "GSI2_SS_PK" | "GSI2_SS_SK"> &
-  Partial<Pick<SecondaryKeys, "GSI1_SN_PK" | "GSI1_SN_SK">>;
+  Pick<SecondaryKeys, "GSI2_SS_PK" | "GSI2_SS_SK">;
 
 /**
  * Options for listing audit objects by resource with typed App and ResourceType.
@@ -751,7 +750,9 @@ export class AuditRepository<C extends AuditConfig> {
     );
 
     return PaginationCollectionSchema(AuditPayloadSchema).parse({
-      items: items?.map((i) => this.transformListItem(unmarshall(i) as ListingItem)),
+      items: items?.map((i) =>
+        this.transformListItem(unmarshall(i) as ListingItem, params.tenantId),
+      ),
       pagination: {
         nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
       },
@@ -816,7 +817,9 @@ export class AuditRepository<C extends AuditConfig> {
     );
 
     return PaginationCollectionSchema(AuditPayloadSchema).parse({
-      items: items?.map((i) => this.transformListItem(unmarshall(i) as ListingItem)),
+      items: items?.map((i) =>
+        this.transformListItem(unmarshall(i) as ListingItem, params.tenantId),
+      ),
       pagination: {
         nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
       },
@@ -883,7 +886,9 @@ export class AuditRepository<C extends AuditConfig> {
     );
 
     return PaginationCollectionSchema(AuditPayloadSchema).parse({
-      items: items?.map((i) => this.transformTraceListItem(unmarshall(i) as TraceListingItem)),
+      items: items?.map((i) =>
+        this.transformTraceListItem(unmarshall(i) as TraceListingItem, params.tenantId),
+      ),
       pagination: {
         nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
       },
@@ -896,6 +901,9 @@ export class AuditRepository<C extends AuditConfig> {
    * Queries the GSI2_SS index to retrieve all audits with a specific status,
    * ordered by creation date (most recent first by default).
    * Supports optional filtering by app, resource type, and resource ID.
+   *
+   * Items don't include `trace`: GSI2_SS projects neither the trace nor the
+   * trace keys. Fetch the audit with {@link getItem} when the trace is needed.
    *
    * @param params - Query parameters including status and optional filters
    * @param pagination - Optional pagination settings (pageSize, nextToken)
@@ -1088,9 +1096,53 @@ export class AuditRepository<C extends AuditConfig> {
   }
 
   /**
+   * Replaces an item's stored `trace` with the one to return.
+   *
+   * 1. A stored string `trace` is returned verbatim.
+   * 2. Otherwise, when both GSI1_SN keys are present, the trace is rebuilt from them:
+   *    a leading `{tenantId}#` is stripped when the tenant is known (from the item, or the
+   *    tenant the query was made with), and the stage is appended unless it's 0. A trace
+   *    written as `abc:0` therefore comes back as `abc`, which is equivalent.
+   *    When the tenant isn't known, the key is returned as-is rather than guessing a
+   *    prefix by splitting on `#`.
+   * 3. Otherwise the `trace` key is removed. This covers a trace stored as NULL
+   *    (an empty string written with `convertEmptyValues`).
+   *
+   * @param item - Raw DynamoDB item, or the attributes an index projects
+   * @param tenantId - Tenant the query was made with, if any
+   * @returns The item, with `trace` only when resolvable
+   * @internal
+   */
+  private resolveTrace<
+    T extends { trace?: unknown; tenantId?: string } & Partial<
+      Pick<SecondaryKeys, "GSI1_SN_PK" | "GSI1_SN_SK">
+    >,
+  >(item: T, tenantId?: string): Omit<T, "trace"> & { trace?: string } {
+    const { trace, ...rest } = item;
+
+    if (typeof trace === "string") {
+      return { ...rest, trace };
+    }
+
+    if (item.GSI1_SN_PK === undefined || item.GSI1_SN_SK === undefined) {
+      return rest;
+    }
+
+    const tenant = item.tenantId ?? tenantId;
+    const prefix = tenant ? `${tenant}#` : undefined;
+    const id =
+      prefix && item.GSI1_SN_PK.startsWith(prefix)
+        ? item.GSI1_SN_PK.slice(prefix.length)
+        : item.GSI1_SN_PK;
+    const stage = Number(item.GSI1_SN_SK);
+
+    return { ...rest, trace: stage === 0 ? id : `${id}:${stage}` };
+  }
+
+  /**
    * Transforms a raw DynamoDB item into an Audit object.
    *
-   * Reconstructs the trace string and extracts the clean ID
+   * Resolves the trace string and extracts the clean ID
    * from compound keys.
    *
    * @param item - Raw DynamoDB item with all keys
@@ -1099,8 +1151,7 @@ export class AuditRepository<C extends AuditConfig> {
    */
   private transformItem(item: DynamoDBItem): Audit {
     return AuditSchema.parse({
-      trace: `${item.GSI1_SN_PK}:${item.GSI1_SN_SK}`,
-      ...item,
+      ...this.resolveTrace(item),
       id: item.id.split("#").pop(),
     });
   }
@@ -1109,15 +1160,15 @@ export class AuditRepository<C extends AuditConfig> {
    * Transforms a trace listing item into an audit list item payload.
    *
    * @param item - Raw trace listing item from GSI1_SN query
+   * @param tenantId - Tenant the query was made with, if any
    * @returns Parsed audit list item payload
    * @internal
    */
-  private transformTraceListItem(item: TraceListingItem) {
+  private transformTraceListItem(item: TraceListingItem, tenantId?: string) {
     const [id] = item.SK.split("#");
 
     return AuditPayloadSchema.parse({
-      trace: `${item.GSI1_SN_PK}:${item.GSI1_SN_SK}`,
-      ...item,
+      ...this.resolveTrace(item, tenantId),
       id: id,
     });
   }
@@ -1125,20 +1176,16 @@ export class AuditRepository<C extends AuditConfig> {
   /**
    * Transforms a resource listing item into an audit list item payload.
    *
-   * @param item - Raw listing item from GSI1_SS query
+   * @param item - Raw listing item from LSI1_N or GSI1_SS query
+   * @param tenantId - Tenant the query was made with, if any
    * @returns Parsed audit list item payload
    * @internal
    */
-  private transformListItem(item: ListingItem) {
+  private transformListItem(item: ListingItem, tenantId?: string) {
     const [id] = item.SK.split("#");
-    const trace =
-      item.GSI1_SN_PK !== undefined && item.GSI1_SN_SK !== undefined
-        ? `${item.GSI1_SN_PK}:${item.GSI1_SN_SK}`
-        : undefined;
 
     return AuditPayloadSchema.parse({
-      trace,
-      ...item,
+      ...this.resolveTrace(item, tenantId),
       id: id,
     });
   }
@@ -1146,19 +1193,17 @@ export class AuditRepository<C extends AuditConfig> {
   /**
    * Transforms a status listing item into an audit list item payload.
    *
+   * GSI2_SS projects neither `trace` nor the GSI1_SN keys, so `trace` is
+   * absent from status listings.
+   *
    * @param item - Raw listing item from GSI2_SS query
    * @returns Parsed audit list item payload
    * @internal
    */
   private transformStatusListItem(item: StatusListingItem) {
     const [id] = item.SK.split("#");
-    const trace =
-      item.GSI1_SN_PK !== undefined && item.GSI1_SN_SK !== undefined
-        ? `${item.GSI1_SN_PK}:${item.GSI1_SN_SK}`
-        : undefined;
 
     return AuditPayloadSchema.parse({
-      trace,
       ...item,
       id: id,
     });
