@@ -38,7 +38,12 @@ vi.mock("@aws-sdk/client-eventbridge", () => ({
   EventBridgeClient: class MockEventBridgeClient {},
 }));
 
+import { EventBridgeEventSchema } from "@flipboxlabs/aws-audit-sdk";
 import { handler } from "./handler.js";
+
+// Shape `event` the way getItem returns it: parsed through the real schema, which stores detail as a JSON string
+const storedEvent = (detail: string | Record<string, unknown>) =>
+  EventBridgeEventSchema.parse({ source: "test-source", "detail-type": "TestEvent", detail });
 
 const createApiGatewayEvent = (
   overrides: Partial<APIGatewayProxyEventV2> = {},
@@ -105,15 +110,10 @@ describe("rerun handler", () => {
 
   describe("POST /apps/:app/objects/:object/:item/:audit/rerun", () => {
     it("should rerun a rerunable audit event", async () => {
-      // Stored audits carry `event.detail` as a JSON string (see EventBridgeEventSchema)
       const mockAuditItem = {
         id: "audit-456",
         rerunable: true,
-        event: {
-          source: "test-source",
-          "detail-type": "TestEvent",
-          detail: '{"k":1}',
-        },
+        event: storedEvent({ k: 1 }),
       };
       mockGetItem.mockResolvedValue(mockAuditItem);
       mockPutEvents.mockResolvedValue({});
@@ -141,11 +141,7 @@ describe("rerun handler", () => {
       const mockAuditItem = {
         id: "audit-456",
         rerunable: false,
-        event: {
-          source: "test-source",
-          "detail-type": "TestEvent",
-          detail: {},
-        },
+        event: storedEvent({}),
       };
       mockGetItem.mockResolvedValue(mockAuditItem);
 
@@ -218,11 +214,7 @@ describe("rerun handler", () => {
       const mockAuditItem = {
         id: "audit-456",
         rerunable: true,
-        event: {
-          source: "test-source",
-          "detail-type": "TestEvent",
-          detail: {},
-        },
+        event: storedEvent({}),
       };
       mockGetItem.mockResolvedValue(mockAuditItem);
       mockPutEvents.mockRejectedValue(new Error("EventBridge error"));
