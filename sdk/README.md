@@ -43,6 +43,25 @@ try {
 }
 ```
 
+## Errors
+
+`AuditService.getItem` throws `AuditNotFoundError` when no audit matches the identifiers. It extends `Error` and carries the `identifiers` that were looked up. Storage failures (DynamoDB errors, records that fail schema parsing) are rethrown as-is, so they can be told apart from a missing audit.
+
+```typescript
+import { AuditNotFoundError } from "@flipboxlabs/aws-audit-sdk";
+
+try {
+  const audit = await service.getItem({ id, app, resourceType });
+} catch (error) {
+  if (error instanceof AuditNotFoundError) {
+    // the audit does not exist
+  }
+  throw error;
+}
+```
+
+`AuditRepository.getItem` resolves `undefined` only when the item does not exist; any other failure rejects.
+
 ## Features
 
 - Audit logging with structured data

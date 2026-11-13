@@ -397,10 +397,12 @@ export class AuditRepository<C extends AuditConfig> {
    * Retrieves a single audit record by its identifiers.
    *
    * Performs a DynamoDB GetItem operation using the constructed primary key.
-   * Returns undefined if the item is not found or if an error occurs.
+   * Returns undefined only when DynamoDB returns no item. DynamoDB errors and
+   * items that fail schema parsing are logged and rethrown.
    *
    * @param identifiers - Object containing id, app, and resourceType to locate the record
    * @returns The audit record if found, undefined otherwise
+   * @throws The underlying error if the DynamoDB request or schema parsing fails
    *
    * @example
    * ```typescript
@@ -437,7 +439,7 @@ export class AuditRepository<C extends AuditConfig> {
         error,
       });
 
-      return undefined;
+      throw error;
     }
   }
 

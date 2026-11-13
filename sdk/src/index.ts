@@ -1,5 +1,6 @@
 export * from "./audits.js";
 export * from "./config.js";
+export * from "./errors.js";
 export {
   type AnyEventBridgeDetailType,
   AUDIT_LOG_IDENTIFIER,

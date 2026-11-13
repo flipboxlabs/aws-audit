@@ -163,22 +163,43 @@ describe("AuditRepository", () => {
       expect(command.input.TableName).toBe(DynamoDB.Table.Name());
     });
 
-    it("should log error and return undefined on exception", async () => {
+    it("should log and rethrow DynamoDB errors", async () => {
       const error = new Error("DynamoDB error");
       mockClient.send.mockRejectedValue(error);
 
-      const result = await repository.getItem({
-        id: "audit-123",
-        app: App.App1,
-        resourceType: ResourceType.UNKNOWN,
-      });
-
-      expect(result).toBeUndefined();
+      await expect(
+        repository.getItem({
+          id: "audit-123",
+          app: App.App1,
+          resourceType: ResourceType.UNKNOWN,
+        }),
+      ).rejects.toBe(error);
       expect(mockLogger.error).toHaveBeenCalledWith(
         "Unable to find audit item in the repository",
         expect.objectContaining({
           identifiers: expect.any(Object),
           error,
+        }),
+      );
+    });
+
+    it("should log and rethrow when the item fails schema parsing", async () => {
+      mockClient.send.mockResolvedValue({
+        Item: marshall(createMockAuditItem({ target: "not-a-resource" })),
+      });
+
+      await expect(
+        repository.getItem({
+          id: "audit-123",
+          app: App.App1,
+          resourceType: ResourceType.UNKNOWN,
+        }),
+      ).rejects.toThrow();
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        "Unable to find audit item in the repository",
+        expect.objectContaining({
+          identifiers: expect.any(Object),
+          error: expect.any(Error),
         }),
       );
     });
