@@ -205,8 +205,7 @@ type ListingItem = TraceListingItem & Pick<SecondaryKeys, "GSI1_SS_PK" | "GSI1_S
  */
 type StatusListingItem = ListingAttributes &
   Pick<DynamoDBPrimaryKey, "PK" | "SK"> &
-  Pick<SecondaryKeys, "GSI2_SS_PK" | "GSI2_SS_SK"> &
-  Partial<Pick<SecondaryKeys, "GSI1_SN_PK" | "GSI1_SN_SK">>;
+  Pick<SecondaryKeys, "GSI2_SS_PK" | "GSI2_SS_SK">;
 
 /**
  * Options for listing audit objects by resource with typed App and ResourceType.
@@ -279,6 +278,61 @@ export type TypedListByStatusOptions<C extends AuditConfig> = {
     id?: string;
   };
 };
+
+/**
+ * Builds the filter shared by index listings that narrow on the audit target.
+ *
+ * App and resource values live on the nested `target` map (`target.app`,
+ * `target.type`, `target.id`), so the filters address them through expression
+ * attribute names. Audits recorded against additional resources carry a
+ * compound sort key and are always excluded.
+ *
+ * @param params - Optional app and resource filters
+ * @returns Filter conditions plus the attribute names and values they reference
+ * @internal
+ */
+function buildTargetFilter(params: { app?: string; resource?: { type?: string; id?: string } }) {
+  const filters: string[] = [];
+  const ExpressionAttributeValues: UnmarshalledAttributes = {};
+  const ExpressionAttributeNames: Record<string, string> = {};
+
+  if (params?.resource?.id) {
+    Object.assign(ExpressionAttributeValues, {
+      ":resourceId": params.resource.id,
+    });
+    ExpressionAttributeNames["#target"] = "target";
+    ExpressionAttributeNames["#id"] = "id";
+    filters.push("#target.#id = :resourceId");
+  }
+
+  if (params?.resource?.type) {
+    Object.assign(ExpressionAttributeValues, {
+      ":resourceType": params.resource.type,
+    });
+    ExpressionAttributeNames["#target"] = "target";
+    ExpressionAttributeNames["#type"] = "type";
+    filters.push("#target.#type = :resourceType");
+  }
+
+  if (params?.app) {
+    Object.assign(ExpressionAttributeValues, {
+      ":app": params.app,
+    });
+    ExpressionAttributeNames["#target"] = "target";
+    ExpressionAttributeNames["#app"] = "app";
+    filters.push("#target.#app = :app");
+  }
+
+  // Audits with other resources will have a compound id, filter these out
+  Object.assign(ExpressionAttributeValues, { ":isParent": "#" });
+  filters.push("not contains(SK, :isParent)");
+
+  return {
+    FilterExpression: filters.join(" AND "),
+    ExpressionAttributeNames,
+    ExpressionAttributeValues,
+  };
+}
 
 /**
  * Repository for managing audit records in DynamoDB.
@@ -536,7 +590,10 @@ export class AuditRepository<C extends AuditConfig> {
    *
    * This is atomic and race-condition safe for retry tracking.
    *
-   * @param item - The audit record to upsert
+   * Attempts are system-managed: each call appends exactly one attempt (`currentAttempt`).
+   * Any `attempts` on `item` are ignored; they are neither written nor appended.
+   *
+   * @param item - The audit record to upsert (its `attempts`, if any, are ignored)
    * @param currentAttempt - The current attempt to append
    * @returns The attempt number (1 for new items, incremented for existing)
    *
@@ -594,11 +651,15 @@ export class AuditRepository<C extends AuditConfig> {
       ttl: ttlAttribute.ttl,
     };
 
-    // Fields that need special handling (already in setClauses)
-    const specialFields = new Set(["attempts", "createdAt"]);
+    // Caller-supplied attempts are ignored; the list_append clause above owns the field.
+    // Adding them would leave an unused `:attempts` value, which DynamoDB rejects.
+    const ignoredFields = new Set(["attempts"]);
+
+    // Fields that already have a clause in setClauses; their values still feed it (`:createdAt`)
+    const specialFields = new Set(["createdAt"]);
 
     for (const [key, value] of Object.entries(allFields)) {
-      if (value === undefined) continue;
+      if (value === undefined || ignoredFields.has(key)) continue;
 
       expressionAttributeNames[`#${key}`] = key;
       expressionAttributeValues[`:${key}`] = value;
@@ -689,7 +750,9 @@ export class AuditRepository<C extends AuditConfig> {
     );
 
     return PaginationCollectionSchema(AuditPayloadSchema).parse({
-      items: items?.map((i) => this.transformListItem(unmarshall(i) as ListingItem)),
+      items: items?.map((i) =>
+        this.transformListItem(unmarshall(i) as ListingItem, params.tenantId),
+      ),
       pagination: {
         nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
       },
@@ -754,7 +817,9 @@ export class AuditRepository<C extends AuditConfig> {
     );
 
     return PaginationCollectionSchema(AuditPayloadSchema).parse({
-      items: items?.map((i) => this.transformListItem(unmarshall(i) as ListingItem)),
+      items: items?.map((i) =>
+        this.transformListItem(unmarshall(i) as ListingItem, params.tenantId),
+      ),
       pagination: {
         nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
       },
@@ -798,54 +863,32 @@ export class AuditRepository<C extends AuditConfig> {
     const pkBase = params.trace;
     const pk = params.tenantId ? `${params.tenantId}#${pkBase}` : pkBase;
 
-    const filters = [];
-    const ExpressionAttributeValues: UnmarshalledAttributes = {
-      ":PK": pk,
-    };
-
-    if (params?.resource?.id) {
-      Object.assign(ExpressionAttributeValues, {
-        ":resourceId": params?.resource?.id,
-      });
-      filters.push("resourceId=:resourceId");
-    }
-
-    if (params?.resource?.type) {
-      Object.assign(ExpressionAttributeValues, {
-        ":resourceType": params?.resource?.type,
-      });
-      filters.push("resourceType=:resourceType");
-    }
-
-    if (params?.app) {
-      Object.assign(ExpressionAttributeValues, {
-        ":app": params.app,
-      });
-      filters.push("app=:app");
-    }
-
-    // Audits with other resources will have a compound id - filter these out
-    Object.assign(ExpressionAttributeValues, { ":isParent": "#" });
-    filters.push("not contains(SK, :isParent)");
+    const filter = buildTargetFilter(params);
 
     const { Items: items, LastEvaluatedKey: lastEvaluatedKey } = await this.client.send(
       new QueryCommand({
         ScanIndexForward: true,
         IndexName: DynamoDB.Indexes.GSI1_SN,
-        ExpressionAttributeValues: marshall(ExpressionAttributeValues),
+        ExpressionAttributeValues: marshall({
+          ":PK": pk,
+          ...filter.ExpressionAttributeValues,
+        }),
         ExpressionAttributeNames: {
           "#PK": DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
+          ...filter.ExpressionAttributeNames,
         },
         KeyConditionExpression: "#PK=:PK",
         TableName: DynamoDB.Table.Name(),
         Limit: pageSize,
         ExclusiveStartKey: startKey ? marshall(startKey) : undefined,
-        FilterExpression: filters.join(" AND "),
+        FilterExpression: filter.FilterExpression,
       }),
     );
 
     return PaginationCollectionSchema(AuditPayloadSchema).parse({
-      items: items?.map((i) => this.transformTraceListItem(unmarshall(i) as TraceListingItem)),
+      items: items?.map((i) =>
+        this.transformTraceListItem(unmarshall(i) as TraceListingItem, params.tenantId),
+      ),
       pagination: {
         nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
       },
@@ -859,6 +902,9 @@ export class AuditRepository<C extends AuditConfig> {
    * ordered by creation date (most recent first by default).
    * Supports optional filtering by app, resource type, and resource ID.
    *
+   * Items don't include `trace`: GSI2_SS projects neither the trace nor the
+   * trace keys. Fetch the audit with {@link getItem} when the trace is needed.
+   *
    * @param params - Query parameters including status and optional filters
    * @param pagination - Optional pagination settings (pageSize, nextToken)
    * @returns Paginated collection of audit records in reverse date order
@@ -871,56 +917,25 @@ export class AuditRepository<C extends AuditConfig> {
     const pkBase = params.status;
     const pk = params.tenantId ? `${params.tenantId}#${pkBase}` : pkBase;
 
-    const filters: string[] = [];
-    const ExpressionAttributeValues: UnmarshalledAttributes = {
-      ":PK": pk,
-    };
-    const ExpressionAttributeNames: Record<string, string> = {
-      "#PK": DynamoDB.Keys.GSI2_SS_PARTITION_KEY,
-    };
-
-    if (params?.resource?.id) {
-      Object.assign(ExpressionAttributeValues, {
-        ":resourceId": params.resource.id,
-      });
-      ExpressionAttributeNames["#target"] = "target";
-      ExpressionAttributeNames["#id"] = "id";
-      filters.push("#target.#id = :resourceId");
-    }
-
-    if (params?.resource?.type) {
-      Object.assign(ExpressionAttributeValues, {
-        ":resourceType": params.resource.type,
-      });
-      ExpressionAttributeNames["#target"] = "target";
-      ExpressionAttributeNames["#type"] = "type";
-      filters.push("#target.#type = :resourceType");
-    }
-
-    if (params?.app) {
-      Object.assign(ExpressionAttributeValues, {
-        ":app": params.app,
-      });
-      ExpressionAttributeNames["#target"] = "target";
-      ExpressionAttributeNames["#app"] = "app";
-      filters.push("#target.#app = :app");
-    }
-
-    // Audits with other resources will have a compound id, filter these out
-    Object.assign(ExpressionAttributeValues, { ":isParent": "#" });
-    filters.push("not contains(SK, :isParent)");
+    const filter = buildTargetFilter(params);
 
     const { Items: items, LastEvaluatedKey: lastEvaluatedKey } = await this.client.send(
       new QueryCommand({
         ScanIndexForward: false,
         IndexName: DynamoDB.Indexes.GSI2_SS,
-        ExpressionAttributeValues: marshall(ExpressionAttributeValues),
-        ExpressionAttributeNames,
+        ExpressionAttributeValues: marshall({
+          ":PK": pk,
+          ...filter.ExpressionAttributeValues,
+        }),
+        ExpressionAttributeNames: {
+          "#PK": DynamoDB.Keys.GSI2_SS_PARTITION_KEY,
+          ...filter.ExpressionAttributeNames,
+        },
         KeyConditionExpression: "#PK = :PK",
         TableName: DynamoDB.Table.Name(),
         Limit: pageSize,
         ExclusiveStartKey: startKey ? marshall(startKey) : undefined,
-        FilterExpression: filters.length > 0 ? filters.join(" AND ") : undefined,
+        FilterExpression: filter.FilterExpression,
       }),
     );
 
@@ -1081,9 +1096,53 @@ export class AuditRepository<C extends AuditConfig> {
   }
 
   /**
+   * Replaces an item's stored `trace` with the one to return.
+   *
+   * 1. A stored string `trace` is returned verbatim.
+   * 2. Otherwise, when both GSI1_SN keys are present, the trace is rebuilt from them:
+   *    a leading `{tenantId}#` is stripped when the tenant is known (from the item, or the
+   *    tenant the query was made with), and the stage is appended unless it's 0. A trace
+   *    written as `abc:0` therefore comes back as `abc`, which is equivalent.
+   *    When the tenant isn't known, the key is returned as-is rather than guessing a
+   *    prefix by splitting on `#`.
+   * 3. Otherwise the `trace` key is removed. This covers a trace stored as NULL
+   *    (an empty string written with `convertEmptyValues`).
+   *
+   * @param item - Raw DynamoDB item, or the attributes an index projects
+   * @param tenantId - Tenant the query was made with, if any
+   * @returns The item, with `trace` only when resolvable
+   * @internal
+   */
+  private resolveTrace<
+    T extends { trace?: unknown; tenantId?: string } & Partial<
+      Pick<SecondaryKeys, "GSI1_SN_PK" | "GSI1_SN_SK">
+    >,
+  >(item: T, tenantId?: string): Omit<T, "trace"> & { trace?: string } {
+    const { trace, ...rest } = item;
+
+    if (typeof trace === "string") {
+      return { ...rest, trace };
+    }
+
+    if (item.GSI1_SN_PK === undefined || item.GSI1_SN_SK === undefined) {
+      return rest;
+    }
+
+    const tenant = item.tenantId ?? tenantId;
+    const prefix = tenant ? `${tenant}#` : undefined;
+    const id =
+      prefix && item.GSI1_SN_PK.startsWith(prefix)
+        ? item.GSI1_SN_PK.slice(prefix.length)
+        : item.GSI1_SN_PK;
+    const stage = Number(item.GSI1_SN_SK);
+
+    return { ...rest, trace: stage === 0 ? id : `${id}:${stage}` };
+  }
+
+  /**
    * Transforms a raw DynamoDB item into an Audit object.
    *
-   * Reconstructs the trace string and extracts the clean ID
+   * Resolves the trace string and extracts the clean ID
    * from compound keys.
    *
    * @param item - Raw DynamoDB item with all keys
@@ -1092,8 +1151,7 @@ export class AuditRepository<C extends AuditConfig> {
    */
   private transformItem(item: DynamoDBItem): Audit {
     return AuditSchema.parse({
-      trace: `${item.GSI1_SN_PK}:${item.GSI1_SN_SK}`,
-      ...item,
+      ...this.resolveTrace(item),
       id: item.id.split("#").pop(),
     });
   }
@@ -1102,15 +1160,15 @@ export class AuditRepository<C extends AuditConfig> {
    * Transforms a trace listing item into an audit list item payload.
    *
    * @param item - Raw trace listing item from GSI1_SN query
+   * @param tenantId - Tenant the query was made with, if any
    * @returns Parsed audit list item payload
    * @internal
    */
-  private transformTraceListItem(item: TraceListingItem) {
+  private transformTraceListItem(item: TraceListingItem, tenantId?: string) {
     const [id] = item.SK.split("#");
 
     return AuditPayloadSchema.parse({
-      trace: `${item.GSI1_SN_PK}:${item.GSI1_SN_SK}`,
-      ...item,
+      ...this.resolveTrace(item, tenantId),
       id: id,
     });
   }
@@ -1118,20 +1176,16 @@ export class AuditRepository<C extends AuditConfig> {
   /**
    * Transforms a resource listing item into an audit list item payload.
    *
-   * @param item - Raw listing item from GSI1_SS query
+   * @param item - Raw listing item from LSI1_N or GSI1_SS query
+   * @param tenantId - Tenant the query was made with, if any
    * @returns Parsed audit list item payload
    * @internal
    */
-  private transformListItem(item: ListingItem) {
+  private transformListItem(item: ListingItem, tenantId?: string) {
     const [id] = item.SK.split("#");
-    const trace =
-      item.GSI1_SN_PK !== undefined && item.GSI1_SN_SK !== undefined
-        ? `${item.GSI1_SN_PK}:${item.GSI1_SN_SK}`
-        : undefined;
 
     return AuditPayloadSchema.parse({
-      trace,
-      ...item,
+      ...this.resolveTrace(item, tenantId),
       id: id,
     });
   }
@@ -1139,19 +1193,17 @@ export class AuditRepository<C extends AuditConfig> {
   /**
    * Transforms a status listing item into an audit list item payload.
    *
+   * GSI2_SS projects neither `trace` nor the GSI1_SN keys, so `trace` is
+   * absent from status listings.
+   *
    * @param item - Raw listing item from GSI2_SS query
    * @returns Parsed audit list item payload
    * @internal
    */
   private transformStatusListItem(item: StatusListingItem) {
     const [id] = item.SK.split("#");
-    const trace =
-      item.GSI1_SN_PK !== undefined && item.GSI1_SN_SK !== undefined
-        ? `${item.GSI1_SN_PK}:${item.GSI1_SN_SK}`
-        : undefined;
 
     return AuditPayloadSchema.parse({
-      trace,
       ...item,
       id: id,
     });

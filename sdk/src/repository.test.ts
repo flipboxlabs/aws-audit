@@ -1161,6 +1161,115 @@ describe("AuditRepository", () => {
       expect(ttl).toBeGreaterThanOrEqual(before + customTtlSeconds);
       expect(ttl).toBeLessThanOrEqual(after + customTtlSeconds);
     });
+
+    it("should ignore caller-supplied attempts", async () => {
+      mockClient.send.mockResolvedValue({
+        Attributes: marshall({
+          attempts: [{ number: 1, status: "success", at: "2024-01-01T00:00:00Z" }],
+        }),
+      });
+
+      const item = createMockUpsertInput({
+        attempts: [
+          { number: 1, status: "fail", at: "2023-12-31T00:00:00Z" },
+          { number: 2, status: "fail", at: "2023-12-31T01:00:00Z" },
+        ],
+      });
+      const attempt = { number: 1, status: "success", at: "2024-01-01T00:00:00Z" };
+
+      await expect(repository.upsertItem(item, attempt)).resolves.toBe(1);
+
+      const command = mockClient.send.mock.calls[0][0] as UpdateItemCommand;
+      expect(command.input.ExpressionAttributeValues).not.toHaveProperty(":attempts");
+      expect(command.input.ExpressionAttributeValues?.[":newAttempt"]?.L).toHaveLength(1);
+      expect(command.input.UpdateExpression).not.toContain("#attempts = :attempts");
+    });
+
+    it("should renumber a retry on an existing item and ignore caller-supplied attempts", async () => {
+      mockClient.send.mockResolvedValue({
+        Attributes: marshall({
+          attempts: [
+            { number: 1, status: "fail", at: "2024-01-01T00:00:00Z" },
+            { number: 2, status: "fail", at: "2024-01-02T00:00:00Z" },
+            { number: 1, status: "success", at: "2024-01-03T00:00:00Z" },
+          ],
+        }),
+      });
+
+      const item = createMockUpsertInput({
+        attempts: [{ number: 9, status: "fail", at: "2023-12-31T00:00:00Z" }],
+      });
+      const attempt = { number: 1, status: "success", at: "2024-01-03T00:00:00Z" };
+
+      await expect(repository.upsertItem(item, attempt)).resolves.toBe(3);
+      expect(mockClient.send).toHaveBeenCalledTimes(2);
+
+      const [update, renumber] = mockClient.send.mock.calls.map(
+        ([command]) => (command as UpdateItemCommand).input,
+      );
+      expect(update.ExpressionAttributeValues).not.toHaveProperty(":attempts");
+      expect(update.ExpressionAttributeValues?.[":newAttempt"]).toEqual(
+        marshall({ v: [attempt] }).v,
+      );
+
+      expect(renumber.Key).toEqual(update.Key);
+      expect(renumber.UpdateExpression).toBe("SET #attempts[2].#number = :attemptNumber");
+      expect(renumber.ExpressionAttributeNames).toEqual({
+        "#attempts": "attempts",
+        "#number": "number",
+      });
+      expect(renumber.ExpressionAttributeValues).toEqual({ ":attemptNumber": { N: "3" } });
+
+      // The caller's attempt (number 9, 2023-12-31) reaches neither request
+      for (const input of [update, renumber]) {
+        expect(JSON.stringify(input)).not.toContain("2023-12-31");
+      }
+    });
+
+    it.each<[string, Partial<UpsertAuditInput>]>([
+      ["minimal", {}],
+      [
+        "full",
+        {
+          id: "audit-full",
+          message: "Full input",
+          rerunable: true,
+          trace: "trace-123:2",
+          source: { app: App.App1, type: ResourceType.USER, id: "user-1" },
+          context: { region: "us-east-1", nested: { count: 2 } },
+          event: { source: "test.service", "detail-type": "Tested", detail: { a: 1 } },
+          error: "Connection timeout",
+          attempts: [{ number: 1, status: "fail", at: "2023-12-31T00:00:00Z" }],
+          createdAt: "2023-12-31T00:00:00.000Z",
+        },
+      ],
+      ["tenant", { tenantId: "tenant-abc" }],
+    ])(
+      "should only send expression names and values the update expression uses (%s)",
+      async (_label, overrides) => {
+        mockClient.send.mockResolvedValue({
+          Attributes: marshall({
+            attempts: [{ number: 1, status: "success", at: "2024-01-01T00:00:00Z" }],
+          }),
+        });
+
+        const attempt = { number: 1, status: "success", at: "2024-01-01T00:00:00Z" };
+        await repository.upsertItem(createMockUpsertInput(overrides), attempt);
+
+        const { UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues } = (
+          mockClient.send.mock.calls[0][0] as UpdateItemCommand
+        ).input;
+        const tokens = new Set(UpdateExpression?.match(/[#:][A-Za-z0-9_]+/g));
+
+        // DynamoDB rejects names or values the expression doesn't use, and vice versa
+        expect(new Set(Object.keys(ExpressionAttributeNames ?? {}))).toEqual(
+          new Set([...tokens].filter((token) => token.startsWith("#"))),
+        );
+        expect(new Set(Object.keys(ExpressionAttributeValues ?? {}))).toEqual(
+          new Set([...tokens].filter((token) => token.startsWith(":"))),
+        );
+      },
+    );
   });
 
   describe("listTraceItems", () => {
@@ -1197,7 +1306,7 @@ describe("AuditRepository", () => {
       expect(command.input.KeyConditionExpression).toBe("#PK=:PK");
     });
 
-    it("should add resource ID filter when provided", async () => {
+    it("should filter on target.id when resource ID is provided", async () => {
       mockClient.send.mockResolvedValue({
         Items: [],
         LastEvaluatedKey: undefined,
@@ -1213,10 +1322,22 @@ describe("AuditRepository", () => {
       await repository.listTraceItems(params);
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
-      expect(command.input.FilterExpression).toContain("resourceId=:resourceId");
+      expect(command.input.FilterExpression).toBe(
+        "#target.#id = :resourceId AND not contains(SK, :isParent)",
+      );
+      expect(command.input.ExpressionAttributeNames).toEqual({
+        "#PK": DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
+        "#target": "target",
+        "#id": "id",
+      });
+      expect(command.input.ExpressionAttributeValues).toEqual({
+        ":PK": { S: "trace-123" },
+        ":resourceId": { S: "resource-456" },
+        ":isParent": { S: "#" },
+      });
     });
 
-    it("should add resource type filter when provided", async () => {
+    it("should filter on target.type when resource type is provided", async () => {
       mockClient.send.mockResolvedValue({
         Items: [],
         LastEvaluatedKey: undefined,
@@ -1232,10 +1353,22 @@ describe("AuditRepository", () => {
       await repository.listTraceItems(params);
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
-      expect(command.input.FilterExpression).toContain("resourceType=:resourceType");
+      expect(command.input.FilterExpression).toBe(
+        "#target.#type = :resourceType AND not contains(SK, :isParent)",
+      );
+      expect(command.input.ExpressionAttributeNames).toEqual({
+        "#PK": DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
+        "#target": "target",
+        "#type": "type",
+      });
+      expect(command.input.ExpressionAttributeValues).toEqual({
+        ":PK": { S: "trace-123" },
+        ":resourceType": { S: ResourceType.UNKNOWN },
+        ":isParent": { S: "#" },
+      });
     });
 
-    it("should add app filter when provided", async () => {
+    it("should filter on target.app when app is provided", async () => {
       mockClient.send.mockResolvedValue({
         Items: [],
         LastEvaluatedKey: undefined,
@@ -1249,10 +1382,22 @@ describe("AuditRepository", () => {
       await repository.listTraceItems(params);
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
-      expect(command.input.FilterExpression).toContain("app=:app");
+      expect(command.input.FilterExpression).toBe(
+        "#target.#app = :app AND not contains(SK, :isParent)",
+      );
+      expect(command.input.ExpressionAttributeNames).toEqual({
+        "#PK": DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
+        "#target": "target",
+        "#app": "app",
+      });
+      expect(command.input.ExpressionAttributeValues).toEqual({
+        ":PK": { S: "trace-123" },
+        ":app": { S: App.App1 },
+        ":isParent": { S: "#" },
+      });
     });
 
-    it("should filter out compound IDs", async () => {
+    it("should only filter out compound IDs when no filters are provided", async () => {
       mockClient.send.mockResolvedValue({
         Items: [],
         LastEvaluatedKey: undefined,
@@ -1265,7 +1410,14 @@ describe("AuditRepository", () => {
       await repository.listTraceItems(params);
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
-      expect(command.input.FilterExpression).toContain("not contains(SK, :isParent)");
+      expect(command.input.FilterExpression).toBe("not contains(SK, :isParent)");
+      expect(command.input.ExpressionAttributeNames).toEqual({
+        "#PK": DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
+      });
+      expect(command.input.ExpressionAttributeValues).toEqual({
+        ":PK": { S: "trace-123" },
+        ":isParent": { S: "#" },
+      });
     });
 
     it("should scan in forward order for trace items", async () => {
@@ -1343,7 +1495,7 @@ describe("AuditRepository", () => {
       expect(result.items[0].error).toEqual({ message: "Trace item error" });
     });
 
-    it("should combine multiple filters with AND", async () => {
+    it("should combine target filters with AND", async () => {
       mockClient.send.mockResolvedValue({
         Items: [],
         LastEvaluatedKey: undefined,
@@ -1361,7 +1513,23 @@ describe("AuditRepository", () => {
       await repository.listTraceItems(params);
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
-      expect(command.input.FilterExpression).toContain(" AND ");
+      expect(command.input.FilterExpression).toBe(
+        "#target.#id = :resourceId AND #target.#type = :resourceType AND #target.#app = :app AND not contains(SK, :isParent)",
+      );
+      expect(command.input.ExpressionAttributeNames).toEqual({
+        "#PK": DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
+        "#target": "target",
+        "#id": "id",
+        "#type": "type",
+        "#app": "app",
+      });
+      expect(command.input.ExpressionAttributeValues).toEqual({
+        ":PK": { S: "trace-123" },
+        ":resourceId": { S: "resource-456" },
+        ":resourceType": { S: ResourceType.UNKNOWN },
+        ":app": { S: App.App1 },
+        ":isParent": { S: "#" },
+      });
     });
 
     it("should use provided page size", async () => {
@@ -1489,6 +1657,41 @@ describe("AuditRepository", () => {
       expect(command.input.ExpressionAttributeValues?.[":resourceId"]?.S).toBe("resource-456");
     });
 
+    it("should send the exact combined target filter", async () => {
+      mockClient.send.mockResolvedValue({
+        Items: [],
+        LastEvaluatedKey: undefined,
+      });
+
+      await repository.listByStatus({
+        status: "warn",
+        app: App.App1,
+        resource: {
+          type: ResourceType.UNKNOWN,
+          id: "resource-456",
+        },
+      });
+
+      const command = mockClient.send.mock.calls[0][0] as QueryCommand;
+      expect(command.input.FilterExpression).toBe(
+        "#target.#id = :resourceId AND #target.#type = :resourceType AND #target.#app = :app AND not contains(SK, :isParent)",
+      );
+      expect(command.input.ExpressionAttributeNames).toEqual({
+        "#PK": DynamoDB.Keys.GSI2_SS_PARTITION_KEY,
+        "#target": "target",
+        "#id": "id",
+        "#type": "type",
+        "#app": "app",
+      });
+      expect(command.input.ExpressionAttributeValues).toEqual({
+        ":PK": { S: "warn" },
+        ":resourceId": { S: "resource-456" },
+        ":resourceType": { S: ResourceType.UNKNOWN },
+        ":app": { S: App.App1 },
+        ":isParent": { S: "#" },
+      });
+    });
+
     it("should use tenant-prefixed partition key and pagination", async () => {
       mockClient.send.mockResolvedValue({
         Items: [],
@@ -1521,7 +1724,7 @@ describe("AuditRepository", () => {
       expect(result.pagination?.nextToken).toBeDefined();
     });
 
-    it("should preserve trace when the status query item includes trace keys", async () => {
+    it("should return the projected status item fields", async () => {
       mockClient.send.mockResolvedValue({
         Items: [
           marshall({
@@ -1529,8 +1732,6 @@ describe("AuditRepository", () => {
             SK: "audit-123",
             GSI2_SS_PK: "fail",
             GSI2_SS_SK: "2024-01-02T00:00:00.000Z#audit-123",
-            GSI1_SN_PK: "trace-123",
-            GSI1_SN_SK: 2,
             operation: "statusOp",
             status: "fail",
             target: {
@@ -1550,7 +1751,6 @@ describe("AuditRepository", () => {
       const result = await repository.listByStatus({ status: "fail" });
 
       expect(result.items).toHaveLength(1);
-      expect(result.items[0].trace).toBe("trace-123:2");
       expect(result.items[0].createdAt).toBe("2024-01-02T00:00:00.000Z");
       expect(result.items[0].updatedAt).toBe("2024-01-03T00:00:00.000Z");
       expect(result.items[0].attempts).toEqual([
@@ -1584,6 +1784,265 @@ describe("AuditRepository", () => {
 
       expect(result.items).toHaveLength(1);
       expect(result.items[0].trace).toBeUndefined();
+    });
+  });
+
+  describe("trace resolution", () => {
+    const getItem = () =>
+      repository.getItem({
+        id: "audit-123",
+        app: App.App1,
+        resourceType: ResourceType.UNKNOWN,
+      });
+
+    const mockQueryItems = (...items: Record<string, unknown>[]) =>
+      mockClient.send.mockResolvedValue({
+        Items: items.map((item) => marshall(item, { removeUndefinedValues: true })),
+        LastEvaluatedKey: undefined,
+      });
+
+    // The attributes GSI1_SS and GSI1_SN project: no `trace` or `tenantId`
+    const createProjectedItem = (overrides: Record<string, unknown> = {}) => ({
+      PK: `${App.App1}.${ResourceType.UNKNOWN}`,
+      SK: "audit-123",
+      operation: "testOperation",
+      status: "success",
+      target: {
+        app: App.App1,
+        type: ResourceType.UNKNOWN,
+        id: "resource-123",
+      },
+      createdAt: "2024-01-01T00:00:00.000Z",
+      ...overrides,
+    });
+
+    const listItems = (tenantId?: string) =>
+      repository.listItems({
+        tenantId,
+        app: App.App1,
+        resource: { type: ResourceType.UNKNOWN, id: "resource-123" },
+      });
+
+    const listTraceItems = (tenantId?: string) =>
+      repository.listTraceItems({ tenantId, trace: "abc" });
+
+    describe("getItem", () => {
+      it("should return the stored trace verbatim", async () => {
+        mockClient.send.mockResolvedValue({
+          Item: marshall(
+            createMockAuditItem({
+              tenantId: "t1",
+              trace: "abc:1",
+              GSI1_SN_PK: "t1#abc",
+              GSI1_SN_SK: 1,
+            }),
+          ),
+        });
+
+        expect((await getItem())?.trace).toBe("abc:1");
+      });
+
+      it("should return a stored stage-0 trace as written, not rebuilt from the keys", async () => {
+        mockClient.send.mockResolvedValue({
+          Item: marshall(createMockAuditItem({ trace: "abc:0", GSI1_SN_PK: "abc", GSI1_SN_SK: 0 })),
+        });
+
+        expect((await getItem())?.trace).toBe("abc:0");
+      });
+
+      it("should omit trace when it's stored as NULL", async () => {
+        mockClient.send.mockResolvedValue({
+          Item: marshall(
+            createMockAuditItem({ trace: null, GSI1_SN_PK: undefined, GSI1_SN_SK: undefined }),
+            { removeUndefinedValues: true },
+          ),
+        });
+
+        const result = await getItem();
+
+        expect(result).toBeDefined();
+        expect(result).not.toHaveProperty("trace");
+      });
+
+      it("should return a stage-less stored trace without a stage", async () => {
+        mockClient.send.mockResolvedValue({
+          Item: marshall(createMockAuditItem({ trace: "abc", GSI1_SN_PK: "abc", GSI1_SN_SK: 0 })),
+        });
+
+        expect((await getItem())?.trace).toBe("abc");
+      });
+
+      it("should omit trace when the audit has none", async () => {
+        mockClient.send.mockResolvedValue({
+          Item: marshall(createMockAuditItem({ GSI1_SN_PK: undefined, GSI1_SN_SK: undefined }), {
+            removeUndefinedValues: true,
+          }),
+        });
+
+        const result = await getItem();
+
+        expect(result).toBeDefined();
+        expect(result).not.toHaveProperty("trace");
+      });
+
+      it("should rebuild the trace from the keys without a stage when the stage is 0", async () => {
+        mockClient.send.mockResolvedValue({
+          Item: marshall(createMockAuditItem({ GSI1_SN_PK: "abc", GSI1_SN_SK: 0 })),
+        });
+
+        expect((await getItem())?.trace).toBe("abc");
+      });
+
+      it("should rebuild the trace from the keys with a non-zero stage", async () => {
+        mockClient.send.mockResolvedValue({
+          Item: marshall(createMockAuditItem({ GSI1_SN_PK: "abc", GSI1_SN_SK: 2 })),
+        });
+
+        expect((await getItem())?.trace).toBe("abc:2");
+      });
+
+      it("should strip the item's tenant prefix when rebuilding the trace", async () => {
+        mockClient.send.mockResolvedValue({
+          Item: marshall(
+            createMockAuditItem({ tenantId: "t1", GSI1_SN_PK: "t1#abc", GSI1_SN_SK: 1 }),
+          ),
+        });
+
+        expect((await getItem())?.trace).toBe("abc:1");
+      });
+    });
+
+    describe("listObjects", () => {
+      const listObjects = (tenantId?: string) =>
+        repository.listObjects({
+          tenantId,
+          app: App.App1,
+          resource: { type: ResourceType.UNKNOWN },
+        });
+
+      it("should return the stored trace verbatim", async () => {
+        mockQueryItems(
+          createMockAuditItem({
+            tenantId: "t1",
+            trace: "abc",
+            GSI1_SN_PK: "t1#abc",
+            GSI1_SN_SK: 0,
+          }),
+        );
+
+        const result = await listObjects("t1");
+
+        expect(result.items[0].trace).toBe("abc");
+      });
+
+      it("should return a stored stage-0 trace as written, not rebuilt from the keys", async () => {
+        mockQueryItems(createMockAuditItem({ trace: "abc:0", GSI1_SN_PK: "abc", GSI1_SN_SK: 0 }));
+
+        const result = await listObjects();
+
+        expect(result.items[0].trace).toBe("abc:0");
+      });
+
+      it("should omit trace when it's stored as NULL", async () => {
+        mockQueryItems(
+          createMockAuditItem({ trace: null, GSI1_SN_PK: undefined, GSI1_SN_SK: undefined }),
+        );
+
+        const result = await listObjects();
+
+        expect(result.items[0]).not.toHaveProperty("trace");
+      });
+
+      it("should omit trace when the audit has none", async () => {
+        mockQueryItems(createMockAuditItem({ GSI1_SN_PK: undefined, GSI1_SN_SK: undefined }));
+
+        const result = await listObjects();
+
+        expect(result.items[0]).not.toHaveProperty("trace");
+      });
+    });
+
+    describe("listItems", () => {
+      it("should rebuild the trace without a stage when the stage is 0", async () => {
+        mockQueryItems(createProjectedItem({ GSI1_SN_PK: "abc", GSI1_SN_SK: 0 }));
+
+        const result = await listItems();
+
+        expect(result.items[0].trace).toBe("abc");
+      });
+
+      it("should rebuild the trace with a non-zero stage", async () => {
+        mockQueryItems(createProjectedItem({ GSI1_SN_PK: "abc", GSI1_SN_SK: 2 }));
+
+        const result = await listItems();
+
+        expect(result.items[0].trace).toBe("abc:2");
+      });
+
+      it("should strip the queried tenant's prefix", async () => {
+        mockQueryItems(createProjectedItem({ GSI1_SN_PK: "t1#abc", GSI1_SN_SK: 1 }));
+
+        const result = await listItems("t1");
+
+        expect(result.items[0].trace).toBe("abc:1");
+      });
+
+      it("should not guess a tenant prefix when the tenant isn't known", async () => {
+        mockQueryItems(createProjectedItem({ GSI1_SN_PK: "t1#abc", GSI1_SN_SK: 1 }));
+
+        const result = await listItems();
+
+        expect(result.items[0].trace).toBe("t1#abc:1");
+      });
+
+      it("should omit trace when the audit has none", async () => {
+        mockQueryItems(createProjectedItem());
+
+        const result = await listItems();
+
+        expect(result.items[0]).not.toHaveProperty("trace");
+      });
+    });
+
+    describe("listTraceItems", () => {
+      it("should rebuild the trace without a stage when the stage is 0", async () => {
+        mockQueryItems(createProjectedItem({ GSI1_SN_PK: "abc", GSI1_SN_SK: 0 }));
+
+        const result = await listTraceItems();
+
+        expect(result.items[0].trace).toBe("abc");
+      });
+
+      it("should rebuild the trace with a non-zero stage", async () => {
+        mockQueryItems(createProjectedItem({ GSI1_SN_PK: "abc", GSI1_SN_SK: 2 }));
+
+        const result = await listTraceItems();
+
+        expect(result.items[0].trace).toBe("abc:2");
+      });
+
+      it("should strip the queried tenant's prefix", async () => {
+        mockQueryItems(createProjectedItem({ GSI1_SN_PK: "t1#abc", GSI1_SN_SK: 0 }));
+
+        const result = await listTraceItems("t1");
+
+        expect(result.items[0].trace).toBe("abc");
+      });
+    });
+
+    describe("listByStatus", () => {
+      it("should omit trace, which the status index doesn't project", async () => {
+        mockQueryItems(
+          createProjectedItem({
+            GSI2_SS_PK: "t1#success",
+            GSI2_SS_SK: "2024-01-01T00:00:00.000Z#audit-123",
+          }),
+        );
+
+        const result = await repository.listByStatus({ tenantId: "t1", status: "success" });
+
+        expect(result.items[0]).not.toHaveProperty("trace");
+      });
     });
   });
 });

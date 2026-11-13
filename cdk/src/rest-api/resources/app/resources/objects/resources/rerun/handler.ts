@@ -50,7 +50,7 @@ app.post(
       {
         Source: item.event.source,
         EventBusName: EventBridge.Bus.Name(),
-        Detail: JSON.stringify(item.event.detail),
+        Detail: item.event.detail,
         DetailType: item.event["detail-type"],
       },
     ]);

@@ -133,6 +133,8 @@ GET /status/{status}
 GET /trace/{traceId}
 ```
 
+An audit's `trace` is the trace it was written with, and is omitted when it has none. `GET /apps/{app}/objects/{type}/{item}` and `GET /trace/{trace}` rebuild it from index keys, so there a trace written with stage `0` (`abc:0`) comes back as the equivalent `abc`. `GET /status/{status}` omits `trace`, because the status index doesn't project it; fetch the single audit to read it.
+
 `GET /config` answers:
 
 ```json
