@@ -57,6 +57,9 @@ export const resourceTypes = ${JSON.stringify(props.resourceTypes)};
     const nodejsDir = path.join(tempDir, "nodejs");
     fs.mkdirSync(nodejsDir);
     fs.writeFileSync(path.join(nodejsDir, "audit-config.js"), configCode);
+    // Mark the layer's files as ES modules; without it Node loads audit-config.js
+    // as CommonJS and handlers fail at init with "Named export 'apps' not found"
+    fs.writeFileSync(path.join(nodejsDir, "package.json"), JSON.stringify({ type: "module" }));
 
     this.layer = new lambda.LayerVersion(this, "Layer", {
       code: lambda.Code.fromAsset(tempDir),
