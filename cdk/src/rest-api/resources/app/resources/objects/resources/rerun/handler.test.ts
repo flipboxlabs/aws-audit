@@ -2,9 +2,10 @@ import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { App, ResourceType, testConfig } from "../../../../../../../test-config.js";
 
-const { mockGetItem, mockPutEvents } = vi.hoisted(() => ({
+const { mockGetItem, mockPutEvents, mockLogError } = vi.hoisted(() => ({
   mockGetItem: vi.fn(),
   mockPutEvents: vi.fn(),
+  mockLogError: vi.fn(),
 }));
 
 vi.mock("../../../../../../../audit-config.js", () => ({
@@ -19,7 +20,7 @@ vi.mock("@flipboxlabs/aws-audit-sdk", async (importOriginal) => {
       getItem = mockGetItem;
     },
     BatchHandler: class MockBatchHandler {
-      putEvents = mockPutEvents;
+      putEventsOrThrow = mockPutEvents;
     },
     EventBridge: {
       ...actual.EventBridge,
@@ -31,13 +32,16 @@ vi.mock("@flipboxlabs/aws-audit-sdk", async (importOriginal) => {
 });
 
 vi.mock("@aws-lambda-powertools/logger", () => ({
-  Logger: class MockLogger {},
+  Logger: class MockLogger {
+    error = mockLogError;
+  },
 }));
 
 vi.mock("@aws-sdk/client-eventbridge", () => ({
   EventBridgeClient: class MockEventBridgeClient {},
 }));
 
+import { PutEventsError } from "@flipboxlabs/aws-audit-sdk";
 import { handler } from "./handler.js";
 
 const createApiGatewayEvent = (
@@ -115,7 +119,7 @@ describe("rerun handler", () => {
         },
       };
       mockGetItem.mockResolvedValue(mockAuditItem);
-      mockPutEvents.mockResolvedValue({});
+      mockPutEvents.mockResolvedValue([{ EventId: "event-1" }]);
 
       const event = createApiGatewayEvent();
       const response = await handler(event, mockContext);
@@ -134,6 +138,7 @@ describe("rerun handler", () => {
         },
       ]);
       expect(response.statusCode).toBe(204);
+      expect(response.body).toBe("");
     });
 
     it("should return 400 when item is not rerunable", async () => {
@@ -213,23 +218,54 @@ describe("rerun handler", () => {
       expect(response.statusCode).toBe(500);
     });
 
-    it("should handle EventBridge errors", async () => {
-      const mockAuditItem = {
-        id: "audit-456",
-        rerunable: true,
-        event: {
-          source: "test-source",
-          "detail-type": "TestEvent",
-          detail: {},
-        },
+    describe("when the event is not re-sent", () => {
+      const rerunError = {
+        statusCode: 500,
+        error: "InternalServerError",
+        message: "Unable to rerun the event",
       };
-      mockGetItem.mockResolvedValue(mockAuditItem);
-      mockPutEvents.mockRejectedValue(new Error("EventBridge error"));
 
-      const event = createApiGatewayEvent();
-      const response = await handler(event, mockContext);
+      beforeEach(() => {
+        mockGetItem.mockResolvedValue({
+          id: "audit-456",
+          rerunable: true,
+          event: {
+            source: "test-source",
+            "detail-type": "TestEvent",
+            detail: {},
+          },
+        });
+      });
 
-      expect(response.statusCode).toBe(500);
+      it("should return 500 when PutEvents throws", async () => {
+        const cause = new Error("AccessDeniedException");
+        const error = new PutEventsError("Error pushing event bridge events", [], { cause });
+        mockPutEvents.mockRejectedValue(error);
+
+        const response = await handler(createApiGatewayEvent(), mockContext);
+
+        expect(response.statusCode).toBe(500);
+        expect(JSON.parse(response.body)).toEqual(rerunError);
+        expect(mockLogError).toHaveBeenCalledWith("Unable to rerun the event", {
+          error,
+          failedEntries: [],
+        });
+      });
+
+      it("should return 500 when EventBridge rejects the entry", async () => {
+        const failedEntries = [{ ErrorCode: "ThrottlingException", ErrorMessage: "Rate exceeded" }];
+        const error = new PutEventsError("EventBridge accepted 0 of 1 events", failedEntries);
+        mockPutEvents.mockRejectedValue(error);
+
+        const response = await handler(createApiGatewayEvent(), mockContext);
+
+        expect(response.statusCode).toBe(500);
+        expect(JSON.parse(response.body)).toEqual(rerunError);
+        expect(mockLogError).toHaveBeenCalledWith("Unable to rerun the event", {
+          error,
+          failedEntries,
+        });
+      });
     });
   });
 });
