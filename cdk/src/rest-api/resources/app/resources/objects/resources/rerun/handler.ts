@@ -1,7 +1,16 @@
-import { BadRequestError, Router } from "@aws-lambda-powertools/event-handler/http";
+import {
+  BadRequestError,
+  InternalServerError,
+  Router,
+} from "@aws-lambda-powertools/event-handler/http";
 import { Logger } from "@aws-lambda-powertools/logger";
 import { EventBridgeClient } from "@aws-sdk/client-eventbridge";
-import { AuditService, BatchHandler, EventBridge } from "@flipboxlabs/aws-audit-sdk";
+import {
+  AuditService,
+  BatchHandler,
+  EventBridge,
+  PutEventsError,
+} from "@flipboxlabs/aws-audit-sdk";
 import type { Context } from "aws-lambda";
 import { type App, auditConfig, type ResourceType } from "../../../../../../../audit-config.js";
 import { API_RESOURCE as BASE_API_RESOURCE } from "../../../../constants.js";
@@ -37,7 +46,7 @@ app.post(
       throw new BadRequestError("Item is not rerunable");
     }
 
-    await eventBus.putEvents([
+    await eventBus.putEventsOrThrow([
       {
         Source: item.event.source,
         EventBusName: EventBridge.Bus.Name(),
@@ -58,6 +67,14 @@ app.post(
     },
   },
 );
+
+// The event was not re-sent (PutEvents threw or EventBridge rejected the entry).
+app.errorHandler(PutEventsError, async (error) => {
+  // failedEntries is an enumerable property, so the logged error includes it.
+  logger.error("Unable to rerun the event", error);
+
+  return new InternalServerError("Unable to rerun the event").toWebResponse();
+});
 
 export const handler = async (event: unknown, context: Context): Promise<unknown> =>
   app.resolve(event, context);
