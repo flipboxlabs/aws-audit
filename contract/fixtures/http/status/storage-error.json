@@ -1,5 +1,5 @@
 {
-  "description": "A DynamoDB failure is a 500",
+  "description": "A DynamoDB failure is a logged 500",
   "route": "GET /status/{status}",
   "request": {
     "method": "GET",
@@ -39,7 +39,7 @@
     "contentType": "application/json",
     "body": {
       "statusCode": 500,
-      "error": "Internal Server Error",
+      "error": "InternalServerError",
       "message": "Internal Server Error"
     }
   }

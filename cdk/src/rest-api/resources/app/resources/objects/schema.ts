@@ -2,6 +2,7 @@ import { AuditPayloadSchema, PaginationCollectionSchema } from "@flipboxlabs/aws
 import { z } from "zod";
 import { auditConfig } from "../../../../../audit-config.js";
 import { API_RESOURCE as BASE_API_RESOURCE } from "../../constants.js";
+import { PaginationQuerySchema } from "../../../../http/pagination.js";
 import { API_RESOURCE } from "./constants.js";
 
 export const ObjectPathSchema = z.object({
@@ -17,11 +18,8 @@ export const DetailPathSchema = PathSchema.extend({
   [API_RESOURCE.RESOURCE_WILDCARD_ITEM_AUDIT]: z.string(),
 });
 
-// Query params use flat keys matching API Gateway's bracket notation
-export const QuerySchema = z.object({
-  "pagination[pageSize]": z.coerce.number().optional(),
-  "pagination[nextToken]": z.string().optional(),
-});
+// Listings of a resource type or item take only pagination
+export const QuerySchema = PaginationQuerySchema;
 
 export const ResponseCollectionSchema = PaginationCollectionSchema(AuditPayloadSchema);
 export type ResponseCollection = z.output<typeof ResponseCollectionSchema>;

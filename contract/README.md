@@ -77,12 +77,5 @@ The handlers received an API Gateway REST (v1) proxy event built from `request`.
 - **The Upserted event's `Detail`** is a JSON string. Compare it parsed.
 - **A rerun `Detail`** must be the stored string byte for byte. `rerun/sent` stores one with a space and `1.0` to catch any re-serialization.
 - **422 bodies:** `statusCode`, `error`, `message` and each issue's `path` are the contract. Issue `message` text comes from zod and may differ.
-- **Error names** (`AuditNotFoundError`, `PutEventsError`) are the TypeScript classes. Map them to the Rust error they correspond to.
-
-## Recorded as-is
-
-These are what the TypeScript handlers do today, not necessarily what they should do:
-
-- An unhandled error answers `{"statusCode":500,"error":"Internal Server Error","message":"Internal Server Error"}` (`status/storage-error`). Rerun's handled 500 uses `"error":"InternalServerError"`.
-- A rerun 204 has no body, but a `text/plain;charset=UTF-8` content type.
-- The query schemas give `pagination[pageSize]` as a number. API Gateway passes every query value as a string, and the handler coerces it.
+- **Error names** (`AuditNotFoundError`, `InvalidNextTokenError`, `PutEventsError`) are the TypeScript classes. Map them to the Rust error they correspond to.
+- **Error bodies** are `{statusCode, error, message}`, with the error's class name in `error` (`NotFoundError`, `BadRequestError`, `RequestValidationError`, `InternalServerError`). 422s add `details.issues`.

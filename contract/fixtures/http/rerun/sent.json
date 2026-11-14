@@ -103,7 +103,7 @@
   ],
   "response": {
     "statusCode": 204,
-    "contentType": "text/plain;charset=UTF-8",
+    "contentType": null,
     "body": null
   }
 }
