@@ -6,7 +6,7 @@
 use chrono::{DateTime, SecondsFormat, Utc};
 
 /// A source of the current time.
-pub trait Clock: Send + Sync {
+pub trait Clock: Send + Sync + std::fmt::Debug {
     /// The current time.
     fn now(&self) -> DateTime<Utc>;
 }

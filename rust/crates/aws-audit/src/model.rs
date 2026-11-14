@@ -293,15 +293,21 @@ fn detail<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, 
     }
 }
 
+/// An error string as stored and returned: a JSON object (a serialized `Error`) is
+/// parsed back into the object; any other string is kept.
+pub fn parse_error_value(text: String) -> Value {
+    match serde_json::from_str(&text) {
+        Ok(object @ Value::Object(_)) => object,
+        _ => Value::String(text),
+    }
+}
+
 /// Reads an `error`: an object as is, or a string. A string holding a JSON object
 /// (a serialized `Error`) is parsed back into the object; any other string is kept.
 fn error_value<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Value>, D::Error> {
     match Option::<Value>::deserialize(deserializer)? {
         None => Ok(None),
-        Some(Value::String(text)) => Ok(Some(match serde_json::from_str(&text) {
-            Ok(object @ Value::Object(_)) => object,
-            _ => Value::String(text),
-        })),
+        Some(Value::String(text)) => Ok(Some(parse_error_value(text))),
         Some(object @ Value::Object(_)) => Ok(Some(object)),
         Some(other) => Err(de::Error::custom(format!(
             "error must be a string or an object, got {other}"
