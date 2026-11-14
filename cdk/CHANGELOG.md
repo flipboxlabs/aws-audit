@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.6](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.6.5...cdk-v1.6.6) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cdk:** answer REST errors consistently and reject bad pagination with 422 ([66435e0](https://github.com/flipboxlabs/aws-audit/commit/66435e044745bd083131a0d650373e24c4b7a677)), closes [#124](https://github.com/flipboxlabs/aws-audit/issues/124)
+
 ## [1.6.5](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.6.4...cdk-v1.6.5) (2026-11-13)
 
 
