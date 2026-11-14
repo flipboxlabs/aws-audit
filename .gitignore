@@ -40,3 +40,5 @@ coverage/
 
 # Rust
 cdk/rust/target/
+# Lambda binaries, built by `pnpm build:lambdas` before publishing
+cdk/assets/

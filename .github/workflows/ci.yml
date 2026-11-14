@@ -86,6 +86,20 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+      # The same build the release publishes: cargo-lambda cross-compiles through Zig
+      - name: Install cargo-lambda
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-lambda@1.9.2
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build the Lambdas (arm64)
+        run: bash ../scripts/build-lambdas.sh
+
   build:
     name: Build
     runs-on: ubuntu-latest
