@@ -81,16 +81,22 @@ const ContextSchema = z.record(z.string(), RecursiveContextValueSchema);
 
 /**
  * Schema for error details in audits and attempts.
- * Handles string errors (with optional JSON parsing), Error instances, and plain objects.
+ * Handles string errors, Error instances, and plain objects. A string holding a JSON
+ * object (a serialized Error) is parsed back into the object; any other string is
+ * kept, so an error of "404" stays a string.
  */
 const ErrorSchema = z
   .union([
-    z.string().transform((error) => {
+    z.string().transform((error): string | Record<string, unknown> => {
       try {
-        return JSON.parse(error);
+        const parsed: unknown = JSON.parse(error);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
       } catch {
-        return error;
+        // Not JSON
       }
+      return error;
     }),
     z
       .instanceof(Error)
