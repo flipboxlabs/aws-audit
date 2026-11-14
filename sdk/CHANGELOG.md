@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.2](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.6.1...sdk-v1.6.2) (2026-11-14)
+
+
+### Bug Fixes
+
+* **sdk:** add the record TTL in epoch seconds, not local time ([8e422cb](https://github.com/flipboxlabs/aws-audit/commit/8e422cb937e188aa709c5b81529477df13fe51b3))
+
 ## [1.6.1](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.6.0...sdk-v1.6.1) (2026-11-13)
 
 
