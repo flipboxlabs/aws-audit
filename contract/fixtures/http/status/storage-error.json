@@ -1,0 +1,46 @@
+{
+  "description": "A DynamoDB failure is a 500",
+  "route": "GET /status/{status}",
+  "request": {
+    "method": "GET",
+    "path": "/status/fail"
+  },
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "Query",
+      "input": {
+        "ScanIndexForward": false,
+        "IndexName": "GSI2_SS",
+        "ExpressionAttributeValues": {
+          ":PK": {
+            "S": "fail"
+          },
+          ":isParent": {
+            "S": "#"
+          }
+        },
+        "ExpressionAttributeNames": {
+          "#PK": "GSI2_SS_PK"
+        },
+        "KeyConditionExpression": "#PK = :PK",
+        "TableName": "TEST-Contract-Audit",
+        "Limit": 100,
+        "FilterExpression": "not contains(SK, :isParent)"
+      },
+      "error": {
+        "name": "ProvisionedThroughputExceededException",
+        "message": "Slow down"
+      }
+    }
+  ],
+  "response": {
+    "statusCode": 500,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 500,
+      "error": "Internal Server Error",
+      "message": "Internal Server Error"
+    }
+  }
+}

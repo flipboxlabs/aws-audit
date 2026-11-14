@@ -1,0 +1,29 @@
+{
+  "description": "A status outside the enum is a 422",
+  "route": "GET /status/{status}",
+  "request": {
+    "method": "GET",
+    "path": "/status/unknown"
+  },
+  "calls": [],
+  "response": {
+    "statusCode": 422,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 422,
+      "error": "RequestValidationError",
+      "message": "Validation failed for request",
+      "details": {
+        "issues": [
+          {
+            "message": "Invalid option: expected one of \"success\"|\"warn\"|\"fail\"|\"skip\"",
+            "path": [
+              "path",
+              "status"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,184 @@
+{
+  "description": "A matching related-resource copy is replaced by its parent, read with BatchGetItem",
+  "operation": "listTraceItems",
+  "args": [
+    {
+      "trace": "trace-1",
+      "app": "TestApp"
+    }
+  ],
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "Query",
+      "input": {
+        "ScanIndexForward": true,
+        "IndexName": "GSI1_SN",
+        "ExpressionAttributeValues": {
+          ":PK": {
+            "S": "trace-1"
+          },
+          ":app": {
+            "S": "TestApp"
+          }
+        },
+        "ExpressionAttributeNames": {
+          "#PK": "GSI1_SN_PK",
+          "#target": "target",
+          "#app": "app"
+        },
+        "KeyConditionExpression": "#PK=:PK",
+        "TableName": "TEST-Contract-Audit",
+        "Limit": 100,
+        "FilterExpression": "#target.#app = :app"
+      },
+      "output": {
+        "Items": [
+          {
+            "PK": {
+              "S": "TestApp.User"
+            },
+            "SK": {
+              "S": "audit-1#TestApp.User#user-1"
+            },
+            "GSI1_SN_PK": {
+              "S": "trace-1"
+            },
+            "GSI1_SN_SK": {
+              "N": "0"
+            },
+            "operation": {
+              "S": "createOrder"
+            },
+            "status": {
+              "S": "success"
+            },
+            "source": {
+              "M": {
+                "app": {
+                  "S": "App1"
+                },
+                "type": {
+                  "S": "Order"
+                },
+                "id": {
+                  "S": "order-1"
+                }
+              }
+            },
+            "target": {
+              "M": {
+                "app": {
+                  "S": "TestApp"
+                },
+                "type": {
+                  "S": "User"
+                },
+                "id": {
+                  "S": "user-1"
+                }
+              }
+            },
+            "createdAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "service": "DynamoDB",
+      "command": "BatchGetItem",
+      "input": {
+        "RequestItems": {
+          "TEST-Contract-Audit": {
+            "Keys": [
+              {
+                "PK": {
+                  "S": "App1.Order"
+                },
+                "SK": {
+                  "S": "audit-1"
+                }
+              }
+            ],
+            "ProjectionExpression": "#a0, #a1, #a2, #a3, #a4, #a5, #a6, #a7, #a8, #a9, #a10",
+            "ExpressionAttributeNames": {
+              "#a0": "PK",
+              "#a1": "SK",
+              "#a2": "GSI1_SN_PK",
+              "#a3": "GSI1_SN_SK",
+              "#a4": "operation",
+              "#a5": "status",
+              "#a6": "message",
+              "#a7": "source",
+              "#a8": "target",
+              "#a9": "rerunable",
+              "#a10": "createdAt"
+            }
+          }
+        }
+      },
+      "output": {
+        "Responses": {
+          "TEST-Contract-Audit": [
+            {
+              "PK": {
+                "S": "App1.Order"
+              },
+              "SK": {
+                "S": "audit-1"
+              },
+              "GSI1_SN_PK": {
+                "S": "trace-1"
+              },
+              "GSI1_SN_SK": {
+                "N": "0"
+              },
+              "operation": {
+                "S": "createOrder"
+              },
+              "status": {
+                "S": "success"
+              },
+              "target": {
+                "M": {
+                  "app": {
+                    "S": "App1"
+                  },
+                  "type": {
+                    "S": "Order"
+                  },
+                  "id": {
+                    "S": "order-1"
+                  }
+                }
+              },
+              "createdAt": {
+                "S": "2026-01-02T03:04:05.678Z"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "result": {
+    "items": [
+      {
+        "id": "audit-1",
+        "status": "success",
+        "tier": 2,
+        "target": {
+          "app": "App1",
+          "id": "order-1",
+          "type": "Order"
+        },
+        "operation": "createOrder",
+        "trace": "trace-1",
+        "createdAt": "2026-01-02T03:04:05.678Z"
+      }
+    ],
+    "pagination": {}
+  }
+}

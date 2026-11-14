@@ -1,0 +1,44 @@
+{
+  "description": "nextToken encoding (encodeNextPageToken)",
+  "tokens": [
+    {
+      "key": {
+        "PK": "App1.Order",
+        "SK": "audit-1"
+      },
+      "token": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEifQ",
+      "decoded": {
+        "PK": "App1.Order",
+        "SK": "audit-1"
+      }
+    },
+    {
+      "key": {
+        "PK": "tenant-1#App1.Order",
+        "SK": "audit-1",
+        "LSI1_N_SK": "21767323445678"
+      },
+      "token": "eyJQSyI6InRlbmFudC0xI0FwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJMU0kxX05fU0siOiIyMTc2NzMyMzQ0NTY3OCJ9",
+      "decoded": {
+        "PK": "tenant-1#App1.Order",
+        "SK": "audit-1",
+        "LSI1_N_SK": "21767323445678"
+      }
+    },
+    {
+      "key": {
+        "PK": "App1.Order",
+        "SK": "audit-1",
+        "GSI2_SS_PK": "fail",
+        "GSI2_SS_SK": "2026-01-02T03:04:05.678Z#audit-1"
+      },
+      "token": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJHU0kyX1NTX1BLIjoiZmFpbCIsIkdTSTJfU1NfU0siOiIyMDI2LTAxLTAyVDAzOjA0OjA1LjY3OFojYXVkaXQtMSJ9",
+      "decoded": {
+        "PK": "App1.Order",
+        "SK": "audit-1",
+        "GSI2_SS_PK": "fail",
+        "GSI2_SS_SK": "2026-01-02T03:04:05.678Z#audit-1"
+      }
+    }
+  ]
+}

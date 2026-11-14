@@ -438,6 +438,26 @@ describe("AuditRepository", () => {
       expect(ttl).toBeLessThanOrEqual(after + defaultTtlSeconds);
     });
 
+    it("should add the TTL in epoch seconds across a daylight saving change", async () => {
+      // 90 days from January 2 crosses the March change in America/Denver
+      vi.stubEnv("TZ", "America/Denver");
+      vi.useFakeTimers({ now: new Date("2026-01-02T03:04:05.678Z"), toFake: ["Date"] });
+      mockClient.send.mockResolvedValue({});
+
+      try {
+        await repository.upsertBatch([createMockUpsertInput()]);
+      } finally {
+        vi.useRealTimers();
+        vi.unstubAllEnvs();
+      }
+
+      const command = mockClient.send.mock.calls[0][0] as BatchWriteItemCommand;
+      const item = command.input.RequestItems?.[DynamoDB.Table.Name()]?.[0]?.PutRequest?.Item;
+
+      // 2026-04-02T03:04:05Z
+      expect(item?.ttl?.N).toBe("1775099045");
+    });
+
     it("should resolve successfully when UnprocessedItems are returned on first call but empty on retry", async () => {
       vi.useFakeTimers();
 

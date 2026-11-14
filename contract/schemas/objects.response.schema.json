@@ -1,0 +1,247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tenantId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "success",
+              "warn",
+              "fail",
+              "skip"
+            ]
+          },
+          "tier": {
+            "default": 2,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3
+          },
+          "target": {
+            "type": "object",
+            "properties": {
+              "app": {
+                "type": "string"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "type": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "app",
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "app": {
+                "type": "string"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "type": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "app",
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          "context": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
+          "operation": {
+            "type": "string"
+          },
+          "message": {},
+          "rerunable": {
+            "type": "boolean"
+          },
+          "trace": {
+            "type": "string"
+          },
+          "event": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string"
+              },
+              "detail-type": {
+                "type": "string"
+              },
+              "detail": {}
+            },
+            "required": [
+              "detail"
+            ],
+            "additionalProperties": false
+          },
+          "error": {
+            "anyOf": [
+              {},
+              {},
+              {
+                "type": "object",
+                "propertyNames": {},
+                "additionalProperties": {}
+              }
+            ]
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "success",
+                    "warn",
+                    "fail",
+                    "skip"
+                  ]
+                },
+                "error": {
+                  "anyOf": [
+                    {},
+                    {},
+                    {
+                      "type": "object",
+                      "propertyNames": {},
+                      "additionalProperties": {}
+                    }
+                  ]
+                },
+                "at": {
+                  "default": "2026-01-02T03:04:05.678Z"
+                }
+              },
+              "required": [
+                "number",
+                "status",
+                "at"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "updatedAt": {},
+          "createdAt": {}
+        },
+        "required": [
+          "id",
+          "status",
+          "tier",
+          "target",
+          "operation",
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "pagination": {
+      "type": "object",
+      "properties": {
+        "pageSize": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nextToken": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      ]
+    }
+  }
+}

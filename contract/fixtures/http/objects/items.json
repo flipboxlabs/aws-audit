@@ -1,0 +1,100 @@
+{
+  "description": "Audits of one resource",
+  "route": "GET /apps/{app}/objects/{object}/{item}",
+  "request": {
+    "method": "GET",
+    "path": "/apps/App1/objects/Order/order-1"
+  },
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "Query",
+      "input": {
+        "ScanIndexForward": false,
+        "IndexName": "GSI1_SS",
+        "ExpressionAttributeValues": {
+          ":PK": {
+            "S": "App1.Order#order-1"
+          }
+        },
+        "ExpressionAttributeNames": {
+          "#PK": "GSI1_SS_PK"
+        },
+        "KeyConditionExpression": "#PK=:PK",
+        "TableName": "TEST-Contract-Audit",
+        "Limit": 100
+      },
+      "output": {
+        "Items": [
+          {
+            "PK": {
+              "S": "App1.Order"
+            },
+            "SK": {
+              "S": "audit-1"
+            },
+            "id": {
+              "S": "audit-1"
+            },
+            "operation": {
+              "S": "createOrder"
+            },
+            "status": {
+              "S": "fail"
+            },
+            "tier": {
+              "N": "2"
+            },
+            "target": {
+              "M": {
+                "app": {
+                  "S": "App1"
+                },
+                "type": {
+                  "S": "Order"
+                },
+                "id": {
+                  "S": "order-1"
+                }
+              }
+            },
+            "createdAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            },
+            "updatedAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            },
+            "GSI1_SS_PK": {
+              "S": "App1.Order#order-1"
+            },
+            "GSI1_SS_SK": {
+              "S": "audit-1"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "response": {
+    "statusCode": 200,
+    "contentType": "application/json",
+    "body": {
+      "items": [
+        {
+          "id": "audit-1",
+          "status": "fail",
+          "tier": 2,
+          "target": {
+            "app": "App1",
+            "id": "order-1",
+            "type": "Order"
+          },
+          "operation": "createOrder",
+          "updatedAt": "2026-01-02T03:04:05.678Z",
+          "createdAt": "2026-01-02T03:04:05.678Z"
+        }
+      ],
+      "pagination": {}
+    }
+  }
+}

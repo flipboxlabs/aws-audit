@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "pagination[pageSize]": {
+      "type": "number"
+    },
+    "pagination[nextToken]": {
+      "type": "string"
+    },
+    "filter[app]": {
+      "type": "string",
+      "enum": [
+        "App1",
+        "TestApp"
+      ]
+    },
+    "filter[resourceType]": {
+      "type": "string",
+      "enum": [
+        "Unknown",
+        "User",
+        "Order"
+      ]
+    }
+  }
+}

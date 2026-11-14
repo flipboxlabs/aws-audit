@@ -1,0 +1,55 @@
+{
+  "description": "Pagination and filters come from bracketed query parameters",
+  "route": "GET /status/{status}",
+  "request": {
+    "method": "GET",
+    "path": "/status/fail",
+    "query": {
+      "pagination[pageSize]": "5",
+      "filter[app]": "App1",
+      "filter[resourceType]": "Order"
+    }
+  },
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "Query",
+      "input": {
+        "ScanIndexForward": false,
+        "IndexName": "GSI2_SS",
+        "ExpressionAttributeValues": {
+          ":PK": {
+            "S": "fail"
+          },
+          ":resourceType": {
+            "S": "Order"
+          },
+          ":app": {
+            "S": "App1"
+          }
+        },
+        "ExpressionAttributeNames": {
+          "#PK": "GSI2_SS_PK",
+          "#target": "target",
+          "#type": "type",
+          "#app": "app"
+        },
+        "KeyConditionExpression": "#PK = :PK",
+        "TableName": "TEST-Contract-Audit",
+        "Limit": 5,
+        "FilterExpression": "#target.#type = :resourceType AND #target.#app = :app"
+      },
+      "output": {
+        "Items": []
+      }
+    }
+  ],
+  "response": {
+    "statusCode": 200,
+    "contentType": "application/json",
+    "body": {
+      "items": [],
+      "pagination": {}
+    }
+  }
+}

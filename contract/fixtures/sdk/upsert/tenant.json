@@ -1,0 +1,185 @@
+{
+  "description": "A tenant prefixes the partition and index keys",
+  "operation": "upsertItem",
+  "args": [
+    {
+      "id": "audit-1",
+      "operation": "createOrder",
+      "status": "success",
+      "tier": 2,
+      "target": {
+        "app": "App1",
+        "type": "Order",
+        "id": "order-1"
+      },
+      "tenantId": "tenant-1",
+      "trace": "trace-1"
+    }
+  ],
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "UpdateItem",
+      "input": {
+        "TableName": "TEST-Contract-Audit",
+        "Key": {
+          "PK": {
+            "S": "tenant-1#App1.Order"
+          },
+          "SK": {
+            "S": "audit-1"
+          }
+        },
+        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #tenantId = :tenantId, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #trace = :trace, #updatedAt = :updatedAt, #LSI1_N_SK = :LSI1_N_SK, #GSI1_SS_PK = :GSI1_SS_PK, #GSI1_SS_SK = :GSI1_SS_SK, #GSI1_SN_PK = :GSI1_SN_PK, #GSI1_SN_SK = :GSI1_SN_SK, #GSI2_SS_PK = :GSI2_SS_PK, #GSI2_SS_SK = :GSI2_SS_SK, #ttl = :ttl",
+        "ExpressionAttributeNames": {
+          "#attempts": "attempts",
+          "#createdAt": "createdAt",
+          "#id": "id",
+          "#tenantId": "tenantId",
+          "#status": "status",
+          "#tier": "tier",
+          "#target": "target",
+          "#operation": "operation",
+          "#trace": "trace",
+          "#updatedAt": "updatedAt",
+          "#LSI1_N_SK": "LSI1_N_SK",
+          "#GSI1_SS_PK": "GSI1_SS_PK",
+          "#GSI1_SS_SK": "GSI1_SS_SK",
+          "#GSI1_SN_PK": "GSI1_SN_PK",
+          "#GSI1_SN_SK": "GSI1_SN_SK",
+          "#GSI2_SS_PK": "GSI2_SS_PK",
+          "#GSI2_SS_SK": "GSI2_SS_SK",
+          "#ttl": "ttl"
+        },
+        "ExpressionAttributeValues": {
+          ":emptyList": {
+            "L": []
+          },
+          ":newAttempt": {
+            "L": [
+              {
+                "M": {
+                  "number": {
+                    "N": "1"
+                  },
+                  "status": {
+                    "S": "success"
+                  },
+                  "at": {
+                    "S": "2026-01-02T03:04:05.678Z"
+                  }
+                }
+              }
+            ]
+          },
+          ":id": {
+            "S": "audit-1"
+          },
+          ":tenantId": {
+            "S": "tenant-1"
+          },
+          ":status": {
+            "S": "success"
+          },
+          ":tier": {
+            "N": "2"
+          },
+          ":target": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "id": {
+                "S": "order-1"
+              },
+              "type": {
+                "S": "Order"
+              }
+            }
+          },
+          ":operation": {
+            "S": "createOrder"
+          },
+          ":trace": {
+            "S": "trace-1"
+          },
+          ":updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          ":createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          ":LSI1_N_SK": {
+            "N": "21767323045678"
+          },
+          ":GSI1_SS_PK": {
+            "S": "tenant-1#App1.Order#order-1"
+          },
+          ":GSI1_SS_SK": {
+            "S": "audit-1"
+          },
+          ":GSI1_SN_PK": {
+            "S": "tenant-1#trace-1"
+          },
+          ":GSI1_SN_SK": {
+            "N": "0"
+          },
+          ":GSI2_SS_PK": {
+            "S": "tenant-1#success"
+          },
+          ":GSI2_SS_SK": {
+            "S": "2026-01-02T03:04:05.678Z#audit-1"
+          },
+          ":ttl": {
+            "N": "1775099045"
+          }
+        },
+        "ReturnValues": "ALL_NEW"
+      },
+      "output": {
+        "Attributes": {
+          "attempts": {
+            "L": [
+              {
+                "M": {
+                  "number": {
+                    "N": "1"
+                  },
+                  "status": {
+                    "S": "success"
+                  },
+                  "at": {
+                    "S": "2026-01-02T03:04:05.678Z"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "service": "EventBridge",
+      "command": "PutEvents",
+      "input": {
+        "Entries": [
+          {
+            "EventBusName": "TEST-Contract-Audit",
+            "Detail": "{\"audit\":{\"id\":\"audit-1\",\"operation\":\"createOrder\",\"tenantId\":\"tenant-1\",\"tier\":2,\"status\":\"success\",\"target\":{\"app\":\"App1\",\"type\":\"Order\",\"id\":\"order-1\"},\"trace\":\"trace-1\"}}",
+            "DetailType": "Upserted",
+            "Source": "Audit"
+          }
+        ]
+      },
+      "output": {
+        "FailedEntryCount": 0,
+        "Entries": [
+          {
+            "EventId": "event-1"
+          }
+        ]
+      }
+    }
+  ],
+  "result": null
+}

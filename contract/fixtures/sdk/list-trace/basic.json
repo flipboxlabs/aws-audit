@@ -1,0 +1,92 @@
+{
+  "description": "Audits of a trace, excluding related-resource copies",
+  "operation": "listTraceItems",
+  "args": [
+    {
+      "trace": "trace-1"
+    }
+  ],
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "Query",
+      "input": {
+        "ScanIndexForward": true,
+        "IndexName": "GSI1_SN",
+        "ExpressionAttributeValues": {
+          ":PK": {
+            "S": "trace-1"
+          },
+          ":isParent": {
+            "S": "#"
+          }
+        },
+        "ExpressionAttributeNames": {
+          "#PK": "GSI1_SN_PK"
+        },
+        "KeyConditionExpression": "#PK=:PK",
+        "TableName": "TEST-Contract-Audit",
+        "Limit": 100,
+        "FilterExpression": "not contains(SK, :isParent)"
+      },
+      "output": {
+        "Items": [
+          {
+            "PK": {
+              "S": "App1.Order"
+            },
+            "SK": {
+              "S": "audit-1"
+            },
+            "GSI1_SN_PK": {
+              "S": "trace-1"
+            },
+            "GSI1_SN_SK": {
+              "N": "0"
+            },
+            "operation": {
+              "S": "createOrder"
+            },
+            "status": {
+              "S": "success"
+            },
+            "target": {
+              "M": {
+                "app": {
+                  "S": "App1"
+                },
+                "type": {
+                  "S": "Order"
+                },
+                "id": {
+                  "S": "order-1"
+                }
+              }
+            },
+            "createdAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "result": {
+    "items": [
+      {
+        "id": "audit-1",
+        "status": "success",
+        "tier": 2,
+        "target": {
+          "app": "App1",
+          "id": "order-1",
+          "type": "Order"
+        },
+        "operation": "createOrder",
+        "trace": "trace-1",
+        "createdAt": "2026-01-02T03:04:05.678Z"
+      }
+    ],
+    "pagination": {}
+  }
+}

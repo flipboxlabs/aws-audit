@@ -21,6 +21,14 @@ export default defineConfig({
     },
   },
   fmt: {
-    ignorePatterns: ["**/dist/**", "**/coverage/**", "**/node_modules/**", "**/CHANGELOG.md"],
+    ignorePatterns: [
+      "**/dist/**",
+      "**/coverage/**",
+      "**/node_modules/**",
+      "**/CHANGELOG.md",
+      // Written by the contract tests, which compare them byte for byte
+      "contract/fixtures/**",
+      "contract/schemas/**",
+    ],
   },
 });

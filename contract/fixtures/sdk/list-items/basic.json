@@ -1,0 +1,98 @@
+{
+  "description": "Audits of one resource by its id; the trace is rebuilt from index keys",
+  "operation": "listItems",
+  "args": [
+    {
+      "app": "App1",
+      "resource": {
+        "type": "Order",
+        "id": "order-1"
+      }
+    }
+  ],
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "Query",
+      "input": {
+        "ScanIndexForward": false,
+        "IndexName": "GSI1_SS",
+        "ExpressionAttributeValues": {
+          ":PK": {
+            "S": "App1.Order#order-1"
+          }
+        },
+        "ExpressionAttributeNames": {
+          "#PK": "GSI1_SS_PK"
+        },
+        "KeyConditionExpression": "#PK=:PK",
+        "TableName": "TEST-Contract-Audit",
+        "Limit": 100
+      },
+      "output": {
+        "Items": [
+          {
+            "PK": {
+              "S": "App1.Order"
+            },
+            "SK": {
+              "S": "audit-1"
+            },
+            "GSI1_SS_PK": {
+              "S": "App1.Order#order-1"
+            },
+            "GSI1_SS_SK": {
+              "S": "audit-1"
+            },
+            "GSI1_SN_PK": {
+              "S": "trace-1"
+            },
+            "GSI1_SN_SK": {
+              "N": "0"
+            },
+            "operation": {
+              "S": "createOrder"
+            },
+            "status": {
+              "S": "success"
+            },
+            "target": {
+              "M": {
+                "app": {
+                  "S": "App1"
+                },
+                "type": {
+                  "S": "Order"
+                },
+                "id": {
+                  "S": "order-1"
+                }
+              }
+            },
+            "createdAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "result": {
+    "items": [
+      {
+        "id": "audit-1",
+        "status": "success",
+        "tier": 2,
+        "target": {
+          "app": "App1",
+          "id": "order-1",
+          "type": "Order"
+        },
+        "operation": "createOrder",
+        "trace": "trace-1",
+        "createdAt": "2026-01-02T03:04:05.678Z"
+      }
+    ],
+    "pagination": {}
+  }
+}
