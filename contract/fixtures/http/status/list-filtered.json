@@ -34,7 +34,7 @@
           "#type": "type",
           "#app": "app"
         },
-        "KeyConditionExpression": "#PK = :PK",
+        "KeyConditionExpression": "#PK=:PK",
         "TableName": "TEST-Contract-Audit",
         "Limit": 5,
         "FilterExpression": "#target.#type = :resourceType AND #target.#app = :app"

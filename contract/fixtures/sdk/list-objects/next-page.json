@@ -10,7 +10,7 @@
     },
     {
       "pageSize": 2,
-      "nextToken": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJMU0kxX05fU0siOiIyMTc2NzMyMzQ0NTY3OCJ9"
+      "nextToken": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJMU0kxX05fU0siOjIxNzY3MzIzNDQ1Njc4fQ"
     }
   ],
   "calls": [
@@ -39,7 +39,7 @@
             "S": "audit-1"
           },
           "LSI1_N_SK": {
-            "S": "21767323445678"
+            "N": "21767323445678"
           }
         }
       },

@@ -32,3 +32,29 @@ export class AuditNotFoundError extends Error {
     this.identifiers = { ...identifiers };
   }
 }
+
+/**
+ * Thrown by the listing methods when `pagination.nextToken` is not a token that
+ * listing returned: it doesn't decode, it holds another index's keys, or it was
+ * issued for another partition (status, trace, resource or tenant).
+ *
+ * The listing is not queried. Answer it as a client error.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   return await service.listByStatus({ status: 'fail' }, { nextToken });
+ * } catch (error) {
+ *   if (error instanceof InvalidNextTokenError) {
+ *     // respond with 400
+ *   }
+ *   throw error;
+ * }
+ * ```
+ */
+export class InvalidNextTokenError extends Error {
+  public constructor(message = "Invalid pagination nextToken") {
+    super(message);
+    this.name = "InvalidNextTokenError";
+  }
+}

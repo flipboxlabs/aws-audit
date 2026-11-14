@@ -1,0 +1,17 @@
+{
+  "description": "A nextToken that doesn't decode to a key object is refused",
+  "operation": "listByStatus",
+  "args": [
+    {
+      "status": "fail"
+    },
+    {
+      "nextToken": "not-a-token"
+    }
+  ],
+  "calls": [],
+  "error": {
+    "name": "InvalidNextTokenError",
+    "message": "Invalid pagination nextToken"
+  }
+}

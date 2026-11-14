@@ -12,7 +12,13 @@ import type { NativeAttributeValue } from "@aws-sdk/util-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { DEFAULT_TTL_SECONDS, type AuditConfig } from "./config.js";
 import { DynamoDB } from "./constants.js";
-import { decodeNextPageToken, encodeNextPageToken } from "./repository.utils.js";
+import { InvalidNextTokenError } from "./errors.js";
+import {
+  decodeNextPageToken,
+  encodeNextPageToken,
+  type PageKey,
+  type PageKeySchema,
+} from "./repository.utils.js";
 import { type Audit, AuditPayloadSchema, AuditSchema } from "./schema/audit.js";
 import type { AnyStatus } from "./schema/log.js";
 import { type Pagination, PaginationCollectionSchema } from "./schema/model.js";
@@ -20,6 +26,59 @@ import type { UpsertAuditInput } from "./schema/service.js";
 import { type AuditStorage, AuditStorageSchema } from "./schema/storage.js";
 import type { AnyApp, AnyResourceType, InferApp, InferResourceType } from "./types.js";
 import { getTraceParts } from "./utils.js";
+
+const TABLE_KEY_SCHEMA = {
+  [DynamoDB.Keys.PARTITION_KEY]: "string",
+  [DynamoDB.Keys.SORT_KEY]: "string",
+} as const;
+
+/**
+ * Each listing index's LastEvaluatedKey: the table keys plus the index's own, with
+ * their attribute types. A nextToken must decode to exactly these.
+ */
+const PAGE_KEY_SCHEMAS = {
+  [DynamoDB.Indexes.LSI1_N]: {
+    ...TABLE_KEY_SCHEMA,
+    [DynamoDB.Keys.LSI1_N_SORT_KEY]: "number",
+  },
+  [DynamoDB.Indexes.GSI1_SS]: {
+    ...TABLE_KEY_SCHEMA,
+    [DynamoDB.Keys.GSI1_SS_PARTITION_KEY]: "string",
+    [DynamoDB.Keys.GSI1_SS_SORT_KEY]: "string",
+  },
+  [DynamoDB.Indexes.GSI1_SN]: {
+    ...TABLE_KEY_SCHEMA,
+    [DynamoDB.Keys.GSI1_SN_PARTITION_KEY]: "string",
+    [DynamoDB.Keys.GSI1_SN_SORT_KEY]: "number",
+  },
+  [DynamoDB.Indexes.GSI2_SS]: {
+    ...TABLE_KEY_SCHEMA,
+    [DynamoDB.Keys.GSI2_SS_PARTITION_KEY]: "string",
+    [DynamoDB.Keys.GSI2_SS_SORT_KEY]: "string",
+  },
+} as const satisfies Record<string, PageKeySchema>;
+
+/**
+ * Decodes a listing's nextToken into its ExclusiveStartKey.
+ *
+ * DynamoDB rejects a start key outside the queried partition, so a token issued for
+ * another status, trace, resource or tenant is refused here instead.
+ *
+ * @throws {InvalidNextTokenError} When the token isn't one this query could have returned
+ */
+function exclusiveStartKey(
+  nextToken: string | null | undefined,
+  index: keyof typeof PAGE_KEY_SCHEMAS,
+  partitionKey: string,
+  partition: string,
+): PageKey | undefined {
+  const key = decodeNextPageToken(nextToken, PAGE_KEY_SCHEMAS[index]);
+  if (key !== undefined && key[partitionKey] !== partition) {
+    throw new InvalidNextTokenError();
+  }
+
+  return key;
+}
 
 /**
  * DynamoDB TTL attribute structure.
@@ -909,12 +968,16 @@ export class AuditRepository<C extends AuditConfig> {
   }
 
   public async listObjects(params: TypedListObjectsOptions<C>, pagination?: Pagination) {
-    const startKey = decodeNextPageToken(pagination?.nextToken);
-
     const pageSize = Number(pagination?.pageSize || 100);
 
     const pkBase = `${params.app}.${params.resource.type}`;
     const pk = params.tenantId ? `${params.tenantId}#${pkBase}` : pkBase;
+    const startKey = exclusiveStartKey(
+      pagination?.nextToken,
+      DynamoDB.Indexes.LSI1_N,
+      DynamoDB.Keys.PARTITION_KEY,
+      pk,
+    );
 
     const { Items: items, LastEvaluatedKey: lastEvaluatedKey } = await this.client.send(
       new QueryCommand({
@@ -929,13 +992,7 @@ export class AuditRepository<C extends AuditConfig> {
         KeyConditionExpression: "#PK=:PK",
         TableName: DynamoDB.Table.Name(),
         Limit: pageSize,
-        ExclusiveStartKey: startKey
-          ? marshall(startKey, {
-              removeUndefinedValues: true,
-              convertEmptyValues: true,
-              convertClassInstanceToMap: true,
-            })
-          : undefined,
+        ExclusiveStartKey: startKey ? marshall(startKey) : undefined,
       }),
     );
 
@@ -976,12 +1033,16 @@ export class AuditRepository<C extends AuditConfig> {
    * ```
    */
   public async listItems(params: TypedListItemsOptions<C>, pagination?: Pagination) {
-    const startKey = decodeNextPageToken(pagination?.nextToken);
-
     const pageSize = Number(pagination?.pageSize || 100);
 
     const pkBase = `${params.app}.${params.resource.type}#${params.resource.id}`;
     const pk = params.tenantId ? `${params.tenantId}#${pkBase}` : pkBase;
+    const startKey = exclusiveStartKey(
+      pagination?.nextToken,
+      DynamoDB.Indexes.GSI1_SS,
+      DynamoDB.Keys.GSI1_SS_PARTITION_KEY,
+      pk,
+    );
 
     const { Items: items, LastEvaluatedKey: lastEvaluatedKey } = await this.client.send(
       new QueryCommand({
@@ -996,13 +1057,7 @@ export class AuditRepository<C extends AuditConfig> {
         KeyConditionExpression: "#PK=:PK",
         TableName: DynamoDB.Table.Name(),
         Limit: pageSize,
-        ExclusiveStartKey: startKey
-          ? marshall(startKey, {
-              removeUndefinedValues: true,
-              convertEmptyValues: true,
-              convertClassInstanceToMap: true,
-            })
-          : undefined,
+        ExclusiveStartKey: startKey ? marshall(startKey) : undefined,
       }),
     );
 
@@ -1048,12 +1103,16 @@ export class AuditRepository<C extends AuditConfig> {
    * ```
    */
   public async listTraceItems(params: TypedListTraceItems<C>, pagination?: Pagination) {
-    const startKey = decodeNextPageToken(pagination?.nextToken);
-
     const pageSize = Number(pagination?.pageSize || 100);
 
     const pkBase = params.trace;
     const pk = params.tenantId ? `${params.tenantId}#${pkBase}` : pkBase;
+    const startKey = exclusiveStartKey(
+      pagination?.nextToken,
+      DynamoDB.Indexes.GSI1_SN,
+      DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
+      pk,
+    );
 
     const filter = buildTargetFilter(params);
 
@@ -1112,12 +1171,16 @@ export class AuditRepository<C extends AuditConfig> {
    * @returns Paginated collection of audit records in reverse date order
    */
   public async listByStatus(params: TypedListByStatusOptions<C>, pagination?: Pagination) {
-    const startKey = decodeNextPageToken(pagination?.nextToken);
-
     const pageSize = Number(pagination?.pageSize || 100);
 
     const pkBase = params.status;
     const pk = params.tenantId ? `${params.tenantId}#${pkBase}` : pkBase;
+    const startKey = exclusiveStartKey(
+      pagination?.nextToken,
+      DynamoDB.Indexes.GSI2_SS,
+      DynamoDB.Keys.GSI2_SS_PARTITION_KEY,
+      pk,
+    );
 
     const filter = buildTargetFilter(params);
 
@@ -1133,7 +1196,7 @@ export class AuditRepository<C extends AuditConfig> {
           "#PK": DynamoDB.Keys.GSI2_SS_PARTITION_KEY,
           ...filter.ExpressionAttributeNames,
         },
-        KeyConditionExpression: "#PK = :PK",
+        KeyConditionExpression: "#PK=:PK",
         TableName: DynamoDB.Table.Name(),
         Limit: pageSize,
         ExclusiveStartKey: startKey ? marshall(startKey) : undefined,

@@ -28,7 +28,7 @@
         "ExpressionAttributeNames": {
           "#PK": "GSI2_SS_PK"
         },
-        "KeyConditionExpression": "#PK = :PK",
+        "KeyConditionExpression": "#PK=:PK",
         "TableName": "TEST-Contract-Audit",
         "Limit": 10,
         "FilterExpression": "not contains(SK, :isParent)"
