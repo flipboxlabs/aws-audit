@@ -25,7 +25,8 @@ import { type Pagination, PaginationCollectionSchema } from "./schema/model.js";
 import type { UpsertAuditInput } from "./schema/service.js";
 import { type AuditStorage, AuditStorageSchema } from "./schema/storage.js";
 import type { AnyApp, AnyResourceType, InferApp, InferResourceType } from "./types.js";
-import { getTraceParts } from "./utils.js";
+import { backoffDelay } from "./retry.js";
+import { getTraceParts, hasResourceId } from "./utils.js";
 
 const TABLE_KEY_SCHEMA = {
   [DynamoDB.Keys.PARTITION_KEY]: "string",
@@ -605,7 +606,8 @@ export class AuditRepository<C extends AuditConfig> {
    * @param send - Sends a request and returns its unprocessed part with its size, or
    *   undefined when everything was processed
    * @param maxRetries - Maximum number of retry attempts (default: 8)
-   * @param baseDelayMs - Initial delay in milliseconds before first retry (default: 100)
+   * @param baseDelayMs - Delay ceiling in milliseconds before the first retry, doubling after
+   *   each; the delay is jittered (see {@link backoffDelay}) (default: 100)
    * @throws Error if unprocessed items remain after maxRetries attempts
    * @internal
    */
@@ -617,7 +619,6 @@ export class AuditRepository<C extends AuditConfig> {
     baseDelayMs = 100,
   ): Promise<void> {
     let attempt = 0;
-    let delayMs = baseDelayMs;
 
     for (;;) {
       const remaining = await send(request);
@@ -639,6 +640,7 @@ export class AuditRepository<C extends AuditConfig> {
         );
       }
 
+      const delayMs = backoffDelay(attempt, baseDelayMs);
       this.logger.warn(`${label.operation}: retrying unprocessed ${label.noun}`, {
         count: remaining.count,
         attempt,
@@ -646,7 +648,6 @@ export class AuditRepository<C extends AuditConfig> {
       });
 
       await new Promise((resolve) => setTimeout(resolve, delayMs));
-      delayMs = Math.min(delayMs * 2, 30_000); // cap at 30 seconds
       request = remaining.unprocessed;
     }
   }
@@ -1289,7 +1290,10 @@ export class AuditRepository<C extends AuditConfig> {
     resourceType,
     resourceId,
   }: Identifiers): DynamoDBGSI1Keys {
-    const pkBase = [`${app}.${resourceType}`, resourceId].filter(Boolean).join("#");
+    // A numeric id of 0 is an id; only a missing or empty one is left out
+    const pkBase = hasResourceId(resourceId)
+      ? `${app}.${resourceType}#${resourceId}`
+      : `${app}.${resourceType}`;
     return {
       [DynamoDB.Keys.GSI1_SS_PARTITION_KEY]: (tenantId
         ? `${tenantId}#${pkBase}`

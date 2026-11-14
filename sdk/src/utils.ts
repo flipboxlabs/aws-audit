@@ -27,6 +27,16 @@ export function generateAuditId(): string {
 }
 
 /**
+ * Whether a resource has an id: anything but `undefined`, `null` or `""`. A numeric
+ * id of `0` counts, which a truthiness check would drop.
+ *
+ * @internal
+ */
+export function hasResourceId(id: string | number | null | undefined): id is string | number {
+  return id !== undefined && id !== null && id !== "";
+}
+
+/**
  * Increments the stage number in a trace ID.
  *
  * Trace IDs follow the format "id:stage" where stage is an integer.
@@ -38,11 +48,12 @@ export function generateAuditId(): string {
  * @internal
  */
 function incrementTraceStage(traceId: string): string {
-  const [id, stage] = traceId.split(":");
+  const match = /^(.*):(\d+)$/s.exec(traceId);
 
-  const nextStage = Number(stage == null ? 1 : stage) + 1;
-
-  return [id, nextStage].join(":");
+  return match
+    ? `${match[1]}:${Number(match[2]) + 1}`
+    : // No stage: it counts as 1
+      `${traceId}:2`;
 }
 
 /**
@@ -243,8 +254,13 @@ export function normalizeSQSEventBody(record: SQSRecord): EventBridgeEvent | und
  * Parses a trace ID into its component parts.
  *
  * Trace IDs follow the format "id:stage" where:
- * - id: The unique trace identifier
- * - stage: The processing stage number (defaults to 0 if not present)
+ * - id: The unique trace identifier, which may itself contain colons
+ * - stage: The processing stage number, a non-negative integer after the last colon
+ *   (0 when there is none)
+ *
+ * A suffix that isn't a stage number is part of the id: "batch:a" is the id
+ * "batch:a" at stage 0. DynamoDB rejects a NaN stage, which splitting on the first
+ * colon used to produce.
  *
  * @param traceId - The trace ID string to parse
  * @returns An object with `id` and `stage` properties
@@ -259,12 +275,9 @@ export function normalizeSQSEventBody(record: SQSRecord): EventBridgeEvent | und
  * ```
  */
 export function getTraceParts(traceId: string): { id: string; stage: number } {
-  const [id, stage] = traceId.split(":");
+  const match = /^(.*):(\d+)$/s.exec(traceId);
 
-  return {
-    id,
-    stage: Number(stage == null ? 0 : stage),
-  };
+  return match ? { id: match[1], stage: Number(match[2]) } : { id: traceId, stage: 0 };
 }
 
 /**
