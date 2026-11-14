@@ -62,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: rust
+        working-directory: cdk/rust
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -74,7 +74,7 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: cdk/rust
 
       - name: Check formatting
         run: cargo fmt --all --check
@@ -85,6 +85,20 @@ jobs:
       # Includes the checks against contract/, which the TypeScript tests generate
       - name: Test
         run: cargo test --workspace --locked
+
+      # The same build the release publishes: cargo-lambda cross-compiles through Zig
+      - name: Install cargo-lambda
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-lambda@1.9.2
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build the Lambdas (arm64)
+        run: bash ../scripts/build-lambdas.sh
 
   build:
     name: Build
