@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.6.2...sdk-v1.7.0) (2026-11-14)
+
+
+### Features
+
+* **rust:** DynamoDB repository, EventBridge publisher and audit service (phase 2b) ([d0b419c](https://github.com/flipboxlabs/aws-audit/commit/d0b419c80916421c8934c4eb1d3feba7458ce621))
+
 ## [1.6.2](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.6.1...sdk-v1.6.2) (2026-11-14)
 
 
