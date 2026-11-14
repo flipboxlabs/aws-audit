@@ -25,7 +25,7 @@
 use std::time::Duration;
 
 /// A source of random numbers in `[0, 1)` for jittering delays.
-pub trait Jitter: Send + Sync {
+pub trait Jitter: Send + Sync + std::fmt::Debug {
     /// A number in `[0, 1)`.
     fn sample(&self) -> f64;
 }

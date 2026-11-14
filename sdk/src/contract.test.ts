@@ -335,6 +335,24 @@ const CASES: Case[] = [
     replies: [attempts(1), { output: {} }, accepted()],
   },
   {
+    name: "upsert/edge-ids",
+    description:
+      "A numeric id of 0 is an id (in GSI1_SS_PK and for a related copy); a trace id may contain colons",
+    operation: "upsertItem",
+    args: [
+      upsertInput({
+        target: { app: "App1", type: "Order", id: 0 },
+        trace: "batch:2026:3",
+        resources: [
+          { app: "TestApp", type: "User", id: 0 },
+          { app: "TestApp", type: "User", id: "" },
+          { app: "TestApp", type: "User" },
+        ],
+      }),
+    ],
+    replies: [attempts(1), { output: {} }, accepted()],
+  },
+  {
     name: "upsert/event-throttled",
     description: "A throttled Upserted event is resent, then accepted",
     operation: "upsertItem",

@@ -6,6 +6,7 @@ import {
   type PutEventsRequestEntry,
   type PutEventsResultEntry,
 } from "@aws-sdk/client-eventbridge";
+import { backoffDelay } from "../retry.js";
 
 /**
  * Default batch size for EventBridge PutEvents API calls.
@@ -24,11 +25,6 @@ const RETRY_ATTEMPTS = 3;
  * {@link BatchHandler.putEventsWithRetry}. It doubles on each later retry.
  */
 const RETRY_BASE_DELAY = 100;
-
-/**
- * Longest delay in milliseconds before a retry in {@link BatchHandler.putEventsWithRetry}.
- */
-const RETRY_MAX_DELAY = 30_000;
 
 /**
  * Result entry error codes worth resending the entry for.
@@ -354,9 +350,7 @@ export class BatchHandler {
         break;
       }
 
-      // Jittered exponential backoff: between half and all of baseDelay * 2^(attempt - 1), capped
-      const ceiling = Math.min(baseDelay * 2 ** (attempt - 1), RETRY_MAX_DELAY);
-      const delayMs = Math.round(ceiling / 2 + (Math.random() * ceiling) / 2);
+      const delayMs = backoffDelay(attempt, baseDelay);
 
       this.logger.warn("Retrying event bridge events", {
         count: retry.length,

@@ -194,6 +194,18 @@ describe("utils", () => {
       expect(result.trace).toBe("trace-no-stage:2");
     });
 
+    it("should increment the stage after the last colon when the trace id has colons", () => {
+      const sqsRecord = createMockSQSRecord({
+        detail: {
+          transaction: { trace: "batch:2026:3" },
+        },
+      });
+
+      const result = buildAuditFromSQSRecord(sqsRecord, createAuditItem());
+
+      expect(result.trace).toBe("batch:2026:4");
+    });
+
     it("should apply overrides correctly", () => {
       const sqsRecord = createMockSQSRecord({ detail: {} });
       const audit = createAuditItem({ message: "Base" });
@@ -433,13 +445,16 @@ describe("utils", () => {
       expect(result).toEqual({ id: "trace", stage: 999 });
     });
 
-    it("should handle trace ID with colons in id part", () => {
-      const result = getTraceParts("id:with:colons:5");
-
-      // Only splits on first colon
-      expect(result.id).toBe("id");
-      expect(result.stage).toBe(NaN); // "with:colons:5" is not a number
+    it("should split on the last colon when the id has colons", () => {
+      expect(getTraceParts("id:with:colons:5")).toEqual({ id: "id:with:colons", stage: 5 });
     });
+
+    it.each(["batch:a", "batch:", "batch:-1", "batch:1.5", "batch:5x"])(
+      "should keep a suffix that isn't a stage number in the id (%s)",
+      (trace) => {
+        expect(getTraceParts(trace)).toEqual({ id: trace, stage: 0 });
+      },
+    );
   });
 
   describe("getRecordId", () => {

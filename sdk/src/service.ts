@@ -14,7 +14,7 @@ import {
 import type { Audit } from "./schema/audit.js";
 import type { Pagination } from "./schema/model.js";
 import { createTypedUpsertAuditSchema, type UpsertAuditInput } from "./schema/service.js";
-import { generateAuditId } from "./utils.js";
+import { generateAuditId, hasResourceId } from "./utils.js";
 
 export type {
   TypedIdentifiers,
@@ -177,7 +177,7 @@ export class AuditService<C extends AuditConfig> {
 
     // Build batch for related resource items (these don't need retry tracking)
     const batch: Array<UpsertAuditInput> = Array.from(item.resources || [])
-      .filter((resource) => !!resource.id)
+      .filter((resource) => hasResourceId(resource.id))
       .map((resource) => ({
         ...item,
 
