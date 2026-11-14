@@ -27,7 +27,7 @@
           "#target": "target",
           "#app": "app"
         },
-        "KeyConditionExpression": "#PK = :PK",
+        "KeyConditionExpression": "#PK=:PK",
         "TableName": "TEST-Contract-Audit",
         "Limit": 100,
         "FilterExpression": "#target.#app = :app"

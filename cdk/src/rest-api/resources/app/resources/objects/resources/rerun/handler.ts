@@ -19,12 +19,16 @@ import { API_RESOURCE as BASE_API_RESOURCE } from "../../../../constants.js";
 import { API_RESOURCE as ITEM_API_RESOURCE } from "../../constants.js";
 import { API_RESOURCE } from "./constants.js";
 import { PathSchema } from "./schema.js";
+import { registerErrorHandlers } from "../../../../../../http/errors.js";
+import { NoContentMiddleware } from "../../../../../../http/no-content.js";
 
 const logger = new Logger({
   logRecordOrder: ["level", "message"],
 });
 
 const app = new Router();
+
+app.use(NoContentMiddleware());
 
 app.errorHandler(AuditNotFoundError, () => {
   throw new NotFoundError("Audit not found");
@@ -89,6 +93,8 @@ app.errorHandler(PutEventsError, async (error) => {
 
   return new InternalServerError("Unable to rerun the event").toWebResponse();
 });
+
+registerErrorHandlers(app, logger);
 
 export const handler = async (event: unknown, context: Context): Promise<unknown> =>
   app.resolve(event, context);

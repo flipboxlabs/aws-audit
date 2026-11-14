@@ -281,8 +281,30 @@ const CASES: Case[] = [
     request: { method: "GET", path: "/status/fail", query: { "filter[app]": "Nope" } },
   },
   {
+    name: "status/invalid-page-size",
+    description: "A pageSize that isn't a positive integer is a 422",
+    route: "status",
+    request: { method: "GET", path: "/status/fail", query: { "pagination[pageSize]": "-1" } },
+  },
+  {
+    name: "status/page-size-too-large",
+    description: "A pageSize over the maximum is a 422",
+    route: "status",
+    request: { method: "GET", path: "/status/fail", query: { "pagination[pageSize]": "1001" } },
+  },
+  {
+    name: "status/invalid-token",
+    description: "A nextToken the listing didn't issue is a 422, without querying",
+    route: "status",
+    request: {
+      method: "GET",
+      path: "/status/fail",
+      query: { "pagination[nextToken]": "not-a-token" },
+    },
+  },
+  {
     name: "status/storage-error",
-    description: "A DynamoDB failure is a 500",
+    description: "A DynamoDB failure is a logged 500",
     route: "status",
     request: { method: "GET", path: "/status/fail" },
     replies: [{ error: { name: "ProvisionedThroughputExceededException", message: "Slow down" } }],

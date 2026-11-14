@@ -72,7 +72,7 @@ describe("trace handler schemas", () => {
 
     it("should validate combined pagination and filter", () => {
       const result = QuerySchema.safeParse({
-        "pagination[pageSize]": 10,
+        "pagination[pageSize]": "10",
         "filter[app]": App.App1,
       });
 

@@ -1,0 +1,20 @@
+{
+  "description": "A nextToken key with the wrong attribute type is refused",
+  "operation": "listObjects",
+  "args": [
+    {
+      "app": "App1",
+      "resource": {
+        "type": "Order"
+      }
+    },
+    {
+      "nextToken": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJMU0kxX05fU0siOiIyMTc2NzMyMzQ0NTY3OCJ9"
+    }
+  ],
+  "calls": [],
+  "error": {
+    "name": "InvalidNextTokenError",
+    "message": "Invalid pagination nextToken"
+  }
+}

@@ -3,7 +3,8 @@
   "type": "object",
   "properties": {
     "pagination[pageSize]": {
-      "type": "number"
+      "type": "string",
+      "pattern": "^(?:[1-9]\\d{0,2}|1000)$"
     },
     "pagination[nextToken]": {
       "type": "string"

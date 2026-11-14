@@ -1,0 +1,18 @@
+{
+  "description": "A nextToken issued for another status (or tenant) is refused",
+  "operation": "listByStatus",
+  "args": [
+    {
+      "tenantId": "tenant-1",
+      "status": "fail"
+    },
+    {
+      "nextToken": "eyJQSyI6InRlbmFudC0xI0FwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJHU0kyX1NTX1BLIjoidGVuYW50LTEjd2FybiIsIkdTSTJfU1NfU0siOiIyMDI2LTAxLTAyVDAzOjA0OjA1LjY3OFojYXVkaXQtMSJ9"
+    }
+  ],
+  "calls": [],
+  "error": {
+    "name": "InvalidNextTokenError",
+    "message": "Invalid pagination nextToken"
+  }
+}
