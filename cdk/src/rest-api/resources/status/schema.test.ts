@@ -104,7 +104,7 @@ describe("status handler schemas", () => {
 
     it("should validate combined pagination and filters", () => {
       const result = QuerySchema.safeParse({
-        "pagination[pageSize]": 10,
+        "pagination[pageSize]": "10",
         "filter[app]": App.App1,
         "filter[resourceType]": ResourceType.ORDER,
       });

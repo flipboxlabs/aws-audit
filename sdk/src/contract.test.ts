@@ -18,7 +18,7 @@ import { DynamoDB } from "./constants.js";
 import { BatchHandler } from "./events/batch-handler.js";
 import { AuditEventBus } from "./events/bus.js";
 import { AuditRepository } from "./repository.js";
-import { decodeNextPageToken, encodeNextPageToken } from "./repository.utils.js";
+import { decodeNextPageToken, encodeNextPageToken, type PageKey } from "./repository.utils.js";
 import { AuditService } from "./service.js";
 import { testConfig } from "./test-config.js";
 
@@ -335,6 +335,24 @@ const CASES: Case[] = [
     replies: [attempts(1), { output: {} }, accepted()],
   },
   {
+    name: "upsert/edge-ids",
+    description:
+      "A numeric id of 0 is an id (in GSI1_SS_PK and for a related copy); a trace id may contain colons",
+    operation: "upsertItem",
+    args: [
+      upsertInput({
+        target: { app: "App1", type: "Order", id: 0 },
+        trace: "batch:2026:3",
+        resources: [
+          { app: "TestApp", type: "User", id: 0 },
+          { app: "TestApp", type: "User", id: "" },
+          { app: "TestApp", type: "User" },
+        ],
+      }),
+    ],
+    replies: [attempts(1), { output: {} }, accepted()],
+  },
+  {
     name: "upsert/event-throttled",
     description: "A throttled Upserted event is resent, then accepted",
     operation: "upsertItem",
@@ -404,7 +422,7 @@ const CASES: Case[] = [
         nextToken: encodeNextPageToken({
           PK: "App1.Order",
           SK: "audit-1",
-          LSI1_N_SK: "21767323445678",
+          LSI1_N_SK: 21767323445678,
         }),
       },
     ],
@@ -506,6 +524,64 @@ const CASES: Case[] = [
       },
     ],
   },
+
+  // nextToken validation: refused before any query
+  {
+    name: "list-status/token-garbled",
+    description: "A nextToken that doesn't decode to a key object is refused",
+    operation: "listByStatus",
+    args: [{ status: "fail" }, { nextToken: "not-a-token" }],
+    replies: [],
+  },
+  {
+    name: "list-status/token-other-index",
+    description: "A nextToken holding another index's keys (here listObjects') is refused",
+    operation: "listByStatus",
+    args: [
+      { status: "fail" },
+      {
+        nextToken: encodeNextPageToken({
+          PK: "App1.Order",
+          SK: "audit-1",
+          LSI1_N_SK: 21767323445678,
+        }),
+      },
+    ],
+    replies: [],
+  },
+  {
+    name: "list-objects/token-wrong-type",
+    description: "A nextToken key with the wrong attribute type is refused",
+    operation: "listObjects",
+    args: [
+      { app: "App1", resource: { type: "Order" } },
+      {
+        nextToken: encodeNextPageToken({
+          PK: "App1.Order",
+          SK: "audit-1",
+          LSI1_N_SK: "21767323445678",
+        }),
+      },
+    ],
+    replies: [],
+  },
+  {
+    name: "list-status/token-other-partition",
+    description: "A nextToken issued for another status (or tenant) is refused",
+    operation: "listByStatus",
+    args: [
+      { tenantId: "tenant-1", status: "fail" },
+      {
+        nextToken: encodeNextPageToken({
+          PK: "tenant-1#App1.Order",
+          SK: "audit-1",
+          GSI2_SS_PK: "tenant-1#warn",
+          GSI2_SS_SK: `${NOW}#audit-1`,
+        }),
+      },
+    ],
+    replies: [],
+  },
 ];
 
 describe("contract fixtures", () => {
@@ -528,9 +604,16 @@ describe("contract fixtures", () => {
   });
 
   it("pagination tokens", async () => {
-    const keys = [
-      { PK: "App1.Order", SK: "audit-1" },
-      { PK: "tenant-1#App1.Order", SK: "audit-1", LSI1_N_SK: "21767323445678" },
+    // One LastEvaluatedKey per listing index
+    const keys: PageKey[] = [
+      { PK: "tenant-1#App1.Order", SK: "audit-1", LSI1_N_SK: 21767323445678 },
+      {
+        PK: "App1.Order",
+        SK: "audit-1",
+        GSI1_SS_PK: "App1.Order#order-1",
+        GSI1_SS_SK: "audit-1",
+      },
+      { PK: "App1.Order", SK: "audit-1", GSI1_SN_PK: "trace-1", GSI1_SN_SK: 2 },
       { PK: "App1.Order", SK: "audit-1", GSI2_SS_PK: "fail", GSI2_SS_SK: `${NOW}#audit-1` },
     ];
     const tokens = keys.map((key) => {

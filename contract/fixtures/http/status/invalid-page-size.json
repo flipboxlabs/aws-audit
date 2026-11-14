@@ -1,0 +1,32 @@
+{
+  "description": "A pageSize that isn't a positive integer is a 422",
+  "route": "GET /status/{status}",
+  "request": {
+    "method": "GET",
+    "path": "/status/fail",
+    "query": {
+      "pagination[pageSize]": "-1"
+    }
+  },
+  "calls": [],
+  "response": {
+    "statusCode": 422,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 422,
+      "error": "RequestValidationError",
+      "message": "Validation failed for request",
+      "details": {
+        "issues": [
+          {
+            "message": "Expected an integer from 1 to 1000",
+            "path": [
+              "query",
+              "pagination[pageSize]"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

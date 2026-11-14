@@ -1,0 +1,32 @@
+{
+  "description": "A nextToken the listing didn't issue is a 422, without querying",
+  "route": "GET /status/{status}",
+  "request": {
+    "method": "GET",
+    "path": "/status/fail",
+    "query": {
+      "pagination[nextToken]": "not-a-token"
+    }
+  },
+  "calls": [],
+  "response": {
+    "statusCode": 422,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 422,
+      "error": "RequestValidationError",
+      "message": "Validation failed for request",
+      "details": {
+        "issues": [
+          {
+            "message": "Invalid pagination token",
+            "path": [
+              "query",
+              "pagination[nextToken]"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

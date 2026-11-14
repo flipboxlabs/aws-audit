@@ -3,26 +3,45 @@
   "tokens": [
     {
       "key": {
-        "PK": "App1.Order",
-        "SK": "audit-1"
+        "PK": "tenant-1#App1.Order",
+        "SK": "audit-1",
+        "LSI1_N_SK": 21767323445678
       },
-      "token": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEifQ",
+      "token": "eyJQSyI6InRlbmFudC0xI0FwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJMU0kxX05fU0siOjIxNzY3MzIzNDQ1Njc4fQ",
       "decoded": {
-        "PK": "App1.Order",
-        "SK": "audit-1"
+        "PK": "tenant-1#App1.Order",
+        "SK": "audit-1",
+        "LSI1_N_SK": 21767323445678
       }
     },
     {
       "key": {
-        "PK": "tenant-1#App1.Order",
+        "PK": "App1.Order",
         "SK": "audit-1",
-        "LSI1_N_SK": "21767323445678"
+        "GSI1_SS_PK": "App1.Order#order-1",
+        "GSI1_SS_SK": "audit-1"
       },
-      "token": "eyJQSyI6InRlbmFudC0xI0FwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJMU0kxX05fU0siOiIyMTc2NzMyMzQ0NTY3OCJ9",
+      "token": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJHU0kxX1NTX1BLIjoiQXBwMS5PcmRlciNvcmRlci0xIiwiR1NJMV9TU19TSyI6ImF1ZGl0LTEifQ",
       "decoded": {
-        "PK": "tenant-1#App1.Order",
+        "PK": "App1.Order",
         "SK": "audit-1",
-        "LSI1_N_SK": "21767323445678"
+        "GSI1_SS_PK": "App1.Order#order-1",
+        "GSI1_SS_SK": "audit-1"
+      }
+    },
+    {
+      "key": {
+        "PK": "App1.Order",
+        "SK": "audit-1",
+        "GSI1_SN_PK": "trace-1",
+        "GSI1_SN_SK": 2
+      },
+      "token": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJHU0kxX1NOX1BLIjoidHJhY2UtMSIsIkdTSTFfU05fU0siOjJ9",
+      "decoded": {
+        "PK": "App1.Order",
+        "SK": "audit-1",
+        "GSI1_SN_PK": "trace-1",
+        "GSI1_SN_SK": 2
       }
     },
     {

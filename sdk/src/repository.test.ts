@@ -10,6 +10,7 @@ import {
 import { marshall } from "@aws-sdk/util-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { DynamoDB } from "./constants.js";
+import { InvalidNextTokenError } from "./errors.js";
 import {
   AuditRepository,
   type TypedListByStatusOptions,
@@ -722,7 +723,12 @@ describe("AuditRepository", () => {
     });
 
     it("should decode next token for pagination", async () => {
-      const startKey = { PK: "App1.Unknown", SK: "audit-123" };
+      const startKey = {
+        PK: "App1.Unknown",
+        SK: "audit-123",
+        GSI1_SS_PK: "App1.Unknown#resource-123",
+        GSI1_SS_SK: "audit-123",
+      };
       const token = encodeNextPageToken(startKey);
 
       mockClient.send.mockResolvedValue({
@@ -741,7 +747,36 @@ describe("AuditRepository", () => {
       await repository.listItems(params, { nextToken: token });
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
-      expect(command.input.ExclusiveStartKey).toBeDefined();
+      expect(command.input.ExclusiveStartKey).toEqual(marshall(startKey));
+    });
+
+    it("should reject a nextToken holding another index's keys", async () => {
+      const token = encodeNextPageToken({ PK: "App1.Unknown", SK: "audit-123" });
+
+      await expect(
+        repository.listItems(
+          { app: App.App1, resource: { type: ResourceType.UNKNOWN, id: "resource-123" } },
+          { nextToken: token },
+        ),
+      ).rejects.toBeInstanceOf(InvalidNextTokenError);
+      expect(mockClient.send).not.toHaveBeenCalled();
+    });
+
+    it("should reject a nextToken issued for another resource", async () => {
+      const token = encodeNextPageToken({
+        PK: "App1.Unknown",
+        SK: "audit-123",
+        GSI1_SS_PK: "App1.Unknown#resource-456",
+        GSI1_SS_SK: "audit-123",
+      });
+
+      await expect(
+        repository.listItems(
+          { app: App.App1, resource: { type: ResourceType.UNKNOWN, id: "resource-123" } },
+          { nextToken: token },
+        ),
+      ).rejects.toBeInstanceOf(InvalidNextTokenError);
+      expect(mockClient.send).not.toHaveBeenCalled();
     });
 
     it("should return paginated collection with items", async () => {
@@ -1470,7 +1505,12 @@ describe("AuditRepository", () => {
     });
 
     it("should handle pagination with nextToken", async () => {
-      const startKey = { GSI1_SN_PK: "trace-123", GSI1_SN_SK: "1" };
+      const startKey = {
+        PK: "App1.Unknown",
+        SK: "audit-123",
+        GSI1_SN_PK: "trace-123",
+        GSI1_SN_SK: 1,
+      };
       const token = encodeNextPageToken(startKey);
 
       mockClient.send.mockResolvedValue({
@@ -1485,7 +1525,7 @@ describe("AuditRepository", () => {
       await repository.listTraceItems(params, { nextToken: token });
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
-      expect(command.input.ExclusiveStartKey).toBeDefined();
+      expect(command.input.ExclusiveStartKey).toEqual(marshall(startKey));
     });
 
     it("should return transformed trace items", async () => {
@@ -1654,7 +1694,7 @@ describe("AuditRepository", () => {
 
       const command = mockClient.send.mock.calls[0][0] as QueryCommand;
       expect(command.input.IndexName).toBe(DynamoDB.Indexes.GSI2_SS);
-      expect(command.input.KeyConditionExpression).toBe("#PK = :PK");
+      expect(command.input.KeyConditionExpression).toBe("#PK=:PK");
       expect(command.input.ScanIndexForward).toBe(false);
       expect(command.input.ExpressionAttributeValues?.[":PK"]?.S).toBe("fail");
       expect(command.input.FilterExpression).toContain("not contains(SK, :isParent)");

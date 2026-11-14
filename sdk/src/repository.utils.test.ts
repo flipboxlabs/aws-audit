@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { InvalidNextTokenError } from "./errors.js";
 import { decodeNextPageToken, encodeNextPageToken } from "./repository.utils.js";
 
 describe("repository.utils", () => {
@@ -174,6 +175,43 @@ describe("repository.utils", () => {
       const result = decodeNextPageToken(token);
 
       expect(result).toEqual(original);
+    });
+
+    it("should keep numeric key values as numbers", () => {
+      const original = { PK: "App1.USER", SK: "audit-123", LSI1_N_SK: 21767323445678 };
+
+      expect(decodeNextPageToken(encodeNextPageToken(original))).toEqual(original);
+    });
+
+    it.each([
+      ["not base64 JSON", "not-a-token"],
+      ["a JSON array", Buffer.from("[1]").toString("base64url")],
+      ["a JSON string", Buffer.from('"PK"').toString("base64url")],
+      ["JSON null", Buffer.from("null").toString("base64url")],
+      ["a nested value", encodeNextPageToken({ PK: { S: "x" } } as never)],
+      ["a boolean value", encodeNextPageToken({ PK: true } as never)],
+    ])("should throw InvalidNextTokenError for %s", (_, token) => {
+      expect(() => decodeNextPageToken(token)).toThrow(InvalidNextTokenError);
+    });
+
+    describe("with a key schema", () => {
+      const schema = { PK: "string", SK: "string", LSI1_N_SK: "number" } as const;
+
+      it("should accept a token with exactly the schema's keys and types", () => {
+        const original = { PK: "App1.USER", SK: "audit-123", LSI1_N_SK: 1 };
+
+        expect(decodeNextPageToken(encodeNextPageToken(original), schema)).toEqual(original);
+      });
+
+      it.each([
+        ["a missing key", { PK: "App1.USER", SK: "audit-123" }],
+        ["an extra key", { PK: "App1.USER", SK: "audit-123", LSI1_N_SK: 1, GSI2_SS_PK: "fail" }],
+        ["a mistyped key", { PK: "App1.USER", SK: "audit-123", LSI1_N_SK: "1" }],
+      ])("should throw InvalidNextTokenError for %s", (_, key) => {
+        expect(() => decodeNextPageToken(encodeNextPageToken(key), schema)).toThrow(
+          InvalidNextTokenError,
+        );
+      });
     });
   });
 });

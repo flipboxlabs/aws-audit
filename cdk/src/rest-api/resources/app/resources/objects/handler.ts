@@ -16,6 +16,7 @@ import {
   ResponseDetailSchema,
 } from "./schema.js";
 import { ResponseValidationMiddleware } from "../../../../http/response-validation.js";
+import { registerErrorHandlers } from "../../../../http/errors.js";
 
 const logger = new Logger({
   logRecordOrder: ["level", "message"],
@@ -153,6 +154,8 @@ app.get(
     },
   },
 );
+
+registerErrorHandlers(app, logger);
 
 export const handler = async (event: unknown, context: Context): Promise<unknown> =>
   app.resolve(event, context);

@@ -1,0 +1,17 @@
+{
+  "description": "A nextToken holding another index's keys (here listObjects') is refused",
+  "operation": "listByStatus",
+  "args": [
+    {
+      "status": "fail"
+    },
+    {
+      "nextToken": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJMU0kxX05fU0siOjIxNzY3MzIzNDQ1Njc4fQ"
+    }
+  ],
+  "calls": [],
+  "error": {
+    "name": "InvalidNextTokenError",
+    "message": "Invalid pagination nextToken"
+  }
+}

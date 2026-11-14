@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { AuditNotFoundError } from "./errors.js";
+import { AuditNotFoundError, InvalidNextTokenError } from "./errors.js";
 import { AuditEventBus, BatchHandler, PutEventsError } from "./events/index.js";
 import type { Audit } from "./schema/audit.js";
 import type { UpsertAuditInput } from "./schema/service.js";
@@ -814,6 +814,17 @@ describe("AuditService", () => {
         "An error occurred while trying to list items by status",
         { error },
       );
+    });
+
+    it("should rethrow an invalid nextToken without logging it", async () => {
+      const error = new InvalidNextTokenError();
+      mockStorage.listByStatus.mockRejectedValue(error);
+
+      await expect(
+        service.listByStatus({ status: "fail" }, { nextToken: "not-a-token" }),
+      ).rejects.toBe(error);
+
+      expect(mockLogger.error).not.toHaveBeenCalled();
     });
   });
 });
