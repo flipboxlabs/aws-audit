@@ -37,3 +37,6 @@ coverage/
 # Parallel checkouts (docs/worktrees.md); .claude/worktrees is Claude Code's own location
 /.worktrees/
 /.claude/worktrees/
+
+# Rust
+rust/target/

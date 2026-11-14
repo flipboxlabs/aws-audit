@@ -1,0 +1,24 @@
+[package]
+name = "aws-audit"
+version = "0.1.0"
+description = "Core of the aws-audit Lambdas: audit types, config, naming and pagination tokens"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64.workspace = true
+chrono.workspace = true
+lambda-kit.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+svix-ksuid.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile = "3"

@@ -117,6 +117,22 @@ describe("BaseSchema", () => {
     expect(result.error).toBe("plain string error");
   });
 
+  it.each(["404", "true", "null", '"quoted"', "[1,2]"])(
+    "should keep a string error holding JSON other than an object (%s) as-is",
+    (error) => {
+      const result = BaseSchema.parse({
+        id: "audit-123",
+        operation: "testOp",
+        status: "success",
+        tier: 2,
+        target: createValidTarget(),
+        error,
+      });
+
+      expect(result.error).toBe(error);
+    },
+  );
+
   it("should transform Error instance", () => {
     const error = new Error("Test error");
     const result = BaseSchema.parse({
