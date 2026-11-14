@@ -1296,14 +1296,10 @@ export class AuditRepository<C extends AuditConfig> {
     ttlSeconds: number = DEFAULT_TTL_SECONDS,
     date?: Date,
   ): TTLAttribute {
-    const ttl = date || new Date();
-
-    if (ttlSeconds) {
-      ttl.setSeconds(ttl.getSeconds() + ttlSeconds);
-    }
-
+    // Epoch arithmetic: Date#setSeconds works in local time, so 90 days across a
+    // daylight saving change landed an hour off outside UTC.
     return {
-      ttl: Math.floor(ttl.valueOf() / 1000),
+      ttl: Math.floor((date ?? new Date()).valueOf() / 1000) + ttlSeconds,
     };
   }
 
