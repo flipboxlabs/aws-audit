@@ -9,7 +9,7 @@ use aws_audit::{Audit, Page};
 use serde_json::Value;
 
 fn contract() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../contract")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../../contract")
 }
 
 fn fixture(path: &str) -> Value {

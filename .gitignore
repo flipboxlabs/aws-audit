@@ -39,4 +39,4 @@ coverage/
 /.claude/worktrees/
 
 # Rust
-rust/target/
+cdk/rust/target/
