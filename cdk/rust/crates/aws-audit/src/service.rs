@@ -6,6 +6,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use lambda_kit::clock::{Clock, SystemClock};
+use lambda_kit::logging::ErrorChain;
 use serde_json::Value;
 
 use crate::config::AuditConfig;
@@ -221,7 +222,7 @@ fn logged<T>(listing: &str, result: Result<T, StorageError>) -> Result<T, Servic
     if let Err(error) = &result
         && !matches!(error, StorageError::InvalidNextToken(_))
     {
-        tracing::error!(error = %error, "An error occurred while trying to {listing}");
+        tracing::error!(error = %ErrorChain(error), "An error occurred while trying to {listing}");
     }
     Ok(result?)
 }
@@ -245,7 +246,7 @@ fn log_unpublished(audit: &UpsertAudit, error: &PutEventsError) {
         target_type = %audit.target.resource_type,
         target_id = audit.target.id.as_ref().map(ResourceId::to_key),
         failed_entries = ?failed,
-        error = %error,
+        error = %ErrorChain(error),
         "Audit stored but Upserted event not published"
     );
 }
