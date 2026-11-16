@@ -1,9 +1,8 @@
-import * as url from "node:url";
 import type { CDKConfig } from "@flipboxlabs/aws-audit-cdk";
 import * as apigateway from "aws-cdk-lib/aws-apigateway";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
 import { Construct } from "constructs";
-import { ESMNodeFunctionFactory } from "../../../lambda/nodejs.function.js";
+import { RustFunctionFactory } from "../../../lambda/rust.function.js";
 import { CDK_VERSION } from "../../../version.js";
 import { API_RESOURCE } from "./constants.js";
 
@@ -27,14 +26,13 @@ export default class extends Construct {
       "-",
     );
 
-    // Lambda (reads the config layer only, so it needs no table or event bus grants)
-    const lambdaFn = ESMNodeFunctionFactory(props.config)(this, "NodeFunction", {
+    // Lambda (Rust: cdk/rust/lambdas/config). It reads the config layer only, so it
+    // needs no table or event bus grants. The id predates the Rust port and stays:
+    // a named function whose id changes can't be replaced in place
+    const lambdaFn = RustFunctionFactory(props.config)(this, "NodeFunction", {
+      binary: "config",
       functionName: ref,
-      entry: url.fileURLToPath(new URL("handler.js", import.meta.url).toString()),
       layers: props.lambda.layers,
-      currentVersionOptions: {
-        retryAttempts: 1,
-      },
     });
 
     // Logger / Metrics / Tracing

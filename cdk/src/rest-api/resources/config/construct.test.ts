@@ -3,26 +3,7 @@ import * as cdk from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import * as apigateway from "aws-cdk-lib/aws-apigateway";
 import * as lambda from "aws-cdk-lib/aws-lambda";
-import { describe, expect, it, vi } from "vitest";
-
-// Swap the bundled NodejsFunction for an inline one so synth doesn't run esbuild
-vi.mock("../../../lambda/nodejs.function.js", () => ({
-  ESMNodeFunctionFactory:
-    () =>
-    (
-      scope: cdk.Stack,
-      id: string,
-      props: { functionName?: string; layers?: lambda.ILayerVersion[] },
-    ) =>
-      new lambda.Function(scope, id, {
-        functionName: props.functionName,
-        layers: props.layers,
-        runtime: lambda.Runtime.NODEJS_24_X,
-        handler: "index.handler",
-        code: lambda.Code.fromInline("export const handler = async () => {};"),
-      }),
-}));
-
+import { describe, expect, it } from "vite-plus/test";
 import Config from "./construct.js";
 
 const LAYER_ARN = "arn:aws:lambda:us-east-1:123456789012:layer:AuditConfig:1";
@@ -57,6 +38,26 @@ describe("Config construct", () => {
     synth().hasResourceProperties("AWS::Lambda::Function", {
       FunctionName: "DEV-REST-API-Test-Config",
     });
+  });
+
+  it("should run the config Rust binary", () => {
+    synth().hasResourceProperties("AWS::Lambda::Function", {
+      Runtime: "provided.al2023",
+      Handler: "bootstrap",
+      Architectures: ["arm64"],
+      Environment: {
+        Variables: Match.objectLike({ POWERTOOLS_SERVICE_NAME: "Config" }),
+      },
+    });
+  });
+
+  it("should keep the function's logical id, so the named function updates in place", () => {
+    const functions = synth().findResources("AWS::Lambda::Function", {
+      Properties: { FunctionName: "DEV-REST-API-Test-Config" },
+    });
+
+    // The id the Node function had: Config/NodeFunction/Resource
+    expect(Object.keys(functions)).toEqual(["ConfigNodeFunction21A90E6B"]);
   });
 
   it("should attach the audit config layer to the Lambda", () => {

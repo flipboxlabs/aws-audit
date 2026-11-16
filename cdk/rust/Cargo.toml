@@ -38,6 +38,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "registry"] }
 
 aws-audit = { path = "crates/aws-audit" }
+aws-audit-http = { path = "crates/aws-audit-http" }
 lambda-kit = { path = "crates/lambda-kit" }
 
 [workspace.lints.rust]
