@@ -10,11 +10,12 @@ crates/lambda-kit   Building blocks any Rust Lambda can use, the way the TypeScr
 crates/aws-audit    The audit core: model, config, names, table layout, pagination
                     tokens, and the DynamoDB repository, EventBridge publisher and
                     service the Lambdas call
-lambdas/<name>      One binary per Lambda (none yet). The directory, package and
-                    binary share the name; RustFunctionFactory runs it by that name
+lambdas/<name>      One binary per Lambda. The directory, package and binary share
+                    the name; RustFunctionFactory runs it by that name
+lambdas/subscription  The CloudWatch Logs subscription (CloudWatchConstruct)
 ```
 
-Add `"lambdas/*"` to the workspace `members` with the first Lambda: Cargo refuses a member glob that matches nothing.
+Each Lambda keeps its handler in `src/lib.rs`, so tests call it directly, and its runtime setup in `src/main.rs`. Tests replay the fixtures through `aws_audit::testing` (the `testing` feature) and check log lines with `lambda_kit::testing::LogCapture`.
 
 ## Working on it
 

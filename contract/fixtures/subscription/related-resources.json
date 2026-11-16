@@ -1,0 +1,313 @@
+{
+  "description": "A failed, rerunable audit with a related resource, which gets a copy",
+  "logs": {
+    "messageType": "DATA_MESSAGE",
+    "owner": "123456789012",
+    "logGroup": "/aws/lambda/orders",
+    "logStream": "2026/01/02/[$LATEST]0123456789abcdef0123456789abcdef",
+    "subscriptionFilters": [
+      "TESTAccountLevelSubscriptionPolicy"
+    ],
+    "logEvents": [
+      {
+        "id": "392941626321986702123891459817492673461837342760996000",
+        "timestamp": 1767323045678,
+        "message": "{\"_audit\":{\"id\":\"audit-1\",\"operation\":\"createOrder\",\"tier\":2,\"status\":\"fail\",\"target\":{\"app\":\"App1\",\"type\":\"Order\",\"id\":\"order-1\"},\"context\":{\"attempt\":2},\"resources\":[{\"app\":\"App1\",\"type\":\"User\",\"id\":\"user-1\"}],\"trace\":\"1-5759e988-bd862e3fe1be46a994272793\",\"event\":{\"source\":\"orders\",\"detail-type\":\"OrderCreated\",\"detail\":\"{\\\"orderId\\\":\\\"order-1\\\"}\"},\"error\":\"Payment declined\"}}"
+      }
+    ]
+  },
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "UpdateItem",
+      "input": {
+        "TableName": "TEST-Contract-Audit",
+        "Key": {
+          "PK": {
+            "S": "App1.Order"
+          },
+          "SK": {
+            "S": "audit-1"
+          }
+        },
+        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #context = :context, #operation = :operation, #trace = :trace, #event = :event, #error = :error, #updatedAt = :updatedAt, #LSI1_N_SK = :LSI1_N_SK, #GSI1_SS_PK = :GSI1_SS_PK, #GSI1_SS_SK = :GSI1_SS_SK, #GSI1_SN_PK = :GSI1_SN_PK, #GSI1_SN_SK = :GSI1_SN_SK, #GSI2_SS_PK = :GSI2_SS_PK, #GSI2_SS_SK = :GSI2_SS_SK, #ttl = :ttl",
+        "ExpressionAttributeNames": {
+          "#attempts": "attempts",
+          "#createdAt": "createdAt",
+          "#id": "id",
+          "#status": "status",
+          "#tier": "tier",
+          "#target": "target",
+          "#context": "context",
+          "#operation": "operation",
+          "#trace": "trace",
+          "#event": "event",
+          "#error": "error",
+          "#updatedAt": "updatedAt",
+          "#LSI1_N_SK": "LSI1_N_SK",
+          "#GSI1_SS_PK": "GSI1_SS_PK",
+          "#GSI1_SS_SK": "GSI1_SS_SK",
+          "#GSI1_SN_PK": "GSI1_SN_PK",
+          "#GSI1_SN_SK": "GSI1_SN_SK",
+          "#GSI2_SS_PK": "GSI2_SS_PK",
+          "#GSI2_SS_SK": "GSI2_SS_SK",
+          "#ttl": "ttl"
+        },
+        "ExpressionAttributeValues": {
+          ":emptyList": {
+            "L": []
+          },
+          ":newAttempt": {
+            "L": [
+              {
+                "M": {
+                  "number": {
+                    "N": "1"
+                  },
+                  "status": {
+                    "S": "fail"
+                  },
+                  "error": {
+                    "S": "Payment declined"
+                  },
+                  "at": {
+                    "S": "2026-01-02T03:04:05.678Z"
+                  }
+                }
+              }
+            ]
+          },
+          ":id": {
+            "S": "audit-1"
+          },
+          ":status": {
+            "S": "fail"
+          },
+          ":tier": {
+            "N": "2"
+          },
+          ":target": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "id": {
+                "S": "order-1"
+              },
+              "type": {
+                "S": "Order"
+              }
+            }
+          },
+          ":context": {
+            "M": {
+              "attempt": {
+                "N": "2"
+              }
+            }
+          },
+          ":operation": {
+            "S": "createOrder"
+          },
+          ":trace": {
+            "S": "1-5759e988-bd862e3fe1be46a994272793"
+          },
+          ":event": {
+            "M": {
+              "source": {
+                "S": "orders"
+              },
+              "detail-type": {
+                "S": "OrderCreated"
+              },
+              "detail": {
+                "S": "{\"orderId\":\"order-1\"}"
+              }
+            }
+          },
+          ":error": {
+            "S": "Payment declined"
+          },
+          ":updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          ":createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          ":LSI1_N_SK": {
+            "N": "21767323045678"
+          },
+          ":GSI1_SS_PK": {
+            "S": "App1.Order#order-1"
+          },
+          ":GSI1_SS_SK": {
+            "S": "audit-1"
+          },
+          ":GSI1_SN_PK": {
+            "S": "1-5759e988-bd862e3fe1be46a994272793"
+          },
+          ":GSI1_SN_SK": {
+            "N": "0"
+          },
+          ":GSI2_SS_PK": {
+            "S": "fail"
+          },
+          ":GSI2_SS_SK": {
+            "S": "2026-01-02T03:04:05.678Z#audit-1"
+          },
+          ":ttl": {
+            "N": "1775099045"
+          }
+        },
+        "ReturnValues": "ALL_NEW"
+      },
+      "output": {
+        "Attributes": {
+          "attempts": {
+            "L": [
+              {
+                "M": {
+                  "number": {
+                    "N": "1"
+                  },
+                  "status": {
+                    "S": "success"
+                  },
+                  "at": {
+                    "S": "2026-01-02T03:04:05.678Z"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "service": "DynamoDB",
+      "command": "BatchWriteItem",
+      "input": {
+        "RequestItems": {
+          "TEST-Contract-Audit": [
+            {
+              "PutRequest": {
+                "Item": {
+                  "PK": {
+                    "S": "App1.User"
+                  },
+                  "SK": {
+                    "S": "audit-1#App1.User#user-1"
+                  },
+                  "LSI1_N_SK": {
+                    "N": "21767323045678"
+                  },
+                  "GSI1_SS_PK": {
+                    "S": "App1.User#user-1"
+                  },
+                  "GSI1_SS_SK": {
+                    "S": "audit-1#App1.User#user-1"
+                  },
+                  "GSI1_SN_PK": {
+                    "S": "1-5759e988-bd862e3fe1be46a994272793"
+                  },
+                  "GSI1_SN_SK": {
+                    "N": "0"
+                  },
+                  "GSI2_SS_PK": {
+                    "S": "fail"
+                  },
+                  "GSI2_SS_SK": {
+                    "S": "2026-01-02T03:04:05.678Z#audit-1#App1.User#user-1"
+                  },
+                  "ttl": {
+                    "N": "1775099045"
+                  },
+                  "id": {
+                    "S": "audit-1#App1.User#user-1"
+                  },
+                  "status": {
+                    "S": "fail"
+                  },
+                  "tier": {
+                    "N": "2"
+                  },
+                  "target": {
+                    "M": {
+                      "app": {
+                        "S": "App1"
+                      },
+                      "id": {
+                        "S": "user-1"
+                      },
+                      "type": {
+                        "S": "User"
+                      }
+                    }
+                  },
+                  "source": {
+                    "M": {
+                      "app": {
+                        "S": "App1"
+                      },
+                      "id": {
+                        "S": "order-1"
+                      },
+                      "type": {
+                        "S": "Order"
+                      }
+                    }
+                  },
+                  "context": {
+                    "M": {
+                      "attempt": {
+                        "N": "2"
+                      }
+                    }
+                  },
+                  "operation": {
+                    "S": "createOrder"
+                  },
+                  "rerunable": {
+                    "BOOL": true
+                  },
+                  "trace": {
+                    "S": "1-5759e988-bd862e3fe1be46a994272793"
+                  },
+                  "updatedAt": {
+                    "S": "2026-01-02T03:04:05.678Z"
+                  },
+                  "createdAt": {
+                    "S": "2026-01-02T03:04:05.678Z"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "output": {}
+    },
+    {
+      "service": "EventBridge",
+      "command": "PutEvents",
+      "input": {
+        "Entries": [
+          {
+            "EventBusName": "TEST-Contract-Audit",
+            "Detail": "{\"audit\":{\"id\":\"audit-1\",\"operation\":\"createOrder\",\"tier\":2,\"status\":\"fail\",\"target\":{\"app\":\"App1\",\"type\":\"Order\",\"id\":\"order-1\"},\"context\":{\"attempt\":2},\"resources\":[{\"app\":\"App1\",\"type\":\"User\",\"id\":\"user-1\"}],\"trace\":\"1-5759e988-bd862e3fe1be46a994272793\",\"event\":{\"source\":\"orders\",\"detail-type\":\"OrderCreated\",\"detail\":\"{\\\"orderId\\\":\\\"order-1\\\"}\"},\"error\":\"Payment declined\"}}",
+            "DetailType": "Upserted",
+            "Source": "Audit"
+          }
+        ]
+      },
+      "output": {
+        "FailedEntryCount": 0,
+        "Entries": [
+          {
+            "EventId": "event-1"
+          }
+        ]
+      }
+    }
+  ]
+}

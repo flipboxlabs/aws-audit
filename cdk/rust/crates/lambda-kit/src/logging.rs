@@ -12,17 +12,24 @@
 //! ```
 //!
 //! The level comes from `AWS_LAMBDA_LOG_LEVEL` (Lambda's log level control), then
-//! `POWERTOOLS_LOG_LEVEL`, then `LOG_LEVEL`, defaulting to `info`. The service comes
-//! from `POWERTOOLS_SERVICE_NAME`, as with Powertools.
+//! `POWERTOOLS_LOG_LEVEL`, then `LOG_LEVEL`, defaulting to `info`. It applies to
+//! events only: spans at `info` and above are always kept, so a `warn` line still
+//! carries the invocation's `requestId`. The service comes from
+//! `POWERTOOLS_SERVICE_NAME`, as with Powertools.
+//!
+//! Log errors with [`ErrorChain`], so the cause behind a wrapper ("unhandled
+//! error", "dispatch failure") is in the line too.
 
+use std::error::Error;
 use std::fmt;
 
 use serde_json::{Map, Value};
 use tracing::field::{Field, Visit};
-use tracing::{Event, Subscriber};
+use tracing::{Event, Level, Metadata, Subscriber};
+use tracing_subscriber::filter::{FilterExt, filter_fn};
 use tracing_subscriber::fmt::format::{JsonFields, Writer};
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields, FormattedFields, MakeWriter};
-use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::layer::{Filter, SubscriberExt};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer, Registry};
@@ -38,9 +45,20 @@ pub fn init() {
     let service = std::env::var("POWERTOOLS_SERVICE_NAME").ok();
 
     let _ = Registry::default()
-        .with(level_filter())
-        .with(layer(service, std::io::stdout))
+        .with(layer(service, std::io::stdout).with_filter(filter(level_filter())))
         .try_init();
+}
+
+/// Lets through the events `level` allows, and every span at `info` and above,
+/// so the fields of the spans an event is in (such as the runtime's `requestId`)
+/// are recorded whatever the level.
+pub fn filter<S>(level: EnvFilter) -> impl Filter<S>
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    level.or(filter_fn(|metadata: &Metadata<'_>| {
+        metadata.is_span() && *metadata.level() <= Level::INFO
+    }))
 }
 
 /// The level filter `init` uses, from the environment.
@@ -70,6 +88,33 @@ where
         .fmt_fields(JsonFields::new())
         .event_format(JsonFormat { service })
         .with_writer(writer)
+}
+
+/// Displays an error with its causes, `outer: cause: root cause`, skipping a cause
+/// whose text the line already holds.
+///
+/// ```
+/// use lambda_kit::logging::ErrorChain;
+///
+/// let error = std::io::Error::other("disk full");
+/// tracing::error!(error = %ErrorChain(&error), "Unable to store the audit");
+/// ```
+pub struct ErrorChain<'a>(pub &'a (dyn Error + 'static));
+
+impl fmt::Display for ErrorChain<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut text = self.0.to_string();
+        let mut source = self.0.source();
+        while let Some(cause) = source {
+            let message = cause.to_string();
+            if !text.contains(&message) {
+                text.push_str(": ");
+                text.push_str(&message);
+            }
+            source = cause.source();
+        }
+        f.write_str(&text)
+    }
 }
 
 /// Formats each event as a JSON line, level and message first.
@@ -171,47 +216,14 @@ impl Visit for FieldVisitor {
 #[cfg(test)]
 mod tests {
     use std::io;
-    use std::sync::{Arc, Mutex};
 
     use super::*;
-
-    #[derive(Clone, Default)]
-    struct Buffer(Arc<Mutex<Vec<u8>>>);
-
-    impl io::Write for Buffer {
-        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'w> MakeWriter<'w> for Buffer {
-        type Writer = Buffer;
-
-        fn make_writer(&'w self) -> Self::Writer {
-            self.clone()
-        }
-    }
+    use crate::testing::LogCapture;
 
     fn capture(service: Option<&str>, emit: impl FnOnce()) -> Vec<Map<String, Value>> {
-        let buffer = Buffer::default();
-        let subscriber =
-            Registry::default().with(layer(service.map(str::to_owned), buffer.clone()));
-
-        tracing::subscriber::with_default(subscriber, emit);
-
-        let output = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
-        output
-            .lines()
-            .map(|line| match serde_json::from_str(line).unwrap() {
-                Value::Object(map) => map,
-                other => panic!("not an object: {other}"),
-            })
-            .collect()
+        let logs = LogCapture::with_service(service);
+        emit();
+        logs.lines()
     }
 
     #[test]
@@ -258,6 +270,60 @@ mod tests {
         assert_eq!(lines[0]["level"], "WARN");
         assert_eq!(lines[0]["requestId"], "request-1");
         assert_eq!(lines[0]["error"], "Throttled");
+    }
+
+    #[test]
+    fn keeps_span_fields_on_lines_above_the_level() {
+        let buffer = crate::testing::Buffer::default();
+        let subscriber = Registry::default()
+            .with(layer(None, buffer.clone()).with_filter(filter(EnvFilter::new("warn"))));
+
+        tracing::subscriber::with_default(subscriber, || {
+            let invoke = tracing::info_span!("invoke", requestId = "request-1");
+            let _invoke = invoke.enter();
+            let detail = tracing::debug_span!("detail", noisy = true);
+            let _detail = detail.enter();
+
+            tracing::info!("Hidden");
+            tracing::warn!("Shown");
+        });
+
+        let lines = buffer.lines();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["message"], "Shown");
+        assert_eq!(lines[0]["requestId"], "request-1");
+        assert!(!lines[0].contains_key("noisy"));
+    }
+
+    #[derive(Debug)]
+    struct Wrapper(io::Error);
+
+    impl fmt::Display for Wrapper {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("unhandled error")
+        }
+    }
+
+    impl Error for Wrapper {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    #[test]
+    fn displays_errors_with_their_causes() {
+        let error = Wrapper(io::Error::other("Connection refused"));
+        assert_eq!(
+            ErrorChain(&error).to_string(),
+            "unhandled error: Connection refused"
+        );
+
+        // A cause the outer text already holds isn't repeated
+        let error = io::Error::other(Wrapper(io::Error::other("Connection refused")));
+        assert_eq!(
+            ErrorChain(&error).to_string(),
+            "unhandled error: Connection refused"
+        );
     }
 
     #[test]

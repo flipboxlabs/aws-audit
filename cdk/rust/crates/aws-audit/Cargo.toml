@@ -9,10 +9,14 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-aws-sdk-dynamodb = "1.139.0"
-aws-sdk-eventbridge = "1.129.0"
+aws-sdk-dynamodb.workspace = true
+aws-sdk-eventbridge.workspace = true
+aws-smithy-http-client = { version = "1.1.9", features = ["test-util"], optional = true }
+aws-smithy-runtime-api = { version = "1.12.3", features = ["client"], optional = true }
+aws-smithy-types = { version = "1.4.3", optional = true }
 base64.workspace = true
 chrono.workspace = true
+http = { version = "1.5.0", optional = true }
 lambda-kit.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -21,14 +25,19 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
 tracing.workspace = true
 
+[features]
+# Replaying contract/ fixtures through the SDK clients, for tests (`aws_audit::testing`)
+testing = [
+  "dep:aws-smithy-http-client",
+  "dep:aws-smithy-runtime-api",
+  "dep:aws-smithy-types",
+  "dep:http",
+]
+
 [lints]
 workspace = true
 
 [dev-dependencies]
-aws-credential-types = "1.2.11"
-aws-smithy-http-client = { version = "1.1.9", features = ["test-util"] }
-aws-smithy-runtime-api = { version = "1.12.3", features = ["client"] }
-aws-smithy-types = "1.4.3"
-http = "1.5.0"
+aws-audit = { path = ".", features = ["testing"] }
 tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }

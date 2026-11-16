@@ -1,4 +1,3 @@
-import * as url from "node:url";
 import type { CDKConfig } from "@flipboxlabs/aws-audit-cdk";
 import { AUDIT_LOG_IDENTIFIER } from "@flipboxlabs/aws-audit-sdk";
 import type * as dynamodb from "aws-cdk-lib/aws-dynamodb";
@@ -7,7 +6,7 @@ import { ServicePrincipal } from "aws-cdk-lib/aws-iam";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
-import { ESMNodeFunctionFactory } from "../lambda/nodejs.function.js";
+import { RustFunctionFactory } from "../lambda/rust.function.js";
 
 type Props = {
   config: CDKConfig;
@@ -33,14 +32,14 @@ export class CloudWatchConstruct extends Construct {
 
     const ref = `${[props.config.env.toUpperCase(), "Account", "CloudWatch", "Subscription"].join("-")}`;
 
-    // Lambda Function
-    const lambdaFn = ESMNodeFunctionFactory(props.config)(this, "subscription", {
+    // Lambda Function (Rust: cdk/rust/lambdas/subscription)
+    const lambdaFn = RustFunctionFactory(props.config)(this, "subscription", {
+      binary: "subscription",
       functionName: ref,
-      entry: url.fileURLToPath(new URL("subscription.handler.js", import.meta.url).toString()),
       layers: props.lambda.layers,
-      currentVersionOptions: {
-        retryAttempts: 2,
-      },
+      // On the function itself: currentVersionOptions only applies once something
+      // reads currentVersion, which nothing here does
+      retryAttempts: 2,
     });
 
     // Allow writes to DynamoDB

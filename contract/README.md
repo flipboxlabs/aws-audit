@@ -16,6 +16,7 @@ Review the diff before committing it, because it is a change to the contract the
 contract/
   fixtures/sdk/    SDK operations: the AWS calls made and the result returned
   fixtures/http/   REST requests: the AWS calls made and the HTTP response
+  fixtures/subscription/  CloudWatch Logs data the subscription Lambda received, and the AWS calls it made
   fixtures/layer/  audit-config.json as the config layer writes it for Rust Lambdas
   schemas/         JSON Schema 2020-12 for each route's path, query and response
 ```
@@ -71,6 +72,22 @@ Responses to index queries hold only what the index projects: the table keys, th
 ```
 
 The handlers received an API Gateway REST (v1) proxy event built from `request`. `body` is the parsed JSON body, or `null` when there is none.
+
+## Subscription fixtures
+
+```jsonc
+{
+  "description": "...",
+  "logs": {                           // the decoded awslogs.data
+    "messageType": "DATA_MESSAGE",    // or CONTROL_MESSAGE, which holds no audits
+    "logGroup": "/aws/lambda/orders",
+    "logEvents": [{ "id": "...", "timestamp": 1767323045678, "message": "{\"_audit\":{...}}" }]
+  },
+  "calls": [ ... ]                    // as in the SDK fixtures
+}
+```
+
+The handler received `{"awslogs": {"data": ...}}`, where `data` is `logs` as gzipped JSON in base64; encode it the same way to replay one. The audit lines come from the SDK's `Audits`, so they're what an app writes. Every fixture makes at most one audit's calls, because the handler stores a batch's audits concurrently and their calls can interleave in any order.
 
 ## Comparing
 

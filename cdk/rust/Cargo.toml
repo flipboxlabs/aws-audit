@@ -1,17 +1,27 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "lambdas/*"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.94"
+rust-version = "1.94.1"
 license = "MIT"
 repository = "https://github.com/flipboxlabs/aws-audit"
 publish = false
 
 [workspace.dependencies]
+aws-config = { version = "1.13", default-features = false, features = [
+  "behavior-version-latest",
+  "default-https-client",
+  "rt-tokio",
+] }
+aws-sdk-dynamodb = "1.139.0"
+aws-sdk-eventbridge = "1.129.0"
+aws_lambda_events = { version = "1.2", default-features = false }
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+lambda_runtime = "1.5"
 rand = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
@@ -21,6 +31,7 @@ tokio = { version = "1", features = ["time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "registry"] }
 
+aws-audit = { path = "crates/aws-audit" }
 lambda-kit = { path = "crates/lambda-kit" }
 
 [workspace.lints.rust]

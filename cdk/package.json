@@ -80,7 +80,6 @@
   },
   "dependencies": {
     "@aws-lambda-powertools/event-handler": "catalog:aws-powertools",
-    "@aws-lambda-powertools/jmespath": "catalog:aws-powertools",
     "@aws-lambda-powertools/logger": "catalog:aws-powertools",
     "@aws-sdk/client-eventbridge": "catalog:aws-sdk",
     "@flipboxlabs/aws-audit-sdk": "workspace:^",

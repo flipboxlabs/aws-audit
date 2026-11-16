@@ -9,6 +9,7 @@ use std::time::Duration;
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::types::{KeysAndAttributes, PutRequest, ReturnValue, WriteRequest};
 use lambda_kit::clock::{Clock, SystemClock};
+use lambda_kit::logging::ErrorChain;
 use lambda_kit::retry::{Backoff, Jitter, RandomJitter};
 use serde_json::{Map, Value};
 
@@ -156,7 +157,7 @@ impl AuditRepository {
             .await
             .map_err(|error| {
                 let error = StorageError::from(error);
-                tracing::error!(?identifiers, error = %error, "Failed to read audit item");
+                tracing::error!(?identifiers, error = %ErrorChain(&error), "Failed to read audit item");
                 error
             })?;
 

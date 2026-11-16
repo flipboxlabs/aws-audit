@@ -6,7 +6,9 @@
 //! - [`logging`]: structured JSON logs through `tracing`, level and message first.
 //! - [`retry`]: exponential backoff with jitter, for retrying throttled AWS calls.
 //! - [`clock`]: an injectable clock, so time-dependent code is testable.
+//! - [`testing`]: capturing those logs in tests.
 
 pub mod clock;
 pub mod logging;
 pub mod retry;
+pub mod testing;

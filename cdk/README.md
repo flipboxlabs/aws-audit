@@ -84,6 +84,8 @@ Your own Lambdas can attach `auditConfigLayer.layer` and import `apps` and `reso
 
 CloudWatch log subscription that captures audit logs and stores them in DynamoDB.
 
+The subscription Lambda is a Rust binary (`provided.al2023`, arm64) that ships prebuilt in this package, so deploying it needs no Rust toolchain. It reads the apps and resource types from the config layer. Each audit line is stored on its own: lines without an `_audit` are skipped, and an audit that's invalid or can't be stored is logged without failing the rest of the batch.
+
 ### DynamoDBConstruct
 
 DynamoDB table for audit storage with optimized indexes for querying by app, resource, and trace.
