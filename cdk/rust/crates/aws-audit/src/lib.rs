@@ -17,6 +17,8 @@ pub mod pagination;
 pub mod service;
 pub mod storage;
 pub mod table;
+#[cfg(feature = "testing")]
+pub mod testing;
 pub mod upsert;
 
 pub use config::AuditConfig;

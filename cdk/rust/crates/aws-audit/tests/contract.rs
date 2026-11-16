@@ -1,48 +1,23 @@
 //! Checks the core crate against the fixtures the TypeScript implementation records
 //! in `contract/` (see `contract/README.md`).
 
-use std::path::PathBuf;
-
 use aws_audit::pagination::{self, InvalidNextToken};
 use aws_audit::table::Index;
+use aws_audit::testing::{contract_dir, fixtures};
 use aws_audit::{Audit, AuditConfig, Page};
 use serde_json::Value;
 
-fn contract() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../../contract")
-}
-
 fn fixture(path: &str) -> Value {
-    let path = contract().join("fixtures").join(path);
+    let path = contract_dir().join("fixtures").join(path);
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("unable to read {}: {error}", path.display()));
     serde_json::from_str(&text).unwrap()
 }
 
-fn fixtures(dir: &str) -> Vec<(String, Value)> {
-    let root = contract().join("fixtures").join(dir);
-    let mut found = Vec::new();
-    let mut pending = vec![root.clone()];
-    while let Some(dir) = pending.pop() {
-        for entry in std::fs::read_dir(&dir).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                pending.push(path);
-            } else if path.extension().is_some_and(|ext| ext == "json") {
-                let name = path.strip_prefix(&root).unwrap().with_extension("");
-                let value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-                found.push((name.to_string_lossy().into_owned(), value));
-            }
-        }
-    }
-    found.sort_by(|a, b| a.0.cmp(&b.0));
-    found
-}
-
 #[test]
 fn loads_the_config_the_layer_writes() {
     let config =
-        AuditConfig::from_file(&contract().join("fixtures/layer/audit-config.json")).unwrap();
+        AuditConfig::from_file(&contract_dir().join("fixtures/layer/audit-config.json")).unwrap();
 
     assert_eq!(config.apps, ["App1", "TestApp"]);
     assert_eq!(config.resource_types, ["Unknown", "User", "Order"]);
