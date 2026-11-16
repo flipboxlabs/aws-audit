@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.8.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.7.0...cdk-v1.8.0) (2026-11-16)
+
+
+### Features
+
+* **cdk:** run the subscription Lambda on Rust ([136f31f](https://github.com/flipboxlabs/aws-audit/commit/136f31f2114138c990e3864a68f501376cc72e1c)), closes [#135](https://github.com/flipboxlabs/aws-audit/issues/135) [#93](https://github.com/flipboxlabs/aws-audit/issues/93)
+* **cdk:** run the subscription Lambda on Rust ([#93](https://github.com/flipboxlabs/aws-audit/issues/93) phase 4) ([ee8b562](https://github.com/flipboxlabs/aws-audit/commit/ee8b56289db8a59c09a805953db329249669c088))
+
+
+### Bug Fixes
+
+* **cdk:** keep the requestId on Rust log lines and log errors with their causes ([2623717](https://github.com/flipboxlabs/aws-audit/commit/26237174f3e0df2098b9f7c312d2752b7e6822b9)), closes [#135](https://github.com/flipboxlabs/aws-audit/issues/135)
+* **cdk:** skip control messages and non-JSON lines in the subscription, and record its contract ([34ddf49](https://github.com/flipboxlabs/aws-audit/commit/34ddf4943f28c74ecd69edd4fb87bfbc65f5b881)), closes [#135](https://github.com/flipboxlabs/aws-audit/issues/135)
+
 ## [1.7.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.6.6...cdk-v1.7.0) (2026-11-16)
 
 
