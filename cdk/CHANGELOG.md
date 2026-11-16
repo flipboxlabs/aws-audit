@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.6.6...cdk-v1.7.0) (2026-11-16)
+
+
+### Features
+
+* **cdk:** add RustFunctionFactory for prebuilt Rust Lambdas ([da3cbed](https://github.com/flipboxlabs/aws-audit/commit/da3cbed2d5b831f3d85c9ab7df20fbba1a2c4964)), closes [#131](https://github.com/flipboxlabs/aws-audit/issues/131)
+* **cdk:** write the audit config as JSON in the config layer for Rust Lambdas ([0e0f1c6](https://github.com/flipboxlabs/aws-audit/commit/0e0f1c60f0311199d311cea669008e51a9ee3020)), closes [#131](https://github.com/flipboxlabs/aws-audit/issues/131)
+
 ## [1.6.6](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.6.5...cdk-v1.6.6) (2026-11-14)
 
 
