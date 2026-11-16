@@ -21,7 +21,13 @@ aws_lambda_events = { version = "1.2", default-features = false }
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+lambda_http = { version = "1.3", default-features = false, features = [
+  "apigw_http",
+  "apigw_rest",
+  "tracing",
+] }
 lambda_runtime = "1.5"
+percent-encoding = "2.3"
 rand = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }

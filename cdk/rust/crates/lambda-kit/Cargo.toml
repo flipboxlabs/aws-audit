@@ -1,7 +1,7 @@
 [package]
 name = "lambda-kit"
 version = "0.1.0"
-description = "Building blocks for AWS Lambda functions in Rust: structured logging, retry with backoff, and an injectable clock"
+description = "Building blocks for AWS Lambda functions in Rust: structured logging, retry with backoff, an injectable clock, and REST handlers behind API Gateway"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -10,13 +10,22 @@ publish.workspace = true
 
 [dependencies]
 chrono.workspace = true
+lambda_http = { workspace = true, optional = true }
+percent-encoding = { workspace = true, optional = true }
 rand.workspace = true
+serde = { workspace = true, optional = true }
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[features]
+# REST handlers behind API Gateway (`lambda_kit::http`)
+http = ["dep:lambda_http", "dep:percent-encoding", "dep:serde"]
+
 [dev-dependencies]
+lambda-kit = { path = ".", features = ["http"] }
+thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 [lints]
