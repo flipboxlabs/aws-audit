@@ -5,6 +5,8 @@
  *   response fed back), and the HTTP response it answered.
  * - `schemas`: JSON Schema 2020-12 for each route's path, query and response,
  *   generated from the handlers' zod schemas.
+ * - `fixtures/subscription`: CloudWatch Logs data the subscription Lambda
+ *   received (decoded) and the AWS calls it made.
  * - `fixtures/layer`: the `audit-config.json` the config layer writes for Rust
  *   Lambdas.
  *
@@ -14,9 +16,11 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { gzipSync } from "node:zlib";
 import type { APIGatewayProxyEvent, Context } from "aws-lambda";
 import * as cdk from "aws-cdk-lib";
 import { marshall } from "@aws-sdk/util-dynamodb";
+import { Audits, type LogAuditInput } from "@flipboxlabs/aws-audit-sdk";
 import { z } from "zod";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import { testConfig } from "./test-config.js";
@@ -24,6 +28,7 @@ import { testConfig } from "./test-config.js";
 const FIXTURES = "../../contract/fixtures/http";
 const SCHEMAS = "../../contract/schemas";
 const LAYER = "../../contract/fixtures/layer";
+const SUBSCRIPTION = "../../contract/fixtures/subscription";
 
 /** Fixed clock for any time the handlers or SDK read */
 const NOW = "2026-01-02T03:04:05.678Z";
@@ -101,6 +106,7 @@ import * as objectsSchema from "./rest-api/resources/app/resources/objects/schem
 import { handler as rerunHandler } from "./rest-api/resources/app/resources/objects/resources/rerun/handler.js";
 import * as rerunSchema from "./rest-api/resources/app/resources/objects/resources/rerun/schema.js";
 import { ConfigLayerConstruct } from "./lambda/construct.js";
+import { handler as subscriptionHandler } from "./cloudwatch/subscription.handler.js";
 
 type Handler = (event: unknown, context: Context) => Promise<unknown>;
 
@@ -447,6 +453,143 @@ const SCHEMA_FILES = {
   "rerun.path": rerunSchema.PathSchema,
 } satisfies Record<string, z.ZodType>;
 
+// subscription
+
+/** The lines an app's `Audits` writes to stdout for these audits */
+const auditLines = (...items: LogAuditInput[]): string[] => {
+  const lines: string[] = [];
+  const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+    lines.push(String(chunk).trimEnd());
+    return true;
+  });
+
+  try {
+    const audits = new Audits({ config: testConfig });
+    for (const item of items) {
+      audits.addAudit(item as Parameters<typeof audits.addAudit>[0]);
+    }
+    audits.publishStoredAudits();
+  } finally {
+    write.mockRestore();
+  }
+
+  return lines;
+};
+
+/** CloudWatch Logs data as the subscription receives it, decoded */
+const logData = (messages: string[]) => ({
+  messageType: "DATA_MESSAGE",
+  owner: "123456789012",
+  logGroup: "/aws/lambda/orders",
+  logStream: "2026/01/02/[$LATEST]0123456789abcdef0123456789abcdef",
+  subscriptionFilters: ["TESTAccountLevelSubscriptionPolicy"],
+  logEvents: messages.map((message, index) => ({
+    id: `3929416263219867021238914598174926734618373427609960${String(index).padStart(2, "0")}`,
+    timestamp: Date.parse(NOW),
+    message,
+  })),
+});
+
+// Replies to an upsert: the stored attempts, then the Upserted event's entry
+const stored: Reply = {
+  output: { Attributes: marshall({ attempts: [{ number: 1, status: "success", at: NOW }] }) },
+};
+const published: Reply = { output: { FailedEntryCount: 0, Entries: [{ EventId: "event-1" }] } };
+
+const order = {
+  id: "audit-1",
+  operation: "createOrder",
+  target: { app: "App1", type: "Order", id: "order-1" },
+  trace: "1-5759e988-bd862e3fe1be46a994272793",
+} satisfies LogAuditInput;
+
+type SubscriptionCase = {
+  name: string;
+  description: string;
+  logs: ReturnType<typeof logData>;
+  replies?: Reply[];
+};
+
+const SUBSCRIPTION_CASES: SubscriptionCase[] = [
+  {
+    name: "stores-an-audit",
+    description: "An audit an app logged is upserted",
+    logs: logData(auditLines(order)),
+    replies: [stored, published],
+  },
+  {
+    name: "related-resources",
+    description: "A failed, rerunable audit with a related resource, which gets a copy",
+    logs: logData(
+      auditLines({
+        ...order,
+        status: "fail",
+        error: "Payment declined",
+        context: { attempt: 2 },
+        resources: new Set([{ app: "App1", type: "User", id: "user-1" }]),
+        event: {
+          source: "orders",
+          "detail-type": "OrderCreated",
+          detail: '{"orderId":"order-1"}',
+        },
+      }),
+    ),
+    replies: [stored, { output: {} }, published],
+  },
+  {
+    name: "skips-lines-without-an-audit",
+    description:
+      "Lines that aren't JSON or hold no _audit are skipped, and invalid audits are logged; neither stops the rest",
+    logs: logData([
+      "START RequestId: 8f507cfc-6dd5-4c1b-8b2a-9a3b5f0f0f0f Version: $LATEST",
+      '{"level":"INFO","message":"Order created"}',
+      "null",
+      '{"_audit":{"operation":"createOrder","target":{"app":"Nope","type":"Order","id":"order-2"}}}',
+      '{"_audit":{"target":{"app":"App1","type":"Order","id":"order-3"}}}',
+      ...auditLines(order),
+    ]),
+    replies: [stored, published],
+  },
+  {
+    name: "control-message",
+    description: "CloudWatch's check of a new subscription holds no audits",
+    logs: {
+      messageType: "CONTROL_MESSAGE",
+      owner: "CloudwatchLogs",
+      logGroup: "",
+      logStream: "",
+      subscriptionFilters: [],
+      logEvents: [
+        {
+          id: "",
+          timestamp: Date.parse(NOW),
+          message: "CWL CONTROL MESSAGE: Checking health of destination Lambda.",
+        },
+      ],
+    },
+  },
+  {
+    name: "storage-error",
+    description: "A failed write is logged; the invocation still succeeds",
+    logs: logData(auditLines(order)),
+    replies: [{ error: { name: "ProvisionedThroughputExceededException", message: "Slow down" } }],
+  },
+];
+
+const recordSubscription = async ({ name, description, logs, replies = [] }: SubscriptionCase) => {
+  recorder.state.calls = [];
+  recorder.state.queue = [...replies];
+
+  const event = { awslogs: { data: gzipSync(JSON.stringify(logs)).toString("base64") } };
+  await expect(subscriptionHandler(event, context)).resolves.toBeUndefined();
+
+  const fixture = { description, logs, calls: recorder.state.calls };
+
+  await expect(`${JSON.stringify(fixture, null, 2)}\n`).toMatchFileSnapshot(
+    `${SUBSCRIPTION}/${name}.json`,
+  );
+};
+
 describe("contract", () => {
   beforeAll(() => {
     vi.useFakeTimers({ now: new Date(NOW), toFake: ["Date"] });
@@ -459,6 +602,12 @@ describe("contract", () => {
   describe("http fixtures", () => {
     it.each(CASES)("$name", async (fixture) => {
       await record(fixture);
+    });
+  });
+
+  describe("subscription fixtures", () => {
+    it.each(SUBSCRIPTION_CASES)("$name", async (fixture) => {
+      await recordSubscription(fixture);
     });
   });
 

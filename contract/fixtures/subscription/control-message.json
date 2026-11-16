@@ -1,0 +1,18 @@
+{
+  "description": "CloudWatch's check of a new subscription holds no audits",
+  "logs": {
+    "messageType": "CONTROL_MESSAGE",
+    "owner": "CloudwatchLogs",
+    "logGroup": "",
+    "logStream": "",
+    "subscriptionFilters": [],
+    "logEvents": [
+      {
+        "id": "",
+        "timestamp": 1767323045678,
+        "message": "CWL CONTROL MESSAGE: Checking health of destination Lambda."
+      }
+    ]
+  },
+  "calls": []
+}
