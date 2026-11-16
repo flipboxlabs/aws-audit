@@ -34,10 +34,17 @@ export const AUDIT_CONFIG_LAYER_MODULE_PATH = "/opt/nodejs/audit-config.mjs";
 export const AUDIT_CONFIG_LAYER_PATH = "/opt/nodejs/audit-config.js";
 
 /**
+ * Path where Rust handlers read the audit config from: the layer's root, which
+ * Lambda mounts at `/opt` for every runtime.
+ */
+export const AUDIT_CONFIG_JSON_PATH = "/opt/audit-config.json";
+
+/**
  * Creates a Lambda layer containing the audit configuration.
  *
- * The layer exports raw `apps` and `resourceTypes` arrays that handlers
- * can use with `defineAuditConfig` from the SDK.
+ * The layer exports raw `apps` and `resourceTypes` arrays that Node handlers
+ * can use with `defineAuditConfig` from the SDK, and writes the same arrays to
+ * {@link AUDIT_CONFIG_JSON_PATH} for Rust handlers.
  *
  * @example
  * ```typescript
@@ -74,10 +81,14 @@ export const resourceTypes = ${JSON.stringify(props.resourceTypes)};
     // "Named export 'apps' not found"
     fs.writeFileSync(path.join(nodejsDir, "audit-config.js"), configCode);
     fs.writeFileSync(path.join(nodejsDir, "package.json"), JSON.stringify({ type: "module" }));
+    fs.writeFileSync(
+      path.join(tempDir, path.basename(AUDIT_CONFIG_JSON_PATH)),
+      JSON.stringify({ apps: props.apps, resourceTypes: props.resourceTypes }),
+    );
 
     this.layer = new lambda.LayerVersion(this, "Layer", {
       code: lambda.Code.fromAsset(tempDir),
-      compatibleRuntimes: [lambda.Runtime.NODEJS_24_X],
+      compatibleRuntimes: [lambda.Runtime.NODEJS_24_X, lambda.Runtime.PROVIDED_AL2023],
       description: "Audit configuration layer containing apps and resourceTypes",
     });
   }

@@ -16,6 +16,7 @@ Review the diff before committing it, because it is a change to the contract the
 contract/
   fixtures/sdk/    SDK operations: the AWS calls made and the result returned
   fixtures/http/   REST requests: the AWS calls made and the HTTP response
+  fixtures/layer/  audit-config.json as the config layer writes it for Rust Lambdas
   schemas/         JSON Schema 2020-12 for each route's path, query and response
 ```
 

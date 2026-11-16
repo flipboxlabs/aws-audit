@@ -3,14 +3,15 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as cdk from "aws-cdk-lib";
-import { describe, expect, it } from "vitest";
+import { Template } from "aws-cdk-lib/assertions";
+import { describe, expect, it } from "vite-plus/test";
 import { ConfigLayerConstruct } from "./construct.js";
 
 const APPS = ["Orders", "Inventory"];
 const RESOURCE_TYPES = ["Order", "Product"];
 
-// Synthesizes the layer and returns its staged nodejs/ directory
-const synthLayerNodejsDir = (): string => {
+// Synthesizes the layer and returns its staged directory, which Lambda mounts at /opt
+const synthLayerDir = (): string => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
   new ConfigLayerConstruct(stack, "AuditConfigLayer", {
@@ -23,8 +24,11 @@ const synthLayerNodejsDir = (): string => {
 
   expect(assets).toHaveLength(1);
 
-  return path.join(directory, assets[0], "nodejs");
+  return path.join(directory, assets[0]);
 };
+
+// Synthesizes the layer and returns its staged nodejs/ directory
+const synthLayerNodejsDir = (): string => path.join(synthLayerDir(), "nodejs");
 
 // Imports a config file in a fresh Node process, as Lambda's runtime would
 const importConfig = (file: string): unknown => {
@@ -47,6 +51,29 @@ console.log(JSON.stringify({ apps, resourceTypes }));`,
 };
 
 describe("ConfigLayerConstruct", () => {
+  it("should write audit-config.json at the layer root for Rust handlers", () => {
+    const layerDir = synthLayerDir();
+
+    expect(fs.readdirSync(layerDir).sort()).toEqual(["audit-config.json", "nodejs"]);
+    expect(JSON.parse(fs.readFileSync(path.join(layerDir, "audit-config.json"), "utf8"))).toEqual({
+      apps: APPS,
+      resourceTypes: RESOURCE_TYPES,
+    });
+  });
+
+  it("should be compatible with the Node.js and provided.al2023 runtimes", () => {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "TestStack");
+    new ConfigLayerConstruct(stack, "AuditConfigLayer", {
+      apps: APPS,
+      resourceTypes: RESOURCE_TYPES,
+    });
+
+    Template.fromStack(stack).hasResourceProperties("AWS::Lambda::LayerVersion", {
+      CompatibleRuntimes: ["nodejs24.x", "provided.al2023"],
+    });
+  });
+
   it("should write the config under nodejs/ as .mjs and as .js in an ES module package", () => {
     const nodejsDir = synthLayerNodejsDir();
 

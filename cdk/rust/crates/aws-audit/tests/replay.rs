@@ -260,7 +260,7 @@ fn comparable(service: &str, mut input: Value) -> Value {
 }
 
 fn fixtures() -> Vec<(String, Value)> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../contract/fixtures/sdk");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../../contract/fixtures/sdk");
     let mut found = Vec::new();
     let mut pending = vec![root.clone()];
     while let Some(dir) = pending.pop() {

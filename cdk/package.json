@@ -24,6 +24,7 @@
   },
   "files": [
     "dist",
+    "assets",
     "README.md"
   ],
   "type": "module",
@@ -68,7 +69,9 @@
   },
   "scripts": {
     "build": "tsc -p ./tsconfig.build.json",
-    "prepublishOnly": "pnpm run build",
+    "build:lambdas": "bash scripts/build-lambdas.sh",
+    "check:lambdas": "node scripts/check-lambda-assets.mjs",
+    "prepublishOnly": "pnpm run build && pnpm run check:lambdas",
     "test": "vp test run",
     "test:watch": "vp test",
     "test:coverage": "vp test run --coverage",

@@ -5,11 +5,11 @@ use std::path::PathBuf;
 
 use aws_audit::pagination::{self, InvalidNextToken};
 use aws_audit::table::Index;
-use aws_audit::{Audit, Page};
+use aws_audit::{Audit, AuditConfig, Page};
 use serde_json::Value;
 
 fn contract() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../contract")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../../contract")
 }
 
 fn fixture(path: &str) -> Value {
@@ -37,6 +37,15 @@ fn fixtures(dir: &str) -> Vec<(String, Value)> {
     }
     found.sort_by(|a, b| a.0.cmp(&b.0));
     found
+}
+
+#[test]
+fn loads_the_config_the_layer_writes() {
+    let config =
+        AuditConfig::from_file(&contract().join("fixtures/layer/audit-config.json")).unwrap();
+
+    assert_eq!(config.apps, ["App1", "TestApp"]);
+    assert_eq!(config.resource_types, ["Unknown", "User", "Order"]);
 }
 
 #[test]

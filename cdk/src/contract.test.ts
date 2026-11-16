@@ -5,12 +5,17 @@
  *   response fed back), and the HTTP response it answered.
  * - `schemas`: JSON Schema 2020-12 for each route's path, query and response,
  *   generated from the handlers' zod schemas.
+ * - `fixtures/layer`: the `audit-config.json` the config layer writes for Rust
+ *   Lambdas.
  *
  * Handlers run for real on recording AWS clients; only the clients' `send` is
  * replaced. The committed files are file snapshots, so this test fails when a
  * handler's behavior drifts from them. Regenerate with `pnpm contract:update`.
  */
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { APIGatewayProxyEvent, Context } from "aws-lambda";
+import * as cdk from "aws-cdk-lib";
 import { marshall } from "@aws-sdk/util-dynamodb";
 import { z } from "zod";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -18,6 +23,7 @@ import { testConfig } from "./test-config.js";
 
 const FIXTURES = "../../contract/fixtures/http";
 const SCHEMAS = "../../contract/schemas";
+const LAYER = "../../contract/fixtures/layer";
 
 /** Fixed clock for any time the handlers or SDK read */
 const NOW = "2026-01-02T03:04:05.678Z";
@@ -94,6 +100,7 @@ import { handler as objectsHandler } from "./rest-api/resources/app/resources/ob
 import * as objectsSchema from "./rest-api/resources/app/resources/objects/schema.js";
 import { handler as rerunHandler } from "./rest-api/resources/app/resources/objects/resources/rerun/handler.js";
 import * as rerunSchema from "./rest-api/resources/app/resources/objects/resources/rerun/schema.js";
+import { ConfigLayerConstruct } from "./lambda/construct.js";
 
 type Handler = (event: unknown, context: Context) => Promise<unknown>;
 
@@ -468,6 +475,24 @@ describe("contract", () => {
       await expect(`${JSON.stringify(jsonSchema, null, 2)}\n`).toMatchFileSnapshot(
         `${SCHEMAS}/${name}.schema.json`,
       );
+    });
+  });
+
+  describe("layer", () => {
+    it("audit-config.json", async () => {
+      const app = new cdk.App();
+      new ConfigLayerConstruct(new cdk.Stack(app, "Contract"), "AuditConfigLayer", {
+        apps: testConfig.apps,
+        resourceTypes: testConfig.resourceTypes,
+      });
+
+      const { directory } = app.synth();
+      const [asset] = fs.readdirSync(directory).filter((entry) => entry.startsWith("asset."));
+
+      // Byte for byte as Lambda will find it at /opt/audit-config.json
+      await expect(
+        fs.readFileSync(path.join(directory, asset, "audit-config.json"), "utf8"),
+      ).toMatchFileSnapshot(`${LAYER}/audit-config.json`);
     });
   });
 });
