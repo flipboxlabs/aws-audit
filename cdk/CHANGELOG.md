@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.10.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.9.0...cdk-v1.10.0) (2026-11-17)
+
+
+### Features
+
+* **cdk:** add the Rust pieces for audit detail and rerun ([7b99bf9](https://github.com/flipboxlabs/aws-audit/commit/7b99bf9485e3204cd7b5c334fbbd03918aebf4f2))
+* **cdk:** run the trace, objects and rerun Lambdas on Rust ([658a8d5](https://github.com/flipboxlabs/aws-audit/commit/658a8d5fb8f81539541df1c40cc97dce040ee912)), closes [#141](https://github.com/flipboxlabs/aws-audit/issues/141) [#93](https://github.com/flipboxlabs/aws-audit/issues/93)
+* **cdk:** trace, objects and rerun Lambdas on Rust ([0a3c1e0](https://github.com/flipboxlabs/aws-audit/commit/0a3c1e04bc5ad46e4c5c7f8d8bb213671baa04fd))
+
+
+### Bug Fixes
+
+* **cdk:** filter GET /trace/{trace} by filter[resourceType] ([5f00dc5](https://github.com/flipboxlabs/aws-audit/commit/5f00dc5109cc0c8fc45f8e5cd54ffbc910d14719)), closes [#107](https://github.com/flipboxlabs/aws-audit/issues/107) [#141](https://github.com/flipboxlabs/aws-audit/issues/141)
+* **cdk:** name every Rust log field in camelCase ([48e6ca4](https://github.com/flipboxlabs/aws-audit/commit/48e6ca45354b82a32aab2560affb8643f7d71328))
+
 ## [1.9.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.8.0...cdk-v1.9.0) (2026-11-17)
 
 
