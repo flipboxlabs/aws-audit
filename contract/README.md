@@ -12,7 +12,12 @@ The files have two owners:
 
   Review the diff before committing it, because it is a change to the contract the Rust code must follow.
 
-- **Owned by the Rust Lambdas:** `fixtures/http`, `fixtures/subscription`, the `*.path` and `*.query` schemas, and `config.response`. They were recorded from the Node handlers, which the Rust Lambdas replaced (#144). To change that behavior, edit the fixture and the Rust code together; the Rust tests replay every fixture. Keep the fixed inputs below, and add a fixture for each new case.
+- **Owned by the Rust Lambdas:** `fixtures/http`, `fixtures/subscription` and `config.response`. They were recorded from the Node handlers, which the Rust Lambdas replaced (#144). To change that behavior, edit the fixture and the Rust code together; the Rust tests replay every fixture. Keep the fixed inputs below, and add a fixture for each new case.
+
+## Sources of truth
+
+- **The audit model** is the SDK's zod schemas. Apps write audits with the SDK, and it reads and writes the same table as the Lambdas. The response schemas and SDK fixtures are generated from it, and the Rust model (`cdk/rust/crates/aws-audit/src/model.rs`) is written to match: the Rust tests validate every 200 against its route's response schema and replay every SDK fixture.
+- **Request validation** is the Rust Lambdas' own code (`aws-audit-http`). There's no request schema. The HTTP fixtures pin it instead: each 422 fixture records the issue paths and messages a bad request gets.
 
 ## Layout
 
@@ -22,7 +27,7 @@ contract/
   fixtures/http/   REST requests: the AWS calls made and the HTTP response
   fixtures/subscription/  CloudWatch Logs data the subscription Lambda received, and the AWS calls it made
   fixtures/layer/  audit-config.json as the config layer writes it for Rust Lambdas
-  schemas/         JSON Schema 2020-12 for each route's path, query and response
+  schemas/         JSON Schema 2020-12 for each route's 200 response
 ```
 
 ## Fixed inputs
