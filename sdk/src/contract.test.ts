@@ -663,6 +663,10 @@ describe("contract fixtures", () => {
         },
       },
       {
+        name: "empty trace",
+        input: { operation: "createOrder", target: { app: "App1", type: "Order" }, trace: "" },
+      },
+      {
         name: "string event detail",
         input: {
           operation: "rerun",

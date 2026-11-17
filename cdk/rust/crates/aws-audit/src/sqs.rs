@@ -56,7 +56,7 @@ pub fn trace(message: &SqsMessage) -> Option<String> {
 /// `audit`, continuing the message's trace when it has none of its own
 /// (`buildAuditFromSQSRecord`).
 pub fn audit_for(message: &SqsMessage, mut audit: LogAudit) -> LogAudit {
-    if audit.trace.is_none() {
+    if audit.trace.as_deref().is_none_or(str::is_empty) {
         audit.trace = trace(message);
     }
     audit
@@ -183,10 +183,15 @@ mod tests {
         let target = ResourceReference::new("App1", "Order");
 
         let audit = audit_for(&traced, LogAudit::new("op", target.clone()));
-        let own = audit_for(&traced, LogAudit::new("op", target).with_trace("own"));
+        let own = audit_for(
+            &traced,
+            LogAudit::new("op", target.clone()).with_trace("own"),
+        );
+        let empty = audit_for(&traced, LogAudit::new("op", target).with_trace(""));
 
         assert_eq!(audit.trace.as_deref(), Some("trace-1:3"));
         assert_eq!(own.trace.as_deref(), Some("own"));
+        assert_eq!(empty.trace.as_deref(), Some("trace-1:3"));
     }
 
     #[test]

@@ -307,7 +307,8 @@ impl Audits {
         let trace_id = self.trace_id.clone().or_else(xray_trace_id_from_env);
         let mut lines = String::new();
         for mut audit in stored {
-            if audit.trace.is_none() {
+            // An empty trace is none, as in the TypeScript SDK
+            if audit.trace.as_deref().is_none_or(str::is_empty) {
                 audit.trace.clone_from(&trace_id);
             }
             lines.push_str(&line(&audit));
@@ -450,6 +451,21 @@ mod tests {
         audits.publish();
 
         assert_eq!(out.lines()[0]["_audit"]["trace"], "batch-1:2");
+    }
+
+    #[test]
+    fn replaces_an_empty_trace() {
+        let (mut audits, out) = audits();
+
+        audits
+            .add(LogAudit::new("createOrder", order()).with_trace(""))
+            .unwrap();
+        audits.publish();
+
+        assert_eq!(
+            out.lines()[0]["_audit"]["trace"],
+            "1-5759e988-bd862e3fe1be46a994272793"
+        );
     }
 
     #[test]
