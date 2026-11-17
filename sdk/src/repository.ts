@@ -11,7 +11,7 @@ import type { NativeAttributeValue } from "@aws-sdk/util-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { DEFAULT_TTL_SECONDS, type AuditConfig } from "./config.js";
 import { DynamoDB, type IndexDefinition } from "./constants.js";
-import { InvalidNextTokenError } from "./errors.js";
+import { InvalidNextTokenError, InvalidResourceFilterError } from "./errors.js";
 import {
   decodeNextPageToken,
   encodeNextPageToken,
@@ -241,7 +241,7 @@ export function resourceScopes(resource: ResourceReference): string[] {
 /**
  * The `scopes` value a resource filter matches.
  *
- * @throws {TypeError} When a resource id is given without its app and type
+ * @throws {InvalidResourceFilterError} When a resource id is given without its app and type
  * @internal
  */
 export function filterScope(filters: {
@@ -252,7 +252,7 @@ export function filterScope(filters: {
 
   if (hasResourceId(resource?.id)) {
     if (!app || !resource.type) {
-      throw new TypeError("A resource id filter needs an app and a resource type");
+      throw new InvalidResourceFilterError();
     }
     return `${app}.${resource.type}#${resource.id}`;
   }
@@ -815,7 +815,7 @@ export class AuditRepository<C extends AuditConfig> {
    * @param pagination - Optional pagination settings (pageSize, nextToken)
    * @returns Paginated collection of audit summaries in trace order
    * @throws {InvalidNextTokenError} if `pagination.nextToken` isn't one this listing returned
-   * @throws {TypeError} if a resource id filter is given without its app and type
+   * @throws {InvalidResourceFilterError} if a resource id filter is given without its app and type
    *
    * @example
    * ```typescript
@@ -853,7 +853,7 @@ export class AuditRepository<C extends AuditConfig> {
    * @param pagination - Optional pagination settings (pageSize, nextToken)
    * @returns Paginated collection of audit summaries
    * @throws {InvalidNextTokenError} if `pagination.nextToken` isn't one this listing returned
-   * @throws {TypeError} if a resource id filter is given without its app and type
+   * @throws {InvalidResourceFilterError} if a resource id filter is given without its app and type
    */
   public async listByStatus(params: TypedListByStatusOptions<C>, pagination?: Pagination) {
     return this.listIndex(

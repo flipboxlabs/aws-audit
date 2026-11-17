@@ -58,3 +58,16 @@ export class InvalidNextTokenError extends Error {
     this.name = "InvalidNextTokenError";
   }
 }
+
+/**
+ * Thrown by the status and trace listings when a resource id filter is given
+ * without its app and resource type: an id alone could name resources of any type.
+ *
+ * The listing is not queried. Answer it as a client error.
+ */
+export class InvalidResourceFilterError extends TypeError {
+  public constructor(message = "A resource id filter needs an app and a resource type") {
+    super(message);
+    this.name = "InvalidResourceFilterError";
+  }
+}

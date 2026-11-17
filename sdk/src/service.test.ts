@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { AuditNotFoundError, InvalidNextTokenError } from "./errors.js";
+import { AuditNotFoundError, InvalidNextTokenError, InvalidResourceFilterError } from "./errors.js";
 import { AuditEventBus, BatchHandler, PutEventsError } from "./events/index.js";
 import type { Audit } from "./schema/audit.js";
 import type { UpsertAuditInput } from "./schema/service.js";
@@ -707,6 +707,17 @@ describe("AuditService", () => {
 
       await expect(
         service.listByStatus({ status: "fail" }, { nextToken: "not-a-token" }),
+      ).rejects.toBe(error);
+
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
+
+    it("should rethrow an incomplete resource filter without logging it", async () => {
+      const error = new InvalidResourceFilterError();
+      mockStorage.listByStatus.mockRejectedValue(error);
+
+      await expect(
+        service.listByStatus({ status: "fail", resource: { id: "order-1" } }),
       ).rejects.toBe(error);
 
       expect(mockLogger.error).not.toHaveBeenCalled();

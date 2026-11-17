@@ -139,7 +139,9 @@ fn error_name(error: &ServiceError) -> String {
     match error {
         ServiceError::NotFound(_) => "AuditNotFoundError".into(),
         ServiceError::Storage(StorageError::InvalidNextToken(_)) => "InvalidNextTokenError".into(),
-        ServiceError::Storage(StorageError::IncompleteResourceFilter(_)) => "TypeError".into(),
+        ServiceError::Storage(StorageError::IncompleteResourceFilter(_)) => {
+            "InvalidResourceFilterError".into()
+        }
         other => format!("{other:?}"),
     }
 }

@@ -9,7 +9,7 @@ import {
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { DynamoDB } from "./constants.js";
-import { InvalidNextTokenError } from "./errors.js";
+import { InvalidNextTokenError, InvalidResourceFilterError } from "./errors.js";
 import {
   AuditRepository,
   filterScope,
@@ -855,7 +855,7 @@ describe("AuditRepository", () => {
         it("should refuse a resource id without its app and type", async () => {
           await expect(
             listing.list(repository, { resource: { type: ResourceType.USER, id: 7 } }),
-          ).rejects.toThrow("A resource id filter needs an app and a resource type");
+          ).rejects.toThrow(InvalidResourceFilterError);
           expect(mockClient.send).not.toHaveBeenCalled();
         });
       },

@@ -1,6 +1,6 @@
 import type { Logger } from "@aws-lambda-powertools/logger";
 import type { AuditConfig } from "./config.js";
-import { AuditNotFoundError, InvalidNextTokenError } from "./errors.js";
+import { AuditNotFoundError, InvalidNextTokenError, InvalidResourceFilterError } from "./errors.js";
 import { PutEventsError } from "./events/batch-handler.js";
 import { AuditEventBus } from "./events/bus.js";
 import {
@@ -275,6 +275,7 @@ export class AuditService<C extends AuditConfig> {
    * @param pagination - Optional pagination settings
    * @returns Paginated collection of trace-related audit records
    * @throws {InvalidNextTokenError} if `pagination.nextToken` isn't one this listing returned
+   * @throws {InvalidResourceFilterError} if a resource id filter lacks its app and type
    * @throws Re-throws any storage errors after logging
    *
    * @example
@@ -288,8 +289,10 @@ export class AuditService<C extends AuditConfig> {
     try {
       return await this.storage.listTraceItems(params, pagination);
     } catch (error) {
-      // A bad nextToken is the caller's mistake, not a storage failure.
-      if (!(error instanceof InvalidNextTokenError)) {
+      // A bad nextToken or filter is the caller's mistake, not a storage failure.
+      if (
+        !(error instanceof InvalidNextTokenError || error instanceof InvalidResourceFilterError)
+      ) {
         this.logger.error("An error occurred while trying to list trace items", {
           error,
         });
@@ -310,14 +313,17 @@ export class AuditService<C extends AuditConfig> {
    * @param pagination - Optional pagination settings
    * @returns Paginated collection of status-filtered audit records
    * @throws {InvalidNextTokenError} if `pagination.nextToken` isn't one this listing returned
+   * @throws {InvalidResourceFilterError} if a resource id filter lacks its app and type
    * @throws Re-throws any storage errors after logging
    */
   public async listByStatus(params: TypedListByStatusOptions<C>, pagination?: Pagination) {
     try {
       return await this.storage.listByStatus(params, pagination);
     } catch (error) {
-      // A bad nextToken is the caller's mistake, not a storage failure.
-      if (!(error instanceof InvalidNextTokenError)) {
+      // A bad nextToken or filter is the caller's mistake, not a storage failure.
+      if (
+        !(error instanceof InvalidNextTokenError || error instanceof InvalidResourceFilterError)
+      ) {
         this.logger.error("An error occurred while trying to list items by status", {
           error,
         });
