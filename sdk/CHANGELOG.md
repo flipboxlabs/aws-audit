@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.8.0](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.7.0...sdk-v1.8.0) (2026-11-17)
+
+
+### Features
+
+* **cdk:** shared Rust HTTP layer; GET /config and GET /status/{status} on Rust ([c27dd35](https://github.com/flipboxlabs/aws-audit/commit/c27dd35369542cd6ad35d87e0bb2c0d32a2495b1))
+
+
+### Bug Fixes
+
+* **sdk:** publish an audit's message as an optional string ([7c7120a](https://github.com/flipboxlabs/aws-audit/commit/7c7120a95484aa673e2606a04792c27a9655b81e)), closes [#138](https://github.com/flipboxlabs/aws-audit/issues/138)
+
 ## [1.7.0](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.6.2...sdk-v1.7.0) (2026-11-14)
 
 

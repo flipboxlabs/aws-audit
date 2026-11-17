@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.9.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.8.0...cdk-v1.9.0) (2026-11-17)
+
+
+### Features
+
+* **cdk:** add Rust building blocks for the REST Lambdas ([08d5984](https://github.com/flipboxlabs/aws-audit/commit/08d5984d7fb39b7448896c5e7d867d1594abebe2))
+* **cdk:** run GET /config and GET /status/{status} on Rust ([94069cc](https://github.com/flipboxlabs/aws-audit/commit/94069cccf2e05357d6d3e4e97de550ce7601bdc9)), closes [#138](https://github.com/flipboxlabs/aws-audit/issues/138) [#93](https://github.com/flipboxlabs/aws-audit/issues/93)
+* **cdk:** shared Rust HTTP layer; GET /config and GET /status/{status} on Rust ([c27dd35](https://github.com/flipboxlabs/aws-audit/commit/c27dd35369542cd6ad35d87e0bb2c0d32a2495b1))
+
 ## [1.8.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.7.0...cdk-v1.8.0) (2026-11-16)
 
 
