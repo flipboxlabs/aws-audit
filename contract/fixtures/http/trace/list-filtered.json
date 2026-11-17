@@ -1,0 +1,50 @@
+{
+  "description": "A trace filtered by resource type, a page at a time",
+  "route": "GET /trace/{trace}",
+  "request": {
+    "method": "GET",
+    "path": "/trace/trace-1",
+    "query": {
+      "pagination[pageSize]": "5",
+      "filter[resourceType]": "Order"
+    }
+  },
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "Query",
+      "input": {
+        "ScanIndexForward": true,
+        "IndexName": "GSI1_SN",
+        "ExpressionAttributeValues": {
+          ":PK": {
+            "S": "trace-1"
+          },
+          ":resourceType": {
+            "S": "Order"
+          }
+        },
+        "ExpressionAttributeNames": {
+          "#PK": "GSI1_SN_PK",
+          "#target": "target",
+          "#type": "type"
+        },
+        "KeyConditionExpression": "#PK=:PK",
+        "TableName": "TEST-Contract-Audit",
+        "Limit": 5,
+        "FilterExpression": "#target.#type = :resourceType"
+      },
+      "output": {
+        "Items": []
+      }
+    }
+  ],
+  "response": {
+    "statusCode": 200,
+    "contentType": "application/json",
+    "body": {
+      "items": [],
+      "pagination": {}
+    }
+  }
+}

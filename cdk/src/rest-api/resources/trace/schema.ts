@@ -11,6 +11,7 @@ export const PathSchema = z.object({
 // Query params use flat keys matching API Gateway's bracket notation
 export const QuerySchema = PaginationQuerySchema.extend({
   "filter[app]": auditConfig.schemas.app.optional(),
+  "filter[resourceType]": auditConfig.schemas.resourceType.optional(),
 });
 
 export const ResponseCollectionSchema = PaginationCollectionSchema(AuditPayloadSchema);

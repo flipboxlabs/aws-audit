@@ -331,6 +331,23 @@ const CASES: Case[] = [
     request: { method: "GET", path: "/trace/trace-1", query: { "filter[app]": "App1" } },
     replies: [{ output: { Items: [auditRow({ GSI1_SN_PK: "trace-1", GSI1_SN_SK: 1 })] } }],
   },
+  {
+    name: "trace/list-filtered",
+    description: "A trace filtered by resource type, a page at a time",
+    route: "trace",
+    request: {
+      method: "GET",
+      path: "/trace/trace-1",
+      query: { "pagination[pageSize]": "5", "filter[resourceType]": "Order" },
+    },
+    replies: [{ output: { Items: [] } }],
+  },
+  {
+    name: "trace/invalid-filter",
+    description: "A resource type outside the config is a 422",
+    route: "trace",
+    request: { method: "GET", path: "/trace/trace-1", query: { "filter[resourceType]": "Nope" } },
+  },
 
   // objects
   {

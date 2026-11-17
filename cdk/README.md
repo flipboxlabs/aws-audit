@@ -112,7 +112,7 @@ An audit's `trace` is the trace it was written with, and is omitted when it has 
 
 Getting or rerunning a single audit answers `404` when `{audit}` doesn't exist or belongs to a resource other than `{item}`. An audit that lists a resource in `resources` also appears in that resource's listing, with the audit's `id` and its target as the `source`; fetch or rerun it under the source: `/apps/{source.app}/objects/{source.type}/{source.id}/{id}`.
 
-`GET /status/{status}` and `GET /trace/{trace}` take a `filter[app]` query parameter, and `GET /status/{status}` also takes `filter[resourceType]`. A filter matches an audit's target or any of its additional `resources`, and the audit is returned with its own target. Each audit appears once per page, but it can appear again on another page when more than one of its resources matches.
+`GET /status/{status}` and `GET /trace/{trace}` take `filter[app]` and `filter[resourceType]` query parameters. A filter matches an audit's target or any of its additional `resources`, and the audit is returned with its own target. Each audit appears once per page, but it can appear again on another page when more than one of its resources matches.
 
 `GET /config` and `GET /status/{status}` run as prebuilt Rust binaries, like the subscription Lambda; the other routes move to Rust in a later release. Every route answers errors as `{statusCode, error, message}`, and a `422` lists each invalid input under `details.issues`, with its location as `path` (e.g. `["query", "filter[app]"]`).
 

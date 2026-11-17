@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { App, testConfig } from "../../../test-config.js";
+import { App, ResourceType, testConfig } from "../../../test-config.js";
 
 vi.mock("../../../audit-config.js", () => ({
   auditConfig: testConfig,
@@ -65,6 +65,23 @@ describe("trace handler schemas", () => {
     it("should reject filter with invalid app", () => {
       const result = QuerySchema.safeParse({
         "filter[app]": "InvalidApp",
+      });
+
+      expect(result.success).toBe(false);
+    });
+
+    it("should validate filter with valid resource type", () => {
+      const result = QuerySchema.safeParse({
+        "filter[resourceType]": ResourceType.UNKNOWN,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data?.["filter[resourceType]"]).toBe(ResourceType.UNKNOWN);
+    });
+
+    it("should reject filter with invalid resource type", () => {
+      const result = QuerySchema.safeParse({
+        "filter[resourceType]": "InvalidType",
       });
 
       expect(result.success).toBe(false);
