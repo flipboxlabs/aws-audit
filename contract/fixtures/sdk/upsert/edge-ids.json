@@ -45,10 +45,11 @@
             "S": "audit"
           }
         },
-        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #trace = :trace, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #traceId = :traceId, #traceStage = :traceStage, #scopes = :scopes, #ttl = :ttl",
+        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #trace = :trace, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #traceId = :traceId, #traceStage = :traceStage, #ttl = :ttl ADD #scopes :scopes",
         "ExpressionAttributeNames": {
           "#attempts": "attempts",
           "#createdAt": "createdAt",
+          "#scopes": "scopes",
           "#id": "id",
           "#status": "status",
           "#tier": "tier",
@@ -63,7 +64,6 @@
           "#kind": "kind",
           "#traceId": "traceId",
           "#traceStage": "traceStage",
-          "#scopes": "scopes",
           "#ttl": "ttl"
         },
         "ExpressionAttributeValues": {
@@ -85,6 +85,18 @@
                   }
                 }
               }
+            ]
+          },
+          ":scopes": {
+            "SS": [
+              "App1",
+              "App1.Order",
+              "*.Order",
+              "App1.Order#0",
+              "TestApp",
+              "TestApp.User",
+              "*.User",
+              "TestApp.User#0"
             ]
           },
           ":id": {
@@ -141,18 +153,6 @@
           },
           ":traceStage": {
             "N": "3"
-          },
-          ":scopes": {
-            "SS": [
-              "App1",
-              "App1.Order",
-              "*.Order",
-              "App1.Order#0",
-              "TestApp",
-              "TestApp.User",
-              "*.User",
-              "TestApp.User#0"
-            ]
           },
           ":ttl": {
             "N": "1775099045"

@@ -527,13 +527,17 @@ export class AuditRepository<C extends AuditConfig> {
     expressionAttributeNames["#attempts"] = "attempts";
     expressionAttributeNames["#createdAt"] = "createdAt";
 
+    // Added to, not replaced: a copy under a resource a retry no longer lists stays,
+    // so the status and trace filters keep matching that resource too
+    expressionAttributeNames["#scopes"] = Attributes.SCOPES;
+    expressionAttributeValues[":scopes"] = new Set(
+      [payload.target, ...(item.resources ?? [])].flatMap(resourceScopes),
+    );
+
     // Add all payload fields dynamically
     const allFields: Record<string, unknown> = {
       ...payload,
       ...constructIndexAttributes(payload, DynamoDB.Kinds.AUDIT),
-      [Attributes.SCOPES]: new Set(
-        [payload.target, ...(item.resources ?? [])].flatMap(resourceScopes),
-      ),
       ttl: this.constructTTLAttribute(this.config.ttlSeconds).ttl,
     };
 
@@ -559,7 +563,7 @@ export class AuditRepository<C extends AuditConfig> {
       new UpdateItemCommand({
         TableName: DynamoDB.Table.Name(),
         Key: marshall(primaryKey, MARSHALL_OPTIONS),
-        UpdateExpression: `SET ${setClauses.join(", ")}`,
+        UpdateExpression: `SET ${setClauses.join(", ")} ADD #scopes :scopes`,
         ExpressionAttributeNames: expressionAttributeNames,
         ExpressionAttributeValues: marshall(expressionAttributeValues, MARSHALL_OPTIONS),
         ReturnValues: "ALL_NEW",
@@ -598,8 +602,10 @@ export class AuditRepository<C extends AuditConfig> {
    * A copy holds the audit's summary, with the resource as `target` and the audit's
    * target as `source`, in the audit's partition (`SK`
    * `related#{app}.{type}#{resourceId}`). It takes the audit's stored `createdAt`, so
-   * it sorts with the audit. Copies are replaced on every upsert. Items are written
-   * with BatchWriteItem, 25 at a time.
+   * it sorts with the audit. Each upsert rewrites the copies of the resources it
+   * lists, once per resource; a copy under a resource a retry no longer lists stays,
+   * as do that resource's `scopes` on the audit. Items are written with
+   * BatchWriteItem, 25 at a time.
    *
    * @param item - The audit, with its id
    * @param createdAt - The audit's stored `createdAt`, from {@link upsertItem}
@@ -611,7 +617,10 @@ export class AuditRepository<C extends AuditConfig> {
    * await repository.upsertRelated(item, createdAt);
    * ```
    */
-  public async upsertRelated(item: UpsertAuditInput, createdAt: string): Promise<void> {
+  public async upsertRelated(
+    item: UpsertAuditInput & { id: string },
+    createdAt: string,
+  ): Promise<void> {
     const BATCH_SIZE = 25;
 
     const payload = AuditStorageSchema.parse({ ...item, createdAt, updatedAt: new Date() });
@@ -624,32 +633,38 @@ export class AuditRepository<C extends AuditConfig> {
     const summary = AuditSummarySchema.parse(payload);
     const ttl = this.constructTTLAttribute(this.config.ttlSeconds);
 
-    const requests: WriteRequest[] = Array.from(item.resources ?? [])
-      .filter((resource) => hasResourceId(resource.id))
-      .map((resource) => {
-        const target = { app: resource.app, type: resource.type, id: resource.id };
-        const copy = {
-          ...summary,
-          target,
-          source: payload.target,
-          rerunable: payload.rerunable ?? !!payload.event,
-        };
+    // One copy per resource: a BatchWriteItem can't put the same key twice. The last
+    // listing of a resource wins, as it would have if each were written in turn
+    const resources = new Map(
+      Array.from(item.resources ?? [])
+        .filter((resource) => hasResourceId(resource.id))
+        .map((resource) => [relatedSortKey(resource), resource]),
+    );
 
-        return {
-          PutRequest: {
-            Item: marshall(
-              {
-                [Keys.PARTITION_KEY]: primaryKey.PK,
-                [Keys.SORT_KEY]: relatedSortKey(resource),
-                ...copy,
-                ...constructIndexAttributes(copy, DynamoDB.Kinds.RELATED),
-                ...ttl,
-              },
-              MARSHALL_OPTIONS,
-            ),
-          },
-        };
-      });
+    const requests: WriteRequest[] = Array.from(resources, ([sortKey, resource]) => {
+      const target = { app: resource.app, type: resource.type, id: resource.id };
+      const copy = {
+        ...summary,
+        target,
+        source: payload.target,
+        rerunable: payload.rerunable ?? !!payload.event,
+      };
+
+      return {
+        PutRequest: {
+          Item: marshall(
+            {
+              [Keys.PARTITION_KEY]: primaryKey.PK,
+              [Keys.SORT_KEY]: sortKey,
+              ...copy,
+              ...constructIndexAttributes(copy, DynamoDB.Kinds.RELATED),
+              ...ttl,
+            },
+            MARSHALL_OPTIONS,
+          ),
+        },
+      };
+    });
 
     // Sequentially, to reduce the risk of triggering more throttling
     for (let i = 0; i < requests.length; i += BATCH_SIZE) {

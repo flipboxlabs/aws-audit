@@ -51,10 +51,11 @@
             "S": "audit"
           }
         },
-        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #message = :message, #trace = :trace, #event = :event, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #traceId = :traceId, #traceStage = :traceStage, #scopes = :scopes, #ttl = :ttl",
+        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #message = :message, #trace = :trace, #event = :event, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #traceId = :traceId, #traceStage = :traceStage, #ttl = :ttl ADD #scopes :scopes",
         "ExpressionAttributeNames": {
           "#attempts": "attempts",
           "#createdAt": "createdAt",
+          "#scopes": "scopes",
           "#id": "id",
           "#status": "status",
           "#tier": "tier",
@@ -71,7 +72,6 @@
           "#kind": "kind",
           "#traceId": "traceId",
           "#traceStage": "traceStage",
-          "#scopes": "scopes",
           "#ttl": "ttl"
         },
         "ExpressionAttributeValues": {
@@ -93,6 +93,22 @@
                   }
                 }
               }
+            ]
+          },
+          ":scopes": {
+            "SS": [
+              "App1",
+              "App1.Order",
+              "*.Order",
+              "App1.Order#order-1",
+              "TestApp",
+              "TestApp.User",
+              "*.User",
+              "TestApp.User#user-1",
+              "App1.Unknown",
+              "*.Unknown",
+              "App1.Unknown#7",
+              "App1.User"
             ]
           },
           ":id": {
@@ -165,22 +181,6 @@
           },
           ":traceStage": {
             "N": "0"
-          },
-          ":scopes": {
-            "SS": [
-              "App1",
-              "App1.Order",
-              "*.Order",
-              "App1.Order#order-1",
-              "TestApp",
-              "TestApp.User",
-              "*.User",
-              "TestApp.User#user-1",
-              "App1.Unknown",
-              "*.Unknown",
-              "App1.Unknown#7",
-              "App1.User"
-            ]
           },
           ":ttl": {
             "N": "1775099045"

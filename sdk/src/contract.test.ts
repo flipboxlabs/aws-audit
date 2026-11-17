@@ -355,6 +355,22 @@ const CASES: Case[] = [
     replies: [attempts(1), { output: {} }, accepted()],
   },
   {
+    name: "upsert/repeated-related",
+    description:
+      'A resource listed twice (7 and "7" alike) gets one copy, from its last listing, as BatchWriteItem can\'t put a key twice',
+    operation: "upsertItem",
+    args: [
+      upsertInput({
+        resources: [
+          { app: "TestApp", type: "User", id: 7 },
+          { app: "App1", type: "Order", id: "order-2" },
+          { app: "TestApp", type: "User", id: "7" },
+        ],
+      }),
+    ],
+    replies: [attempts(1), { output: {} }, accepted()],
+  },
+  {
     name: "upsert/retry-related",
     description: "On a retry, the copies take the audit's stored createdAt, not this attempt's",
     operation: "upsertItem",

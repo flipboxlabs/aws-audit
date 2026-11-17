@@ -85,7 +85,9 @@ describe("AuditRepository", () => {
     return row;
   };
 
-  const upsertInput = (overrides: Partial<UpsertAuditInput> = {}): UpsertAuditInput =>
+  const upsertInput = (
+    overrides: Partial<UpsertAuditInput> = {},
+  ): UpsertAuditInput & { id: string } =>
     ({
       id: "audit-123",
       operation: "createOrder",
@@ -93,7 +95,7 @@ describe("AuditRepository", () => {
       tier: 1,
       target: { app: App.App1, type: ResourceType.ORDER, id: "order-1" },
       ...overrides,
-    }) as UpsertAuditInput;
+    }) as UpsertAuditInput & { id: string };
 
   const attempt = { number: 1, status: "fail", at: CREATED_AT };
 
@@ -250,6 +252,16 @@ describe("AuditRepository", () => {
         "#attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt)",
       );
       expect(UpdateExpression).toContain("#createdAt = if_not_exists(#createdAt, :createdAt)");
+    });
+
+    it("should add to the audit's scopes, keeping those of resources a retry dropped", async () => {
+      mockClient.send.mockResolvedValue(updated());
+
+      await repository.upsertItem(upsertInput(), attempt);
+
+      const { UpdateExpression } = (mockClient.send.mock.calls[0][0] as UpdateItemCommand).input;
+      expect(UpdateExpression).toMatch(/ ADD #scopes :scopes$/);
+      expect(UpdateExpression).not.toContain("#scopes = :scopes");
     });
 
     it("should set the attributes the indexes are keyed on", async () => {
@@ -556,6 +568,27 @@ describe("AuditRepository", () => {
       await repository.upsertRelated(upsertInput(), CREATED_AT);
 
       expect(mockClient.send).not.toHaveBeenCalled();
+    });
+
+    it("should write one copy per resource, from its last listing", async () => {
+      mockClient.send.mockResolvedValue({});
+
+      await repository.upsertRelated(
+        upsertInput({
+          resources: [
+            { app: App.TestApp, type: ResourceType.USER, id: 1 },
+            { app: App.TestApp, type: ResourceType.ORDER, id: "o" },
+            { app: App.TestApp, type: ResourceType.USER, id: "1" },
+          ],
+        }),
+        CREATED_AT,
+      );
+
+      expect(mockClient.send).toHaveBeenCalledTimes(1);
+      expect(putItems()?.map(({ SK, target }) => ({ SK, target }))).toEqual([
+        { SK: "related#TestApp.User#1", target: { app: "TestApp", type: "User", id: "1" } },
+        { SK: "related#TestApp.Order#o", target: { app: "TestApp", type: "Order", id: "o" } },
+      ]);
     });
 
     it("should write 25 copies at a time", async () => {

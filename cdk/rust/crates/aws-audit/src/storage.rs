@@ -19,7 +19,7 @@ use crate::keys::{
     IncompleteResourceFilter, audit_scopes, filter_scope, has_resource_id, index_attributes,
     primary_key, related_sort_key, tenant_key,
 };
-use crate::model::{Attempt, Audit, AuditSummary, Status, Tier, Timestamp};
+use crate::model::{Attempt, Audit, AuditSummary, ResourceReference, Status, Tier, Timestamp};
 use crate::pagination::{self, InvalidNextToken, Page, PageInfo, Pagination};
 use crate::table::{Index, SUMMARY_PROJECTION, attributes, keys, kinds};
 use crate::upsert::{StoredAudit, UpsertAudit};
@@ -257,12 +257,10 @@ impl AuditRepository {
                 stored.trace.as_deref(),
                 kinds::AUDIT,
             ))
-            // A placeholder: marshalled as a string set below
-            .chain([(attributes::SCOPES.to_owned(), Value::Null)])
             .chain([(attributes::TTL.to_owned(), Value::from(self.ttl(now)))]);
         for (name, value) in fields {
             // The list_append clause owns attempts; createdAt's clause is above
-            if name == "attempts" || (value.is_null() && name != attributes::SCOPES) {
+            if name == "attempts" || value.is_null() {
                 continue;
             }
             names.insert(format!("#{name}"), name.clone());
@@ -272,18 +270,18 @@ impl AuditRepository {
             values.insert(format!(":{name}"), value);
         }
 
+        // Added to, not replaced: a copy under a resource a retry no longer lists
+        // stays, so the status and trace filters keep matching that resource too
+        names.insert("#scopes".to_owned(), attributes::SCOPES.to_owned());
         let mut values = Marshall::ITEM.map(&values);
-        values.insert(
-            format!(":{}", attributes::SCOPES),
-            AttributeValue::Ss(scopes),
-        );
+        values.insert(":scopes".to_owned(), AttributeValue::Ss(scopes));
 
         let output = self
             .client
             .update_item()
             .table_name(&self.table)
             .set_key(Some(Marshall::ITEM.map(&key)))
-            .update_expression(format!("SET {}", clauses.join(", ")))
+            .update_expression(format!("SET {} ADD #scopes :scopes", clauses.join(", ")))
             .set_expression_attribute_names(Some(names))
             .set_expression_attribute_values(Some(values))
             .return_values(ReturnValue::AllNew)
@@ -335,7 +333,9 @@ impl AuditRepository {
     /// audit's target as `source`, in the audit's partition (`SK`
     /// `related#{app}.{type}#{resourceId}`). It takes the audit's stored
     /// `created_at` (from [`upsert_item`](Self::upsert_item)), so it sorts with the
-    /// audit. Copies are replaced on every upsert.
+    /// audit. Each upsert rewrites the copies of the resources it lists, once per
+    /// resource; a copy under a resource a retry no longer lists stays, as do that
+    /// resource's `scopes` on the audit.
     pub async fn upsert_related(
         &self,
         audit: &UpsertAudit,
@@ -362,22 +362,30 @@ impl AuditRepository {
         let source = serde_json::to_value(&stored.target)?;
         let rerunable = stored.rerunable.unwrap_or(stored.event.is_some());
 
-        let mut requests = Vec::new();
+        // One copy per resource: a BatchWriteItem can't put the same key twice. The
+        // last listing of a resource wins, as it would have if each were written in turn
+        let mut resources: Vec<(String, &ResourceReference)> = Vec::new();
         for resource in audit
             .resources
             .iter()
             .flatten()
             .filter(|resource| has_resource_id(resource.id.as_ref()))
         {
+            let sort_key = related_sort_key(resource);
+            match resources.iter_mut().find(|(listed, _)| *listed == sort_key) {
+                Some(listed) => listed.1 = resource,
+                None => resources.push((sort_key, resource)),
+            }
+        }
+
+        let mut requests = Vec::new();
+        for (sort_key, resource) in resources {
             let mut item = Map::from_iter([
                 (
                     keys::PARTITION_KEY.to_owned(),
                     key[keys::PARTITION_KEY].clone(),
                 ),
-                (
-                    keys::SORT_KEY.to_owned(),
-                    Value::String(related_sort_key(resource)),
-                ),
+                (keys::SORT_KEY.to_owned(), Value::String(sort_key)),
             ]);
             item.extend(summary.clone());
             item.insert("target".to_owned(), serde_json::to_value(resource)?);
