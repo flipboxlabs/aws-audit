@@ -110,11 +110,11 @@ REST API for querying audits by resource, status, or trace ID. Every route requi
 
 An audit's `trace` is the trace it was written with, and is omitted when it has none. `GET /apps/{app}/objects/{type}/{item}` and `GET /trace/{trace}` rebuild it from index keys, so there a trace written with stage `0` (`abc:0`) comes back as the equivalent `abc`. `GET /status/{status}` omits `trace`, because the status index doesn't project it; fetch the single audit to read it.
 
-Getting or rerunning a single audit answers `404` when `{audit}` doesn't exist or belongs to a resource other than `{item}`. An audit that lists a resource in `resources` also appears in that resource's listing, with the audit's `id` and its target as the `source`; fetch or rerun it under the source: `/apps/{source.app}/objects/{source.type}/{source.id}/{id}`.
+Getting or rerunning a single audit answers `404` when `{audit}` doesn't exist or belongs to a resource other than `{item}`. A rerun sends the audit's recorded event once, with its `detail` exactly as stored, and answers `204`. It answers `400` when the audit isn't rerunable, and `500` when EventBridge doesn't accept the event; the caller can retry. An audit that lists a resource in `resources` also appears in that resource's listing, with the audit's `id` and its target as the `source`; fetch or rerun it under the source: `/apps/{source.app}/objects/{source.type}/{source.id}/{id}`.
 
 `GET /status/{status}` and `GET /trace/{trace}` take `filter[app]` and `filter[resourceType]` query parameters. A filter matches an audit's target or any of its additional `resources`, and the audit is returned with its own target. Each audit appears once per page, but it can appear again on another page when more than one of its resources matches.
 
-`GET /config` and `GET /status/{status}` run as prebuilt Rust binaries, like the subscription Lambda; the other routes move to Rust in a later release. Every route answers errors as `{statusCode, error, message}`, and a `422` lists each invalid input under `details.issues`, with its location as `path` (e.g. `["query", "filter[app]"]`).
+Every route runs as a prebuilt Rust binary, like the subscription Lambda. Every route answers errors as `{statusCode, error, message}`, and a `422` lists each invalid input under `details.issues`, with its location as `path` (e.g. `["query", "filter[app]"]`).
 
 `GET /config` reads the `AuditConfigLayer` only, so its Lambda has no DynamoDB or EventBridge permissions. Its `version` comes from this package's `package.json` at synth time. Deployments from before the route was added answer `GET /config` with a `403` `{"message":"Missing Authentication Token"}` (API Gateway's response for an unknown route), not a `404`.
 
