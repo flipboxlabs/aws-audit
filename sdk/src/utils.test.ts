@@ -169,6 +169,14 @@ describe("utils", () => {
       expect(result.trace).toBe("existing-trace:5");
     });
 
+    it("should handle SQS records that don't hold an EventBridge event", () => {
+      for (const body of ["not json", "null", "[1]", JSON.stringify({ source: "orders" })]) {
+        const sqsRecord = { ...createMockSQSRecord({}), body };
+
+        expect(buildAuditFromSQSRecord(sqsRecord, createAuditItem()).trace).toBeUndefined();
+      }
+    });
+
     it("should handle SQS record without transaction trace", () => {
       const sqsRecord = createMockSQSRecord({
         detail: { someData: "value" },

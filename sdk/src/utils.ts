@@ -80,16 +80,31 @@ export function buildAuditFromSQSRecord(
   audit: LogAuditInput,
   overrides?: Partial<LogAuditInput>,
 ): LogAuditInput {
-  // If a trace isn't set, try to set it from the sqs record
+  // If a trace isn't set, try to set it from the sqs record's EventBridge event
   if (!audit.trace) {
-    const { detail } = JSON.parse(sqsRecord.body);
+    const trace = parseBody(sqsRecord.body)?.detail?.transaction?.trace;
 
-    if (detail.transaction?.trace) {
-      audit.trace = incrementTraceStage(detail.transaction.trace);
+    if (typeof trace === "string" && trace) {
+      audit.trace = incrementTraceStage(trace);
     }
   }
 
   return buildAudit(audit, overrides);
+}
+
+/**
+ * A message body as JSON, or undefined when it isn't JSON: a message needn't hold
+ * an EventBridge event.
+ *
+ * @internal
+ */
+// oxlint-disable-next-line typescript/no-explicit-any -- any message body
+function parseBody(body: string): any {
+  try {
+    return JSON.parse(body);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
