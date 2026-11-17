@@ -158,6 +158,24 @@ impl From<&str> for ResourceId {
     }
 }
 
+impl From<String> for ResourceId {
+    fn from(id: String) -> Self {
+        ResourceId::String(id)
+    }
+}
+
+macro_rules! numeric_ids {
+    ($($int:ty),*) => {$(
+        impl From<$int> for ResourceId {
+            fn from(id: $int) -> Self {
+                ResourceId::Number(id.into())
+            }
+        }
+    )*};
+}
+
+numeric_ids!(i32, i64, u32, u64);
+
 /// A resource within an app: the target or source of an audit, or a related resource.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResourceReference {
@@ -169,6 +187,23 @@ pub struct ResourceReference {
     /// The resource type.
     #[serde(rename = "type")]
     pub resource_type: String,
+}
+
+impl ResourceReference {
+    /// A resource of `resource_type` in `app`, without an id.
+    pub fn new(app: impl Into<String>, resource_type: impl Into<String>) -> Self {
+        ResourceReference {
+            app: app.into(),
+            id: None,
+            resource_type: resource_type.into(),
+        }
+    }
+
+    /// Sets the resource's id.
+    pub fn with_id(mut self, id: impl Into<ResourceId>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
 }
 
 /// Audit metadata: string keys with string, number, boolean or nested object values.
@@ -236,7 +271,7 @@ impl fmt::Display for Timestamp {
 
 impl From<DateTime<chrono::Utc>> for Timestamp {
     fn from(time: DateTime<chrono::Utc>) -> Self {
-        Timestamp(lambda_kit::clock::to_iso_string(time))
+        Timestamp(time.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
     }
 }
 

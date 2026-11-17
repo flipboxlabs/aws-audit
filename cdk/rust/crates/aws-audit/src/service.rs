@@ -14,7 +14,7 @@ use crate::events::{AuditEventBus, PutEventsError};
 use crate::model::{Attempt, Audit, AuditSummary, ResourceId, Status, Timestamp};
 use crate::pagination::{Page, Pagination};
 use crate::storage::{AuditRepository, Identifiers, ListFilter, ResourceFilter, StorageError};
-use crate::upsert::{InvalidUpsert, UpsertAudit};
+use crate::upsert::{InvalidAudit, UpsertAudit};
 
 /// No audit has these identifiers.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -43,7 +43,7 @@ pub enum ServiceError {
     NotFound(#[from] AuditNotFound),
     /// The upsert names an app or resource type the config doesn't list.
     #[error(transparent)]
-    Invalid(#[from] InvalidUpsert),
+    Invalid(#[from] InvalidAudit),
     /// Reading or writing the table failed, or a `nextToken` was invalid.
     #[error(transparent)]
     Storage(#[from] StorageError),

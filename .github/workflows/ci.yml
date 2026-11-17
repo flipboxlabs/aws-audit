@@ -82,6 +82,12 @@ jobs:
       - name: Lint
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      # What an app gets from a git dependency: the crate without the Lambdas' features
+      - name: Lint aws-audit's app features
+        run: |
+          cargo clippy -p aws-audit --lib --no-default-features --locked -- -D warnings
+          cargo clippy -p aws-audit --lib --no-default-features --features sqs --locked -- -D warnings
+
       # Includes the checks against contract/, which the TypeScript tests generate
       - name: Test
         run: cargo test --workspace --locked

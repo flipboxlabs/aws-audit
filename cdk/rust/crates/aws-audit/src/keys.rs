@@ -6,6 +6,7 @@ use serde_json::{Map, Value};
 
 use crate::model::{ResourceId, ResourceReference};
 use crate::table::{NO_TENANT, attributes, keys, sort_keys};
+use crate::trace::trace_parts;
 
 /// `{tenantId}#{base}`, or `base` without a tenant.
 pub fn partition(tenant_id: Option<&str>, base: &str) -> String {
@@ -64,20 +65,6 @@ pub fn has_resource_id(id: Option<&ResourceId>) -> bool {
         None => false,
         Some(ResourceId::String(id)) => !id.is_empty(),
         Some(ResourceId::Number(_)) => true,
-    }
-}
-
-/// A trace's id and stage: `batch:2026:3` is `("batch:2026", 3)`. The stage is the
-/// integer after the last colon; without one, the whole trace is the id at stage 0.
-pub fn trace_parts(trace: &str) -> (&str, u64) {
-    match trace.rsplit_once(':') {
-        Some((id, stage)) if !stage.is_empty() && stage.bytes().all(|b| b.is_ascii_digit()) => {
-            match stage.parse() {
-                Ok(stage) => (id, stage),
-                Err(_) => (trace, 0),
-            }
-        }
-        _ => (trace, 0),
     }
 }
 
@@ -200,16 +187,6 @@ mod tests {
 
     fn resource(value: Value) -> ResourceReference {
         serde_json::from_value(value).unwrap()
-    }
-
-    #[test]
-    fn splits_traces_on_the_last_colon() {
-        assert_eq!(trace_parts("abc-123:5"), ("abc-123", 5));
-        assert_eq!(trace_parts("abc-123"), ("abc-123", 0));
-        assert_eq!(trace_parts("batch:2026:3"), ("batch:2026", 3));
-        for trace in ["batch:a", "batch:", "batch:-1", "batch:1.5", "batch:5x"] {
-            assert_eq!(trace_parts(trace), (trace, 0), "{trace}");
-        }
     }
 
     #[test]

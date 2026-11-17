@@ -66,6 +66,24 @@ pub enum ConfigError {
 }
 
 impl AuditConfig {
+    /// A config accepting `apps` and `resource_types`, with the default TTL
+    /// (`defineAuditConfig`).
+    pub fn new<A, T>(
+        apps: impl IntoIterator<Item = A>,
+        resource_types: impl IntoIterator<Item = T>,
+    ) -> Self
+    where
+        A: Into<String>,
+        T: Into<String>,
+    {
+        AuditConfig {
+            apps: apps.into_iter().map(Into::into).collect(),
+            resource_types: resource_types.into_iter().map(Into::into).collect(),
+            service: None,
+            ttl_seconds: DEFAULT_TTL_SECONDS,
+        }
+    }
+
     /// Loads the config from `$AUDIT_CONFIG_PATH`, or [`DEFAULT_PATH`].
     pub fn load() -> Result<Self, ConfigError> {
         let path = std::env::var_os(PATH_VARIABLE)

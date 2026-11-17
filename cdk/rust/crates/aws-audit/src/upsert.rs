@@ -79,10 +79,10 @@ pub struct Issue {
     pub path: Vec<Value>,
 }
 
-/// An upsert naming an app or resource type the config doesn't list.
+/// An audit naming an app or resource type the config doesn't list.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("Invalid audit: {}", .issues.iter().map(|issue| issue.message.as_str()).collect::<Vec<_>>().join("; "))]
-pub struct InvalidUpsert {
+pub struct InvalidAudit {
     /// Every problem found.
     pub issues: Vec<Issue>,
 }
@@ -90,39 +90,55 @@ pub struct InvalidUpsert {
 impl UpsertAudit {
     /// Checks every resource reference against the configured apps and types, as
     /// `createTypedUpsertAuditSchema` does.
-    pub fn validate(&self, config: &AuditConfig) -> Result<(), InvalidUpsert> {
-        let mut issues = Vec::new();
-        let mut check = |reference: &ResourceReference, path: Vec<Value>| {
-            if !config.is_app(&reference.app) {
-                issues.push(Issue {
-                    message: format!("Invalid option: expected one of {}", options(&config.apps)),
-                    path: [path.clone(), vec!["app".into()]].concat(),
-                });
-            }
-            if !config.is_resource_type(&reference.resource_type) {
-                issues.push(Issue {
-                    message: format!(
-                        "Invalid option: expected one of {}",
-                        options(&config.resource_types)
-                    ),
-                    path: [path, vec!["type".into()]].concat(),
-                });
-            }
-        };
+    pub fn validate(&self, config: &AuditConfig) -> Result<(), InvalidAudit> {
+        check_references(
+            config,
+            &self.target,
+            self.source.as_ref(),
+            self.resources.iter().flatten(),
+        )
+    }
+}
 
-        check(&self.target, vec!["target".into()]);
-        if let Some(source) = &self.source {
-            check(source, vec!["source".into()]);
+/// Checks an audit's target, source and related resources against the configured
+/// apps and resource types, reporting every problem at its path.
+pub(crate) fn check_references<'a>(
+    config: &AuditConfig,
+    target: &ResourceReference,
+    source: Option<&ResourceReference>,
+    resources: impl IntoIterator<Item = &'a ResourceReference>,
+) -> Result<(), InvalidAudit> {
+    let mut issues = Vec::new();
+    let mut check = |reference: &ResourceReference, path: Vec<Value>| {
+        if !config.is_app(&reference.app) {
+            issues.push(Issue {
+                message: format!("Invalid option: expected one of {}", options(&config.apps)),
+                path: [path.clone(), vec!["app".into()]].concat(),
+            });
         }
-        for (index, resource) in self.resources.iter().flatten().enumerate() {
-            check(resource, vec!["resources".into(), index.into()]);
+        if !config.is_resource_type(&reference.resource_type) {
+            issues.push(Issue {
+                message: format!(
+                    "Invalid option: expected one of {}",
+                    options(&config.resource_types)
+                ),
+                path: [path, vec!["type".into()]].concat(),
+            });
         }
+    };
 
-        if issues.is_empty() {
-            Ok(())
-        } else {
-            Err(InvalidUpsert { issues })
-        }
+    check(target, vec!["target".into()]);
+    if let Some(source) = source {
+        check(source, vec!["source".into()]);
+    }
+    for (index, resource) in resources.into_iter().enumerate() {
+        check(resource, vec!["resources".into(), index.into()]);
+    }
+
+    if issues.is_empty() {
+        Ok(())
+    } else {
+        Err(InvalidAudit { issues })
     }
 }
 

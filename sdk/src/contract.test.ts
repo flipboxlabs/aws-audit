@@ -14,11 +14,13 @@ import type { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import type { EventBridgeClient } from "@aws-sdk/client-eventbridge";
 import { marshall } from "@aws-sdk/util-dynamodb";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
+import { Audits } from "./audits.js";
 import { DynamoDB, type IndexDefinition } from "./constants.js";
 import { BatchHandler } from "./events/batch-handler.js";
 import { AuditEventBus } from "./events/bus.js";
 import { AuditRepository } from "./repository.js";
 import { decodeNextPageToken, encodeNextPageToken, type PageKey } from "./repository.utils.js";
+import type { LogAuditInput } from "./schema/log.js";
 import { AuditService } from "./service.js";
 import { testConfig } from "./test-config.js";
 
@@ -604,5 +606,72 @@ describe("contract fixtures", () => {
     await expect(
       `${JSON.stringify({ description: "nextToken encoding (encodeNextPageToken)", tokens }, null, 2)}\n`,
     ).toMatchFileSnapshot(`${FIXTURES}/pagination-tokens.json`);
+  });
+
+  it("audit log lines", async () => {
+    // A Lambda's trace header; audits without a trace get its root
+    const traceHeader =
+      "Root=1-5759e988-bd862e3fe1be46a994272793;Parent=557abcec3ee5a047;Sampled=1";
+    vi.stubEnv("_X_AMZN_TRACE_ID", traceHeader);
+    vi.stubEnv("POWERTOOLS_AUDITS_DISABLED", "false");
+
+    const inputs: { name: string; input: LogAuditInput }[] = [
+      {
+        name: "defaults",
+        input: { operation: "createOrder", target: { app: "App1", type: "Order", id: "order-1" } },
+      },
+      {
+        name: "every field",
+        input: {
+          error: "Boom",
+          event: {
+            source: "orders",
+            "detail-type": "OrderCreated",
+            detail: { orderId: 7, nested: { ok: true } },
+          },
+          trace: "batch-1:2",
+          message: "Order failed",
+          resources: [
+            { app: "TestApp", type: "User", id: 7 },
+            { app: "TestApp", type: "User", id: 1.5 },
+            { app: "App1", type: "Unknown" },
+          ],
+          context: { attempt: 2, ok: false, nested: { b: "1", a: 2.5 } },
+          source: { type: "User", app: "TestApp" },
+          target: { type: "Order", id: 42, app: "App1" },
+          status: "fail",
+          tier: 3,
+          tenantId: "tenant-1",
+          operation: "createOrder",
+          id: "audit-1",
+        },
+      },
+      {
+        name: "string event detail",
+        input: {
+          operation: "rerun",
+          target: { app: "App1", type: "Order" },
+          event: { detail: '{ "kept": "as is" }' },
+        },
+      },
+    ];
+
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const cases = inputs.map(({ name, input }) => {
+      write.mockClear();
+      const audits = new Audits({ config: testConfig });
+      audits.addAudit(structuredClone(input) as never);
+      audits.publishStoredAudits();
+      const line = write.mock.calls.map(([chunk]) => String(chunk)).join("");
+      return { name, input, line };
+    });
+    write.mockRestore();
+    vi.unstubAllEnvs();
+    vi.stubEnv("ENVIRONMENT", ENV.ENVIRONMENT);
+    vi.stubEnv("SERVICE", ENV.SERVICE);
+
+    await expect(
+      `${JSON.stringify({ description: "What Audits logs for each input (publishStoredAudits)", traceHeader, cases }, null, 2)}\n`,
+    ).toMatchFileSnapshot(`${FIXTURES}/log-lines.json`);
   });
 });
