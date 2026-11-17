@@ -112,6 +112,7 @@ dependencies = [
  "aws_lambda_events",
  "base64 0.22.1",
  "chrono",
+ "futures-util",
  "http 1.5.0",
  "lambda-kit",
  "serde",

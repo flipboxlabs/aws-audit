@@ -53,7 +53,7 @@ async fn main() -> Result<(), Error> {
 
 As in TypeScript, an audit without a trace gets the invocation's X-Ray trace id, and `POWERTOOLS_AUDITS_DISABLED` (or `POWERTOOLS_DEV` when that's unset) turns logging off. In the runtime's concurrent mode, where `_X_AMZN_TRACE_ID` isn't set, pass `event.context.xray_trace_id` to `Audits::with_trace_id`.
 
-With the `sqs` feature, `process_batch` handles each message of an SQS batch and audits it, as the TypeScript `AuditBatchProcessor` does. Retries of a message share its id, so they're attempts of one audit. A failure is audited with the message's event so it can be rerun, and is reported in the batch response:
+With the `sqs` feature, `process_batch` handles the messages of an SQS batch concurrently and audits each, as the TypeScript `AuditBatchProcessor` does (so it isn't for FIFO queues, whose messages must be handled in order). Retries of a message share its id, so they're attempts of one audit. A failure is audited with the message's event so it can be rerun, and is reported in the batch response:
 
 ```rust
 use aws_audit::sqs::{audit_for, process_batch};

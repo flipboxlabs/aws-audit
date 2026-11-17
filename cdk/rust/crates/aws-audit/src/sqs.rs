@@ -6,6 +6,7 @@
 use std::fmt;
 
 use aws_lambda_events::event::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent, SqsMessage};
+use futures_util::future::join_all;
 use serde::Deserialize;
 
 use crate::log::{Audits, LogAudit};
@@ -65,7 +66,10 @@ pub fn audit_for(message: &SqsMessage, mut audit: LogAudit) -> LogAudit {
 /// messages that failed so SQS retries only those (`AuditBatchProcessor`).
 ///
 /// `audit` builds a message's audit; `handler` processes the message and may change
-/// the audit, e.g. its message or status. Messages are handled in order.
+/// the audit, e.g. its message or status. Messages are handled concurrently, as
+/// Powertools' `BatchProcessor` does by default, so don't use this for a FIFO queue,
+/// whose messages must be handled in order. Audits and failures are reported in
+/// message order.
 ///
 /// - A handled message is audited as a success, unless `handler` set another
 ///   status, without its event.
@@ -79,18 +83,26 @@ pub async fn process_batch<E: fmt::Display>(
     audits: &mut Audits,
     batch: &SqsEvent,
     audit: impl Fn(&SqsMessage) -> LogAudit,
-    mut handler: impl AsyncFnMut(&SqsMessage, &mut LogAudit) -> Result<(), E>,
+    handler: impl AsyncFn(&SqsMessage, &mut LogAudit) -> Result<(), E>,
 ) -> SqsBatchResponse {
-    let mut response = SqsBatchResponse::default();
-
-    for message in &batch.records {
+    let handled = join_all(batch.records.iter().map(|message| {
         let mut item = audit(message);
         item.status = Status::Success;
         if item.id.is_none() {
             item.id.clone_from(&message.message_id);
         }
 
-        match handler(message, &mut item).await {
+        let handler = &handler;
+        async move {
+            let result = handler(message, &mut item).await;
+            (message, item, result)
+        }
+    }))
+    .await;
+
+    let mut response = SqsBatchResponse::default();
+    for (message, mut item, result) in handled {
+        match result {
             Ok(()) => item.event = None,
             Err(error) => {
                 let error = error.to_string();
@@ -269,5 +281,52 @@ mod tests {
         assert_eq!(lines[1]["event"]["detail-type"], "OrderCreated");
         assert_eq!(lines[1]["trace"], "xray");
         assert_eq!(lines[2]["status"], "skip");
+    }
+
+    #[tokio::test]
+    async fn handles_messages_concurrently_and_reports_in_order() {
+        let out = Captured::default();
+        let mut audits = Audits::new(Arc::new(AuditConfig::new(["App1"], ["Order"])))
+            .with_writer(out.clone())
+            .with_disabled(false);
+        let mut batch = SqsEvent::default();
+        batch.records = (1..=3)
+            .map(|n| message(&format!("m-{n}"), json!({}), "1"))
+            .collect();
+
+        // Every handler waits for the others: handled one at a time, none finishes
+        let barrier = tokio::sync::Barrier::new(batch.records.len());
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            process_batch(
+                &mut audits,
+                &batch,
+                |_| LogAudit::new("processOrder", ResourceReference::new("App1", "Order")),
+                async |message: &SqsMessage, _: &mut LogAudit| {
+                    barrier.wait().await;
+                    match message.message_id.as_deref() {
+                        Some("m-1" | "m-3") => Err("Boom"),
+                        _ => Ok(()),
+                    }
+                },
+            ),
+        )
+        .await
+        .expect("the messages are handled concurrently");
+        audits.publish();
+
+        let failures: Vec<_> = response
+            .batch_item_failures
+            .iter()
+            .map(|failure| failure.item_identifier.as_str())
+            .collect();
+        assert_eq!(failures, ["m-1", "m-3"]);
+
+        let ids: Vec<String> = String::from_utf8(out.0.lock().unwrap().clone())
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap()["_audit"]["id"].to_string())
+            .collect();
+        assert_eq!(ids, [r#""m-1""#, r#""m-2""#, r#""m-3""#]);
     }
 }
