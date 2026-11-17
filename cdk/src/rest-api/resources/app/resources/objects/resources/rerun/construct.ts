@@ -1,11 +1,10 @@
-import * as url from "node:url";
 import type { CDKConfig } from "@flipboxlabs/aws-audit-cdk";
 import * as apigateway from "aws-cdk-lib/aws-apigateway";
 import type * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import type * as events from "aws-cdk-lib/aws-events";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
 import { Construct } from "constructs";
-import { ESMNodeFunctionFactory } from "../../../../../../../lambda/nodejs.function.js";
+import { RustFunctionFactory } from "../../../../../../../lambda/rust.function.js";
 import { API_RESOURCE } from "./constants.js";
 
 type Props = {
@@ -33,21 +32,19 @@ export default class extends Construct {
       "Resource-Rerun",
     ].join("-");
 
-    // Lambda
-    const lambdaFn = ESMNodeFunctionFactory(props.config)(this, "NodeFunction", {
+    // Lambda (cdk/rust/lambdas/rerun). The id predates the Rust port and stays: a named
+    // function whose id changes can't be replaced in place
+    const lambdaFn = RustFunctionFactory(props.config)(this, "NodeFunction", {
+      binary: "rerun",
       functionName: ref,
-      entry: url.fileURLToPath(new URL("handler.js", import.meta.url).toString()),
       layers: props.lambda.layers,
-      currentVersionOptions: {
-        retryAttempts: 1,
-      },
     });
 
     // Logger / Metrics / Tracing
     lambdaFn.addEnvironment("POWERTOOLS_SERVICE_NAME", "ResourceRerun");
 
-    // Audit
-    props.table.grantReadWriteData(lambdaFn);
+    // Audit (it reads the audit, then sends its event)
+    props.table.grantReadData(lambdaFn);
 
     // Put events
     props.eventBus.grantPutEventsTo(lambdaFn);

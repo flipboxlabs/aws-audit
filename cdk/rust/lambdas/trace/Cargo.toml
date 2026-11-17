@@ -1,0 +1,25 @@
+[package]
+name = "trace"
+version = "0.1.0"
+description = "The GET /trace/{trace} Lambda: the audits of a trace, in stage order"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+aws-audit.workspace = true
+aws-audit-http.workspace = true
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+lambda-kit = { workspace = true, features = ["http"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+aws-audit = { workspace = true, features = ["testing"] }
+aws-audit-http = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+
+[lints]
+workspace = true

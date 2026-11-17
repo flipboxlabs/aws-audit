@@ -240,12 +240,12 @@ fn log_unpublished(audit: &UpsertAudit, error: &PutEventsError) {
         })
         .collect();
     tracing::error!(
-        tenant_id = audit.tenant_id.as_deref(),
+        tenantId = audit.tenant_id.as_deref(),
         id = audit.id.as_deref(),
         app = %audit.target.app,
-        target_type = %audit.target.resource_type,
-        target_id = audit.target.id.as_ref().map(ResourceId::to_key),
-        failed_entries = ?failed,
+        targetType = %audit.target.resource_type,
+        targetId = audit.target.id.as_ref().map(ResourceId::to_key),
+        failedEntries = ?failed,
         error = %ErrorChain(error),
         "Audit stored but Upserted event not published"
     );

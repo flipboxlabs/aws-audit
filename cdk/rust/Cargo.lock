@@ -2049,6 +2049,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "objects"
+version = "0.1.0"
+dependencies = [
+ "aws-audit",
+ "aws-audit-http",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "lambda-kit",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2376,6 +2389,21 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "rerun"
+version = "0.1.0"
+dependencies = [
+ "aws-audit",
+ "aws-audit-http",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-eventbridge",
+ "lambda-kit",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "rfc6979"
@@ -3056,6 +3084,18 @@ name = "tower-service"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
+
+[[package]]
+name = "trace"
+version = "0.1.0"
+dependencies = [
+ "aws-audit",
+ "aws-audit-http",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "lambda-kit",
+ "tokio",
+]
 
 [[package]]
 name = "tracing"

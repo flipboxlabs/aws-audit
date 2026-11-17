@@ -2,7 +2,7 @@ import { Router } from "@aws-lambda-powertools/event-handler/http";
 import { Logger } from "@aws-lambda-powertools/logger";
 import { AuditService } from "@flipboxlabs/aws-audit-sdk";
 import type { Context } from "aws-lambda";
-import { type App, auditConfig } from "../../../audit-config.js";
+import { type App, auditConfig, type ResourceType } from "../../../audit-config.js";
 import { API_RESOURCE } from "./constants.js";
 import {
   PathSchema,
@@ -38,6 +38,9 @@ app.get(
       {
         trace: traceId,
         app: query["filter[app]"] as App | undefined,
+        resource: query["filter[resourceType]"]
+          ? { type: query["filter[resourceType]"] as ResourceType }
+          : undefined,
       },
       pagination,
     );

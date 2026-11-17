@@ -15,6 +15,14 @@
         "App1",
         "TestApp"
       ]
+    },
+    "filter[resourceType]": {
+      "type": "string",
+      "enum": [
+        "Unknown",
+        "User",
+        "Order"
+      ]
     }
   }
 }

@@ -176,9 +176,11 @@ pub fn contract_config() -> AuditConfig {
     .unwrap()
 }
 
-/// An audit service on `recorder`, with the fixtures' config, clock and jitter,
-/// and no SDK retries.
-pub fn contract_service(recorder: &Arc<Recorder>) -> AuditService {
+/// SDK clients on `recorder`, in us-east-1 with fixed credentials, and without
+/// retries.
+fn contract_clients(
+    recorder: &Arc<Recorder>,
+) -> (aws_sdk_dynamodb::Client, aws_sdk_eventbridge::Client) {
     use aws_sdk_dynamodb::config::retry::RetryConfig;
     use aws_sdk_dynamodb::config::{
         BehaviorVersion, Credentials, Region, StalledStreamProtectionConfig,
@@ -209,6 +211,24 @@ pub fn contract_service(recorder: &Arc<Recorder>) -> AuditService {
             )
             .build(),
     );
+    (dynamodb, eventbridge)
+}
+
+/// The retry jitter the fixtures are recorded with (`Math.random()` is 0.5).
+fn contract_jitter() -> Arc<FixedJitter> {
+    Arc::new(FixedJitter(0.5))
+}
+
+/// The fixtures' event bus on `recorder`.
+pub fn contract_event_bus(recorder: &Arc<Recorder>) -> AuditEventBus {
+    let (_, eventbridge) = contract_clients(recorder);
+    AuditEventBus::new(eventbridge, RESOURCE_NAME).with_jitter(contract_jitter())
+}
+
+/// An audit service on `recorder`, with the fixtures' config, clock and jitter,
+/// and no SDK retries.
+pub fn contract_service(recorder: &Arc<Recorder>) -> AuditService {
+    let (dynamodb, _) = contract_clients(recorder);
 
     let config = contract_config();
     let clock = Arc::new(FixedClock(
@@ -216,14 +236,17 @@ pub fn contract_service(recorder: &Arc<Recorder>) -> AuditService {
             .unwrap()
             .with_timezone(&Utc),
     ));
-    let jitter = Arc::new(FixedJitter(0.5));
 
     let storage = AuditRepository::new(dynamodb, RESOURCE_NAME, &config)
         .with_clock(clock.clone())
-        .with_jitter(jitter.clone());
-    let events = AuditEventBus::new(eventbridge, RESOURCE_NAME).with_jitter(jitter);
+        .with_jitter(contract_jitter());
 
-    AuditService::new(Arc::new(config), storage, Some(events)).with_clock(clock)
+    AuditService::new(
+        Arc::new(config),
+        storage,
+        Some(contract_event_bus(recorder)),
+    )
+    .with_clock(clock)
 }
 
 /// A request body as compared: the `Upserted` event's `Detail` is parsed, since

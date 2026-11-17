@@ -168,6 +168,37 @@ describe("trace handler", () => {
       expect(mockListTraceItems).not.toHaveBeenCalled();
     });
 
+    it("should pass resource type filter to service", async () => {
+      mockListTraceItems.mockResolvedValue({ items: [] });
+
+      const event = createApiGatewayEvent({
+        rawQueryString: `filter[resourceType]=${ResourceType.UNKNOWN}`,
+        queryStringParameters: {
+          "filter[resourceType]": ResourceType.UNKNOWN,
+        },
+      });
+      const response = await handler(event, mockContext);
+
+      expect(mockListTraceItems).toHaveBeenCalledWith(
+        { trace: "trace-123", app: undefined, resource: { type: ResourceType.UNKNOWN } },
+        undefined,
+      );
+      expect(response.statusCode).toBe(200);
+    });
+
+    it("should return 422 for invalid resource type filter", async () => {
+      const event = createApiGatewayEvent({
+        rawQueryString: "filter[resourceType]=InvalidType",
+        queryStringParameters: {
+          "filter[resourceType]": "InvalidType",
+        },
+      });
+      const response = await handler(event, mockContext);
+
+      expect(response.statusCode).toBe(422);
+      expect(mockListTraceItems).not.toHaveBeenCalled();
+    });
+
     it("should return empty items array when no audits found", async () => {
       const mockResponse = { items: [] };
       mockListTraceItems.mockResolvedValue(mockResponse);

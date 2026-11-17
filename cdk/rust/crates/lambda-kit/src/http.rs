@@ -28,8 +28,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use lambda_http::http::Method;
 use lambda_http::http::header::CONTENT_TYPE;
-use lambda_http::http::{Method, StatusCode};
 use lambda_http::request::RequestContext;
 use lambda_http::{Body, Request, RequestExt, Response};
 use percent_encoding::percent_decode_str;
@@ -37,6 +37,8 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::logging::ErrorChain;
+
+pub use lambda_http::http::StatusCode;
 
 /// What a handler returns.
 pub type Result<T = Response<Body>> = std::result::Result<T, Error>;

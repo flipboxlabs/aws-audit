@@ -18,7 +18,8 @@
 //! `POWERTOOLS_SERVICE_NAME`, as with Powertools.
 //!
 //! Log errors with [`ErrorChain`], so the cause behind a wrapper ("unhandled
-//! error", "dispatch failure") is in the line too.
+//! error", "dispatch failure") is in the line too. Name fields in camelCase
+//! (`resourceType`, `failedEntries`), as the runtime's and Powertools' are.
 
 use std::error::Error;
 use std::fmt;

@@ -20,11 +20,16 @@ lambdas/<name>          One binary per Lambda. The directory, package and binary
 lambdas/subscription    The CloudWatch Logs subscription (CloudWatchConstruct)
 lambdas/config          GET /config
 lambdas/status          GET /status/{status}
+lambdas/trace           GET /trace/{trace}
+lambdas/objects         GET /apps/{app}/objects/{object}[/{item}[/{audit}]]
+lambdas/rerun           POST /apps/{app}/objects/{object}/{item}/{audit}/rerun
 ```
 
 Each Lambda keeps its handler in `src/lib.rs`, so tests call it directly, and its runtime setup in `src/main.rs`. Tests replay the fixtures through `aws_audit::testing` (the `testing` feature) and check log lines with `lambda_kit::testing::LogCapture`.
 
-A REST Lambda's `src/lib.rs` returns a `lambda_kit::http::Router` of its routes, keyed by API Gateway resource path (`/status/{status}`). A handler collects every invalid input in an `Issues` and returns them as one 422, and maps audit errors with `aws_audit_http::service_error`. Any other error becomes a 500, logged with its causes. Its tests replay `contract/fixtures/http/<route>` through `aws_audit_http::testing`, which builds the API Gateway event each fixture describes, compares the answer, and validates every 200 against `contract/schemas`.
+A REST Lambda's `src/lib.rs` returns a `lambda_kit::http::Router` of its routes, keyed by API Gateway resource path (`/status/{status}`). A handler collects every invalid input in an `Issues` and returns them as one 422, and maps audit errors with `aws_audit_http::service_error`. Any other error becomes a 500, logged with its causes. Its tests replay `contract/fixtures/http/<route>` with `aws_audit_http::testing::replay_fixtures`, which builds the API Gateway event each fixture describes, answers the AWS calls from the fixture, compares the calls and the answer, and validates every 200 against `contract/schemas`.
+
+Log fields are camelCase (`resourceType`, `failedEntries`), like the runtime's `requestId` and Powertools' fields.
 
 ## Working on it
 
