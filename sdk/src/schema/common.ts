@@ -162,11 +162,15 @@ export const BaseSchema = z.object({
   context: ContextSchema.optional(),
   /** Name of the operation being audited */
   operation: z.string(),
-  /** Human-readable description of the audit */
+  /**
+   * Human-readable description of the audit. A null is dropped; the pipe states
+   * the output, so the published JSON Schema has it as an optional string.
+   */
   message: z
     .union([z.string(), z.null()])
     .optional()
-    .transform((value) => value ?? undefined),
+    .transform((value) => value ?? undefined)
+    .pipe(z.string().optional()),
   /** Whether this audit can be re-run/retried */
   rerunable: z.boolean().optional(),
   /** Trace identifier for distributed tracing */

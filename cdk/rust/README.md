@@ -5,17 +5,26 @@ The Rust port of the internal Lambdas (#93). The CDK constructs stay TypeScript,
 ## Layout
 
 ```
-crates/lambda-kit   Building blocks any Rust Lambda can use, the way the TypeScript
-                    Lambdas use Powertools: JSON logging, retry with backoff, a clock
-crates/aws-audit    The audit core: model, config, names, table layout, pagination
-                    tokens, and the DynamoDB repository, EventBridge publisher and
-                    service the Lambdas call
-lambdas/<name>      One binary per Lambda. The directory, package and binary share
-                    the name; RustFunctionFactory runs it by that name
-lambdas/subscription  The CloudWatch Logs subscription (CloudWatchConstruct)
+crates/lambda-kit       Building blocks any Rust Lambda can use, the way the TypeScript
+                        Lambdas use Powertools: JSON logging, retry with backoff, a
+                        clock, and (the http feature) REST routing, validation and
+                        error bodies behind API Gateway
+crates/aws-audit        The audit core: model, config, names, table layout, pagination
+                        tokens, and the DynamoDB repository, EventBridge publisher and
+                        service the Lambdas call
+crates/aws-audit-http   What the REST Lambdas share: the pagination query, checks
+                        against the configured apps, resource types and statuses, and
+                        audit errors as HTTP errors
+lambdas/<name>          One binary per Lambda. The directory, package and binary share
+                        the name; RustFunctionFactory runs it by that name
+lambdas/subscription    The CloudWatch Logs subscription (CloudWatchConstruct)
+lambdas/config          GET /config
+lambdas/status          GET /status/{status}
 ```
 
 Each Lambda keeps its handler in `src/lib.rs`, so tests call it directly, and its runtime setup in `src/main.rs`. Tests replay the fixtures through `aws_audit::testing` (the `testing` feature) and check log lines with `lambda_kit::testing::LogCapture`.
+
+A REST Lambda's `src/lib.rs` returns a `lambda_kit::http::Router` of its routes, keyed by API Gateway resource path (`/status/{status}`). A handler collects every invalid input in an `Issues` and returns them as one 422, and maps audit errors with `aws_audit_http::service_error`. Any other error becomes a 500, logged with its causes. Its tests replay `contract/fixtures/http/<route>` through `aws_audit_http::testing`, which builds the API Gateway event each fixture describes, compares the answer, and validates every 200 against `contract/schemas`.
 
 ## Working on it
 

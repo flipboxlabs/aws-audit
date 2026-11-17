@@ -87,7 +87,9 @@
     "operation": {
       "type": "string"
     },
-    "message": {},
+    "message": {
+      "type": "string"
+    },
     "rerunable": {
       "type": "boolean"
     },
@@ -171,8 +173,7 @@
     "status",
     "tier",
     "target",
-    "operation",
-    "message"
+    "operation"
   ],
   "additionalProperties": false,
   "$defs": {
