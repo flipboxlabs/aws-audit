@@ -1,6 +1,7 @@
 import {
   ConditionalCheckFailedException,
   type DynamoDBClient,
+  GetItemCommand,
   PutItemCommand,
   ScanCommand,
   UpdateItemCommand,
@@ -75,7 +76,10 @@ export type MigrationReport = {
   invalid: { PK: unknown; SK: unknown; reason: string }[];
 };
 
-type Write = { kind: "audits" | "copies"; item: UnmarshalledAttributes };
+type Key = { PK: string; SK: string };
+
+/** An item to write; a copy names its audit's key in the earlier table */
+type Write = { kind: "audits" | "copies"; item: UnmarshalledAttributes; audit?: Key };
 
 /**
  * Copies every audit of the earlier table into the v2 table.
@@ -83,9 +87,11 @@ type Write = { kind: "audits" | "copies"; item: UnmarshalledAttributes };
  * - An audit (`SK` its id) is written under its v2 key with its index
  *   attributes, keeping its fields, `createdAt` and `ttl`. A trace the earlier
  *   table kept only in its index keys is rebuilt from them.
- * - A related resource's copy (`SK` `{auditId}#{app}.{type}#{id}`) is written as a
- *   summary copy in its audit's partition, and its resource is added to the
- *   audit's `scopes`, so status and trace filters match it.
+ * - A related resource's copy (`SK` `{auditId}#{app}.{type}#{id}`, its target) is
+ *   written as a summary copy in its audit's partition, with its audit's
+ *   `createdAt` so it sorts with the audit (the earlier table gave a copy the time
+ *   of the audit's latest upsert). Its resource is added to the audit's `scopes`,
+ *   so status and trace filters match it.
  *
  * Writes are conditional, so a run can be repeated and never replaces what the
  * new version has written since the deploy. Deploy first, then migrate.
@@ -105,7 +111,10 @@ export async function migrate(options: MigrationOptions): Promise<MigrationRepor
   // Related resources' scopes per audit partition, added once every audit is written
   const relatedScopes = new Map<string, Set<string>>();
 
-  const put = async ({ kind, item }: Write) => {
+  const put = async ({ kind, item, audit }: Write, createdAt: CreatedAt) => {
+    if (audit) {
+      item.createdAt = (await createdAt(audit)) ?? item.createdAt;
+    }
     if (dryRun) {
       report[kind].written++;
       return;
@@ -137,7 +146,8 @@ export async function migrate(options: MigrationOptions): Promise<MigrationRepor
     for (const raw of items) {
       report.scanned++;
       const item = unmarshall(raw);
-      const result = String(item.SK ?? "").includes("#") ? toCopy(item) : toAudit(item);
+      const auditId = copyAuditId(item);
+      const result = auditId === undefined ? toAudit(item) : toCopy(item, auditId);
 
       if ("reason" in result) {
         report.invalid.push({ PK: item.PK, SK: item.SK, reason: result.reason });
@@ -152,7 +162,9 @@ export async function migrate(options: MigrationOptions): Promise<MigrationRepor
       }
     }
 
-    await inBatches(writes, concurrency, put);
+    // Per page, as copies of an audit are spread across the earlier table
+    const createdAt = auditCreatedAt(client, from);
+    await inBatches(writes, concurrency, (write) => put(write, createdAt));
     startKey = lastKey;
     onProgress?.(report);
   } while (startKey);
@@ -190,6 +202,51 @@ export async function migrate(options: MigrationOptions): Promise<MigrationRepor
 type Transformed =
   | { write: Write; scopes?: { partition: string; values: string[] } }
   | { reason: string };
+
+/** Reads an earlier audit's `createdAt`, once per audit */
+type CreatedAt = (audit: Key) => Promise<string | undefined>;
+
+function auditCreatedAt(client: DynamoDBClient, table: string): CreatedAt {
+  const read = new Map<string, Promise<string | undefined>>();
+
+  return (audit) => {
+    const name = JSON.stringify([audit.PK, audit.SK]);
+    let createdAt = read.get(name);
+    if (!createdAt) {
+      createdAt = client
+        .send(
+          new GetItemCommand({
+            TableName: table,
+            Key: marshall(audit),
+            ProjectionExpression: "#createdAt",
+            ExpressionAttributeNames: { "#createdAt": "createdAt" },
+          }),
+        )
+        .then(({ Item }) => {
+          const value = Item && unmarshall(Item).createdAt;
+          return typeof value === "string" ? value : undefined;
+        });
+      read.set(name, createdAt);
+    }
+    return createdAt;
+  };
+}
+
+/**
+ * The audit id of an earlier related resource's copy, whose `SK` is
+ * `{auditId}#{app}.{type}#{id}` for its target; undefined for an audit, whose `SK`
+ * is its id, which may hold a `#` too.
+ */
+function copyAuditId(item: UnmarshalledAttributes): string | undefined {
+  const sortKey = String(item.SK ?? "");
+  const target = item.target as Partial<ResourceReference> | undefined;
+  if (!target?.app || !target.type || !hasResourceId(target.id)) return undefined;
+
+  const suffix = `#${target.app}.${target.type}#${target.id}`;
+  return sortKey.length > suffix.length && sortKey.endsWith(suffix)
+    ? sortKey.slice(0, -suffix.length)
+    : undefined;
+}
 
 /**
  * An earlier audit as a v2 audit.
@@ -236,15 +293,12 @@ function toAudit(item: UnmarshalledAttributes): Transformed {
  * An earlier related resource's copy as a v2 summary copy, and the scopes it adds
  * to its audit.
  */
-function toCopy(item: UnmarshalledAttributes): Transformed {
-  const auditId = String(item.SK).split("#")[0];
-  const target = item.target as ResourceReference | undefined;
+function toCopy(item: UnmarshalledAttributes, auditId: string): Transformed {
+  const target = item.target as ResourceReference;
   const source = item.source as ResourceReference | undefined;
 
-  if (!auditId || !target || !hasResourceId(target.id) || !source?.app || !source.type) {
-    return {
-      reason: "A related resource's copy needs its audit id, an identified target and a source",
-    };
+  if (!source?.app || !source.type) {
+    return { reason: "A related resource's copy needs a source" };
   }
 
   const fields = withTrace(item);
@@ -275,6 +329,11 @@ function toCopy(item: UnmarshalledAttributes): Transformed {
   return {
     write: {
       kind: "copies",
+      // The earlier table's key of the audit
+      audit: {
+        PK: tenantId ? `${tenantId}#${source.app}.${source.type}` : `${source.app}.${source.type}`,
+        SK: auditId,
+      },
       item: {
         ...copy,
         id: auditId,

@@ -1,6 +1,7 @@
 import {
   ConditionalCheckFailedException,
   type DynamoDBClient,
+  GetItemCommand,
   PutItemCommand,
   ScanCommand,
   UpdateItemCommand,
@@ -61,8 +62,8 @@ const conditionFailed = () =>
   new ConditionalCheckFailedException({ message: "The conditional request failed", $metadata: {} });
 
 /**
- * A client whose scan returns `pages`, and whose writes `reject` can refuse with a
- * failed condition.
+ * A client whose scan returns `pages`, whose reads find the items on them, and
+ * whose writes `reject` can refuse with a failed condition.
  */
 const stubClient = (
   pages: Record<string, unknown>[][],
@@ -77,6 +78,11 @@ const stubClient = (
         Items: pages[page].map((item) => marshall(item, { removeUndefinedValues: true })),
         LastEvaluatedKey: page + 1 < pages.length ? marshall({ page: page + 1 }) : undefined,
       };
+    }
+    if (command instanceof GetItemCommand) {
+      const { PK, SK } = unmarshall(command.input.Key!);
+      const item = pages.flat().find((item) => item.PK === PK && item.SK === SK);
+      return { Item: item && marshall(item, { removeUndefinedValues: true }) };
     }
     if (reject(command as PutItemCommand | UpdateItemCommand)) {
       throw conditionFailed();
@@ -215,6 +221,65 @@ describe("migrate", () => {
     });
   });
 
+  it("gives a copy its audit's createdAt, which the earlier table didn't keep on it", async () => {
+    const EARLIER = "2026-01-01T00:00:00.000Z";
+    const { client, send } = stubClient([
+      [
+        v1Copy({ createdAt: NOW }),
+        v1Copy({
+          SK: "audit-1#TestApp.Order#order-9",
+          target: { app: "TestApp", type: "Order", id: "order-9" },
+        }),
+        v1Copy({ tenantId: "tenant-a", createdAt: NOW }),
+        v1Copy({ SK: "audit-2#TestApp.User#user-1", createdAt: NOW }),
+      ],
+      [
+        v1Audit({ createdAt: EARLIER }),
+        v1Audit({
+          PK: "tenant-a#App1.Order",
+          tenantId: "tenant-a",
+          createdAt: "2025-06-01T00:00:00.000Z",
+        }),
+      ],
+    ]);
+
+    await migrate({ client, from: FROM, to: TO });
+
+    const copies = putItems(send).filter(({ kind }) => kind === "related");
+    expect(copies.map(({ PK, createdAt }) => [PK, createdAt])).toEqual([
+      ["App1.Order#audit-1", EARLIER],
+      ["App1.Order#audit-1", EARLIER],
+      ["tenant-a#App1.Order#audit-1", "2025-06-01T00:00:00.000Z"],
+      // Without its audit, a copy keeps its own
+      ["App1.Order#audit-2", NOW],
+    ]);
+    // Read from the earlier table, once per audit
+    expect(
+      commands(send, GetItemCommand).map(({ input }) => [input.TableName, unmarshall(input.Key!)]),
+    ).toEqual([
+      [FROM, { PK: "App1.Order", SK: "audit-1" }],
+      [FROM, { PK: "tenant-a#App1.Order", SK: "audit-1" }],
+      [FROM, { PK: "App1.Order", SK: "audit-2" }],
+    ]);
+  });
+
+  it("writes an audit whose id holds a # as an audit", async () => {
+    const { client, send } = stubClient([
+      [
+        v1Audit({ SK: "batch#7", id: "batch#7" }),
+        v1Audit({ SK: "a#App1.Order#order-1#x", id: "a#App1.Order#order-1#x" }),
+      ],
+    ]);
+
+    const report = await migrate({ client, from: FROM, to: TO });
+
+    expect(report).toMatchObject({ audits: { written: 2 }, copies: { written: 0 }, invalid: [] });
+    expect(putItems(send).map(({ PK, SK }) => [PK, SK])).toEqual([
+      ["App1.Order#batch#7", "audit"],
+      ["App1.Order#a#App1.Order#order-1#x", "audit"],
+    ]);
+  });
+
   it("leaves items already in the v2 table, and counts copies whose audit is missing", async () => {
     const { client } = stubClient([[v1Audit(), v1Copy()]], () => true);
 
@@ -257,7 +322,7 @@ describe("migrate", () => {
       {
         PK: "TestApp.User",
         SK: "audit-1#TestApp.User#user-1",
-        reason: "A related resource's copy needs its audit id, an identified target and a source",
+        reason: "A related resource's copy needs a source",
       },
     ]);
     expect(putItems(send).map(({ PK }) => PK)).toEqual(["App1.Order#audit-1"]);
@@ -277,7 +342,11 @@ describe("migrate", () => {
 
     const report = await migrate({ client, from: FROM, to: TO, dryRun: true });
 
-    expect(send.mock.calls.every(([command]) => command instanceof ScanCommand)).toBe(true);
+    expect(
+      send.mock.calls.every(
+        ([command]) => command instanceof ScanCommand || command instanceof GetItemCommand,
+      ),
+    ).toBe(true);
     expect(report).toMatchObject({
       audits: { written: 1 },
       copies: { written: 1 },
