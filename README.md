@@ -4,12 +4,13 @@ A comprehensive audit logging and event management system for AWS Lambda and ser
 
 ## Packages
 
-This monorepo contains two packages that work together:
+This monorepo contains two packages that work together, and a Rust crate for Rust Lambdas:
 
-| Package                               | Description                                                 |
-| ------------------------------------- | ----------------------------------------------------------- |
-| [`@flipboxlabs/aws-audit-sdk`](./sdk) | Core SDK for audit logging, data models, and business logic |
-| [`@flipboxlabs/aws-audit-cdk`](./cdk) | AWS CDK constructs for deploying audit infrastructure       |
+| Package                                                             | Description                                                 |
+| ------------------------------------------------------------------- | ----------------------------------------------------------- |
+| [`@flipboxlabs/aws-audit-sdk`](./sdk)                               | Core SDK for audit logging, data models, and business logic |
+| [`@flipboxlabs/aws-audit-cdk`](./cdk)                               | AWS CDK constructs for deploying audit infrastructure       |
+| [`aws-audit`](./cdk/rust/README.md#using-it-in-your-lambdas) (Rust) | Audit logging for Rust Lambdas, from git                    |
 
 ## Features
 
@@ -94,24 +95,34 @@ The Lambdas the constructs deploy are prebuilt Rust binaries shipped in the pack
 ### 4. Log audits in your Lambda functions
 
 ```typescript
-import { Audits } from "@flipboxlabs/aws-audit-sdk";
-import type { AuditConfig } from "./audit-config";
+import middy from "@middy/core";
+import { Audits, Status } from "@flipboxlabs/aws-audit-sdk";
+import { logAudits } from "@flipboxlabs/aws-audit-sdk/middleware";
+import { auditConfig } from "./audit-config";
 
-const audits = new Audits<AuditConfig>();
+const audits = new Audits({ config: auditConfig });
 
-export const handler = async (event: Event) => {
-  // Log an audit entry
-  audits.add({
-    app: "my-app",
-    resourceType: "order",
-    resourceId: "order-123",
-    operation: "created",
-    status: "SUCCESS",
-    tier: "INFO",
+export const handler = middy(async (event: Event) => {
+  // Log an audit entry; the app and type are checked against the config
+  audits.addAudit({
+    operation: "createOrder",
+    target: { app: "Orders", type: "Order", id: "order-123" },
+    status: Status.SUCCESS,
   });
 
-  // Audits are automatically flushed at Lambda completion
-};
+  // logAudits writes them when the handler returns or throws
+}).use(logAudits(audits));
+```
+
+Each audit is one JSON log line, `{"_audit": {...}}`, which the account-level log subscription stores. A Rust Lambda logs the same lines with the [`aws-audit` crate](./cdk/rust/README.md#using-it-in-your-lambdas):
+
+```rust
+let mut audits = Audits::new(config.clone());
+audits.add(
+    LogAudit::new("createOrder", ResourceReference::new("Orders", "Order").with_id("order-123"))
+        .with_status(Status::Success),
+)?;
+// Written when `audits` is dropped at the end of the invocation
 ```
 
 ### 5. Query audits via REST API
