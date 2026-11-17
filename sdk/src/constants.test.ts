@@ -19,50 +19,80 @@ describe("constants", () => {
         expect(DynamoDB.Keys.PARTITION_KEY).toBe("PK");
         expect(DynamoDB.Keys.SORT_KEY).toBe("SK");
       });
-
-      it("should have correct GSI1_SS key names", () => {
-        expect(DynamoDB.Keys.GSI1_SS_PARTITION_KEY).toBe("GSI1_SS_PK");
-        expect(DynamoDB.Keys.GSI1_SS_SORT_KEY).toBe("GSI1_SS_SK");
-      });
-
-      it("should have correct GSI1_SN key names", () => {
-        expect(DynamoDB.Keys.GSI1_SN_PARTITION_KEY).toBe("GSI1_SN_PK");
-        expect(DynamoDB.Keys.GSI1_SN_SORT_KEY).toBe("GSI1_SN_SK");
-      });
-
-      it("should have correct LSI key names", () => {
-        expect(DynamoDB.Keys.LSI1_S_SORT_KEY).toBe("LSI1_S_SK");
-        expect(DynamoDB.Keys.LSI1_N_SORT_KEY).toBe("LSI1_N_SK");
-      });
     });
 
     describe("Indexes", () => {
-      it("should have correct GSI names", () => {
-        expect(DynamoDB.Indexes.GSI1_SS).toBe("GSI1_SS");
-        expect(DynamoDB.Indexes.GSI1_SN).toBe("GSI1_SN");
-      });
-
-      it("should have correct LSI names", () => {
-        expect(DynamoDB.Indexes.LSI1_S).toBe("LSI1_S");
-        expect(DynamoDB.Indexes.LSI1_N).toBe("LSI1_N");
+      it("should key every index on top-level attributes", () => {
+        expect(DynamoDB.Indexes).toEqual({
+          BY_TYPE: {
+            name: "ByType",
+            partitionKeys: [
+              { name: "tenantKey", type: "string" },
+              { name: "app", type: "string" },
+              { name: "resourceType", type: "string" },
+            ],
+            sortKeys: [
+              { name: "createdAt", type: "string" },
+              { name: "id", type: "string" },
+            ],
+          },
+          BY_RESOURCE: {
+            name: "ByResource",
+            partitionKeys: [
+              { name: "tenantKey", type: "string" },
+              { name: "app", type: "string" },
+              { name: "resourceType", type: "string" },
+              { name: "resourceId", type: "string" },
+            ],
+            sortKeys: [
+              { name: "createdAt", type: "string" },
+              { name: "id", type: "string" },
+            ],
+          },
+          BY_STATUS: {
+            name: "ByStatus",
+            partitionKeys: [
+              { name: "tenantKey", type: "string" },
+              { name: "status", type: "string" },
+              { name: "kind", type: "string" },
+            ],
+            sortKeys: [
+              { name: "createdAt", type: "string" },
+              { name: "id", type: "string" },
+            ],
+          },
+          BY_TRACE: {
+            name: "ByTrace",
+            partitionKeys: [
+              { name: "tenantKey", type: "string" },
+              { name: "traceId", type: "string" },
+            ],
+            sortKeys: [
+              { name: "traceStage", type: "number" },
+              { name: "createdAt", type: "string" },
+              { name: "id", type: "string" },
+            ],
+          },
+        });
       });
     });
 
     describe("Attributes", () => {
-      it("should have correct TTL attribute name", () => {
+      it("should have correct attribute names", () => {
         expect(DynamoDB.Attributes.TTL).toBe("ttl");
+        expect(DynamoDB.Attributes.SCOPES).toBe("scopes");
       });
     });
 
     describe("Table.Name", () => {
       it("should generate table name with custom config", () => {
         const name = DynamoDB.Table.Name({ env: "prod", service: "v1" });
-        expect(name).toBe("PROD-v1-Audit");
+        expect(name).toBe("PROD-v1-Audit-v2");
       });
 
       it("should uppercase environment", () => {
         const name = DynamoDB.Table.Name({ env: "staging", service: "v1" });
-        expect(name).toBe("STAGING-v1-Audit");
+        expect(name).toBe("STAGING-v1-Audit-v2");
       });
 
       it("should use process.env.ENVIRONMENT when no config provided", () => {
@@ -72,7 +102,7 @@ describe("constants", () => {
         process.env.SERVICE = "v1";
 
         const name = DynamoDB.Table.Name();
-        expect(name).toBe("TEST-v1-Audit");
+        expect(name).toBe("TEST-v1-Audit-v2");
 
         process.env.ENVIRONMENT = originalEnv;
         process.env.SERVICE = originalService;
@@ -80,7 +110,7 @@ describe("constants", () => {
 
       it("should omit service from name when not provided", () => {
         const name = DynamoDB.Table.Name({ env: "prod" });
-        expect(name).toBe("PROD-Audit");
+        expect(name).toBe("PROD-Audit-v2");
       });
     });
 
@@ -95,7 +125,7 @@ describe("constants", () => {
           },
         });
 
-        expect(arn).toBe("arn:aws:dynamodb:us-west-2:123456789012:table/PROD-v1-Audit");
+        expect(arn).toBe("arn:aws:dynamodb:us-west-2:123456789012:table/PROD-v1-Audit-v2");
       });
 
       it("should use process.env values when no config provided", () => {
@@ -110,7 +140,7 @@ describe("constants", () => {
         process.env.SERVICE = "v1";
 
         const arn = DynamoDB.Table.ARN();
-        expect(arn).toBe("arn:aws:dynamodb:eu-west-1:987654321098:table/DEV-v1-Audit");
+        expect(arn).toBe("arn:aws:dynamodb:eu-west-1:987654321098:table/DEV-v1-Audit-v2");
 
         process.env.AWS_REGION = originalRegion;
         process.env.AWS_ACCOUNT = originalAccount;

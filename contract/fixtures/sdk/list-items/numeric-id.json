@@ -1,0 +1,53 @@
+{
+  "description": "A numeric resource id is queried as a string",
+  "operation": "listItems",
+  "args": [
+    {
+      "app": "App1",
+      "resource": {
+        "type": "Order",
+        "id": 0
+      }
+    }
+  ],
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "Query",
+      "input": {
+        "TableName": "TEST-Contract-Audit-v2",
+        "IndexName": "ByResource",
+        "ScanIndexForward": false,
+        "KeyConditionExpression": "#k0 = :k0 AND #k1 = :k1 AND #k2 = :k2 AND #k3 = :k3",
+        "ExpressionAttributeNames": {
+          "#k0": "tenantKey",
+          "#k1": "app",
+          "#k2": "resourceType",
+          "#k3": "resourceId"
+        },
+        "ExpressionAttributeValues": {
+          ":k0": {
+            "S": "-"
+          },
+          ":k1": {
+            "S": "App1"
+          },
+          ":k2": {
+            "S": "Order"
+          },
+          ":k3": {
+            "S": "0"
+          }
+        },
+        "Limit": 100
+      },
+      "output": {
+        "Items": []
+      }
+    }
+  ],
+  "result": {
+    "items": [],
+    "pagination": {}
+  }
+}

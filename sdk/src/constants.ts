@@ -40,17 +40,73 @@ type ARNConfig = NameConfig & {
   };
 };
 
+/** A key attribute's DynamoDB type */
+export type KeyAttributeType = "string" | "number";
+
+/** A key attribute of a secondary index, with its DynamoDB type */
+export type KeyAttribute = { readonly name: string; readonly type: KeyAttributeType };
+
+/** A global secondary index with multi-attribute keys */
+export type IndexDefinition = {
+  readonly name: string;
+  readonly partitionKeys: readonly KeyAttribute[];
+  readonly sortKeys: readonly KeyAttribute[];
+};
+
+/** Top-level attributes the secondary index keys are built from */
+const Attributes = {
+  /** Time-to-live attribute for automatic item expiration */
+  TTL: "ttl",
+  /** The audit's `tenantId`, or {@link NO_TENANT} without one */
+  TENANT_KEY: "tenantKey",
+  /** The item's `target.app` */
+  APP: "app",
+  /** The item's `target.type` */
+  RESOURCE_TYPE: "resourceType",
+  /** The item's `target.id`, as a string; absent when the target has none */
+  RESOURCE_ID: "resourceId",
+  /** `audit` for an audit, `related` for its copy under a related resource */
+  KIND: "kind",
+  /** The trace id from `trace`; only audits with a trace have it */
+  TRACE_ID: "traceId",
+  /** The trace stage from `trace`, a number */
+  TRACE_STAGE: "traceStage",
+  /**
+   * String set of what the status and trace filters match on, for the target and
+   * each related resource: `{app}`, `{app}.{type}`, `*.{type}` and, with an id,
+   * `{app}.{type}#{id}`
+   */
+  SCOPES: "scopes",
+  STATUS: "status",
+  CREATED_AT: "createdAt",
+  ID: "id",
+} as const;
+
+const key = (name: string, type: KeyAttributeType = "string"): KeyAttribute => ({ name, type });
+
+/** Newest first, then by id so audits created in the same millisecond keep an order */
+const BY_CREATION = [key(Attributes.CREATED_AT), key(Attributes.ID)];
+
 /**
  * DynamoDB configuration constants for the audit table.
  *
- * Provides table naming, key definitions, index names, and attribute constants
+ * Provides table naming, key definitions, index definitions, and attribute constants
  * used throughout the audit SDK for DynamoDB operations.
+ *
+ * Items:
+ * - An audit: `PK` `[{tenantId}#]{app}.{type}#{id}`, `SK` `audit`
+ * - A copy of it per related resource, in the same partition: `SK`
+ *   `related#{app}.{type}#{resourceId}`, with the resource as `target` and the
+ *   audit's target as `source`
+ *
+ * The indexes use multi-attribute keys built from top-level attributes
+ * ({@link DynamoDB.Attributes}), and each projects {@link DynamoDB.Projections.SUMMARY}.
  *
  * @example
  * ```typescript
  * // Get table name for production
- * const tableName = DynamoDB.Table.Name({ env: 'prod' });
- * // Returns: "PROD-v1-Audit"
+ * const tableName = DynamoDB.Table.Name({ env: 'prod', service: 'v1' });
+ * // Returns: "PROD-v1-Audit-v2"
  *
  * // Access key names
  * const pk = DynamoDB.Keys.PARTITION_KEY; // "PK"
@@ -71,61 +127,86 @@ export const DynamoDB = {
     PARTITION_KEY: "PK",
     /** Primary sort key */
     SORT_KEY: "SK",
-
-    /** GSI1 (String-String) partition key */
-    GSI1_SS_PARTITION_KEY: "GSI1_SS_PK",
-    /** GSI1 (String-String) sort key */
-    GSI1_SS_SORT_KEY: "GSI1_SS_SK",
-
-    /** GSI1 (String-Number) partition key */
-    GSI1_SN_PARTITION_KEY: "GSI1_SN_PK",
-    /** GSI1 (String-Number) sort key */
-    GSI1_SN_SORT_KEY: "GSI1_SN_SK",
-
-    /** LSI1 (String) sort key */
-    LSI1_S_SORT_KEY: "LSI1_S_SK",
-    /** LSI1 (Numeric) sort key */
-    LSI1_N_SORT_KEY: "LSI1_N_SK",
-
-    /** GSI2 (String-String) partition key - for status-based queries */
-    GSI2_SS_PARTITION_KEY: "GSI2_SS_PK",
-    /** GSI2 (String-String) sort key - for status-based queries */
-    GSI2_SS_SORT_KEY: "GSI2_SS_SK",
   },
-  /** Secondary index names */
+  /** Sort key values */
+  SortKeys: {
+    /** The audit itself */
+    AUDIT: "audit",
+    /** Prefix of a related-resource copy: `related#{app}.{type}#{resourceId}` */
+    RELATED_PREFIX: "related#",
+  },
+  /** Values of the `kind` attribute */
+  Kinds: {
+    AUDIT: "audit",
+    RELATED: "related",
+  },
+  /** `tenantKey` of an audit without a tenant: index key attributes must be present */
+  NO_TENANT: "-",
+  Attributes,
+  /** Global secondary indexes */
   Indexes: {
-    /** Global Secondary Index 1 - String partition, String sort */
-    GSI1_SS: "GSI1_SS",
-    /** Global Secondary Index 1 - String partition, Numeric sort */
-    GSI1_SN: "GSI1_SN",
-
-    /** Global Secondary Index 2 - String partition, String sort (status-based queries) */
-    GSI2_SS: "GSI2_SS",
-
-    /** Local Secondary Index 1 - String sort key */
-    LSI1_S: "LSI1_S",
-    /** Local Secondary Index 1 - Numeric sort key */
-    LSI1_N: "LSI1_N",
+    /** Audits and related-resource copies of a resource type, newest first */
+    BY_TYPE: {
+      name: "ByType",
+      partitionKeys: [
+        key(Attributes.TENANT_KEY),
+        key(Attributes.APP),
+        key(Attributes.RESOURCE_TYPE),
+      ],
+      sortKeys: BY_CREATION,
+    },
+    /** Audits and related-resource copies of a resource, newest first */
+    BY_RESOURCE: {
+      name: "ByResource",
+      partitionKeys: [
+        key(Attributes.TENANT_KEY),
+        key(Attributes.APP),
+        key(Attributes.RESOURCE_TYPE),
+        key(Attributes.RESOURCE_ID),
+      ],
+      sortKeys: BY_CREATION,
+    },
+    /** Audits by status, newest first; queried with `kind` `audit` to leave out copies */
+    BY_STATUS: {
+      name: "ByStatus",
+      partitionKeys: [key(Attributes.TENANT_KEY), key(Attributes.STATUS), key(Attributes.KIND)],
+      sortKeys: BY_CREATION,
+    },
+    /** Audits by trace, by stage then creation; sparse, since copies have no trace id */
+    BY_TRACE: {
+      name: "ByTrace",
+      partitionKeys: [key(Attributes.TENANT_KEY), key(Attributes.TRACE_ID)],
+      sortKeys: [key(Attributes.TRACE_STAGE, "number"), ...BY_CREATION],
+    },
   },
   /** Index projections */
   Projections: {
     /**
-     * Non-key attributes the listing GSIs (GSI1_SN, GSI1_SS, GSI2_SS) project.
-     * GSI1_SS also projects the GSI1_SN keys.
+     * Every attribute of the summary a listing returns
+     * (`AuditSummarySchema`). Each index projects those that aren't its keys.
      */
-    LISTING: ["operation", "status", "message", "source", "target", "rerunable", "createdAt"],
+    SUMMARY: [
+      "id",
+      "tenantId",
+      "status",
+      "tier",
+      "operation",
+      "message",
+      "target",
+      "source",
+      "rerunable",
+      "trace",
+      "createdAt",
+      "updatedAt",
+    ],
   },
-  /** Special attribute names */
-  Attributes: {
-    /** Time-to-live attribute for automatic item expiration */
-    TTL: "ttl",
-  },
-} as const;
+} as const satisfies { Indexes: Record<string, IndexDefinition> } & Record<string, unknown>;
 
 /**
  * Builds a DynamoDB table name from service name and configuration.
  *
- * Format: `{ENV}-{service}-Audit` (e.g., "PROD-v1-Audit")
+ * Format: `{ENV}-{service}-Audit-v2` (e.g., "PROD-v1-Audit-v2"). The earlier table,
+ * `{ENV}-{service}-Audit`, had another layout; `aws-audit-migrate` copies it.
  *
  * @param name - Service name to include in table name
  * @param config - Environment configuration (defaults to process.env.ENVIRONMENT)
@@ -138,7 +219,7 @@ function buildDynamoDBName(
     service: process.env.SERVICE,
   },
 ): string {
-  return [`${config.env.toUpperCase()}`, config.service, "Audit"].filter(Boolean).join("-");
+  return [`${config.env.toUpperCase()}`, config.service, "Audit-v2"].filter(Boolean).join("-");
 }
 
 /**

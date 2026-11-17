@@ -1,5 +1,5 @@
 {
-  "description": "Audits of a trace; trace is rebuilt from the index keys",
+  "description": "Summaries of a trace's audits, by stage, then oldest first; trace is the stored one",
   "route": "GET /trace/{trace}",
   "request": {
     "method": "GET",
@@ -14,33 +14,36 @@
       "command": "Query",
       "input": {
         "ScanIndexForward": true,
-        "IndexName": "GSI1_SN",
+        "IndexName": "ByTrace",
         "ExpressionAttributeValues": {
-          ":PK": {
+          ":k0": {
+            "S": "-"
+          },
+          ":k1": {
             "S": "trace-1"
           },
-          ":app": {
+          ":scope": {
             "S": "App1"
           }
         },
         "ExpressionAttributeNames": {
-          "#PK": "GSI1_SN_PK",
-          "#target": "target",
-          "#app": "app"
+          "#k0": "tenantKey",
+          "#k1": "traceId",
+          "#scopes": "scopes"
         },
-        "KeyConditionExpression": "#PK=:PK",
-        "TableName": "TEST-Contract-Audit",
+        "KeyConditionExpression": "#k0 = :k0 AND #k1 = :k1",
+        "TableName": "TEST-Contract-Audit-v2",
         "Limit": 100,
-        "FilterExpression": "#target.#app = :app"
+        "FilterExpression": "contains(#scopes, :scope)"
       },
       "output": {
         "Items": [
           {
             "PK": {
-              "S": "App1.Order"
+              "S": "App1.Order#audit-1"
             },
             "SK": {
-              "S": "audit-1"
+              "S": "audit"
             },
             "id": {
               "S": "audit-1"
@@ -73,10 +76,16 @@
             "updatedAt": {
               "S": "2026-01-02T03:04:05.678Z"
             },
-            "GSI1_SN_PK": {
+            "trace": {
+              "S": "trace-1:1"
+            },
+            "tenantKey": {
+              "S": "-"
+            },
+            "traceId": {
               "S": "trace-1"
             },
-            "GSI1_SN_SK": {
+            "traceStage": {
               "N": "1"
             }
           }

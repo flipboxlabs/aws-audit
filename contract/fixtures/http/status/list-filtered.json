@@ -1,5 +1,5 @@
 {
-  "description": "Pagination and filters come from bracketed query parameters",
+  "description": "Pagination and filters come from bracketed query parameters; resource filters match the audit's scopes",
   "route": "GET /status/{status}",
   "request": {
     "method": "GET",
@@ -7,7 +7,9 @@
     "query": {
       "pagination[pageSize]": "5",
       "filter[app]": "App1",
-      "filter[resourceType]": "Order"
+      "filter[resourceType]": "Order",
+      "filter[operation]": "createOrder",
+      "filter[tier]": "1"
     }
   },
   "calls": [
@@ -16,28 +18,39 @@
       "command": "Query",
       "input": {
         "ScanIndexForward": false,
-        "IndexName": "GSI2_SS",
+        "IndexName": "ByStatus",
         "ExpressionAttributeValues": {
-          ":PK": {
+          ":k0": {
+            "S": "-"
+          },
+          ":k1": {
             "S": "fail"
           },
-          ":resourceType": {
-            "S": "Order"
+          ":k2": {
+            "S": "audit"
           },
-          ":app": {
-            "S": "App1"
+          ":operation": {
+            "S": "createOrder"
+          },
+          ":scope": {
+            "S": "App1.Order"
+          },
+          ":tier": {
+            "N": "1"
           }
         },
         "ExpressionAttributeNames": {
-          "#PK": "GSI2_SS_PK",
-          "#target": "target",
-          "#type": "type",
-          "#app": "app"
+          "#k0": "tenantKey",
+          "#k1": "status",
+          "#k2": "kind",
+          "#operation": "operation",
+          "#scopes": "scopes",
+          "#tier": "tier"
         },
-        "KeyConditionExpression": "#PK=:PK",
-        "TableName": "TEST-Contract-Audit",
+        "KeyConditionExpression": "#k0 = :k0 AND #k1 = :k1 AND #k2 = :k2",
+        "TableName": "TEST-Contract-Audit-v2",
         "Limit": 5,
-        "FilterExpression": "#target.#type = :resourceType AND #target.#app = :app"
+        "FilterExpression": "#operation = :operation AND #tier = :tier AND contains(#scopes, :scope)"
       },
       "output": {
         "Items": []

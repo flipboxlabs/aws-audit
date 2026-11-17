@@ -11,22 +11,26 @@
       "command": "Query",
       "input": {
         "ScanIndexForward": false,
-        "IndexName": "GSI2_SS",
+        "IndexName": "ByStatus",
         "ExpressionAttributeValues": {
-          ":PK": {
+          ":k0": {
+            "S": "-"
+          },
+          ":k1": {
             "S": "fail"
           },
-          ":isParent": {
-            "S": "#"
+          ":k2": {
+            "S": "audit"
           }
         },
         "ExpressionAttributeNames": {
-          "#PK": "GSI2_SS_PK"
+          "#k0": "tenantKey",
+          "#k1": "status",
+          "#k2": "kind"
         },
-        "KeyConditionExpression": "#PK=:PK",
-        "TableName": "TEST-Contract-Audit",
-        "Limit": 100,
-        "FilterExpression": "not contains(SK, :isParent)"
+        "KeyConditionExpression": "#k0 = :k0 AND #k1 = :k1 AND #k2 = :k2",
+        "TableName": "TEST-Contract-Audit-v2",
+        "Limit": 100
       },
       "error": {
         "name": "ProvisionedThroughputExceededException",

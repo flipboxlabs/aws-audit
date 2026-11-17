@@ -66,3 +66,30 @@ export const AuditPayloadSchema = z.object({
  * Output type for audit payloads.
  */
 export type AuditPayload = z.output<typeof AuditPayloadSchema>;
+
+/**
+ * Schema for an audit as a listing returns it: what identifies and describes it,
+ * without its `context`, `event`, `error` or `attempts`. Fetch the audit itself
+ * for those.
+ *
+ * Every listing index projects these attributes (`DynamoDB.Projections.SUMMARY`).
+ */
+export const AuditSummarySchema = AuditPayloadSchema.pick({
+  id: true,
+  tenantId: true,
+  status: true,
+  tier: true,
+  operation: true,
+  message: true,
+  target: true,
+  source: true,
+  rerunable: true,
+  trace: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+/**
+ * Output type for audit summaries.
+ */
+export type AuditSummary = z.output<typeof AuditSummarySchema>;

@@ -1,7 +1,7 @@
 //! Listing pages and their `nextToken`s.
 //!
 //! A token is the unpadded base64url of a listing's `LastEvaluatedKey` as JSON,
-//! e.g. `{"PK":"App1.Order","SK":"audit-1","LSI1_N_SK":21767323445678}`. Decoding
+//! e.g. `{"PK":"App1.Order#audit-1","SK":"audit","tenantKey":"-",…}`. Decoding
 //! checks it against the queried index's key schema and partition, so a token a
 //! listing didn't issue is refused before querying (`InvalidNextTokenError` in the
 //! TypeScript SDK).
@@ -31,7 +31,7 @@ pub enum KeyType {
 }
 
 /// The attributes a `LastEvaluatedKey` holds, and their types.
-pub type PageKeySchema = &'static [(&'static str, KeyType)];
+pub type PageKeySchema<'a> = &'a [(&'static str, KeyType)];
 
 /// Encodes without padding; decodes with or without it.
 const TOKEN: GeneralPurpose = GeneralPurpose::new(
@@ -92,17 +92,21 @@ pub fn decode(
 }
 
 /// Decodes a listing's token into its `ExclusiveStartKey`: it must hold `index`'s
-/// keys and belong to the queried `partition`, since DynamoDB rejects a start key
-/// outside it.
+/// keys and belong to the queried `partition` (each partition key attribute with
+/// its value), since DynamoDB rejects a start key outside it.
 pub fn exclusive_start_key(
     token: Option<&str>,
     index: Index,
-    partition: &str,
+    partition: &[(&str, String)],
 ) -> Result<Option<PageKey>, InvalidNextToken> {
-    let key = decode(token, Some(index.page_key_schema()))?;
+    let key = decode(token, Some(&index.page_key_schema()))?;
 
     match &key {
-        Some(key) if key.get(index.partition_key()).and_then(Value::as_str) != Some(partition) => {
+        Some(key)
+            if partition.iter().any(|(name, value)| {
+                key.get(*name).and_then(Value::as_str) != Some(value.as_str())
+            }) =>
+        {
             Err(InvalidNextToken)
         }
         _ => Ok(key),
@@ -159,21 +163,49 @@ mod tests {
         }
     }
 
+    /// A `ByTrace` key, with `overrides`.
+    fn trace_key(overrides: Value) -> PageKey {
+        let mut base = key(json!({
+            "PK": "App1.Order#audit-1",
+            "SK": "audit",
+            "tenantKey": "-",
+            "traceId": "trace-1",
+            "traceStage": 2,
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "id": "audit-1",
+        }));
+        for (name, value) in key(overrides) {
+            if value.is_null() {
+                base.shift_remove(&name);
+            } else {
+                base.insert(name, value);
+            }
+        }
+        base
+    }
+
     #[test]
     fn round_trips_keys_in_order() {
-        let original =
-            key(json!({ "PK": "App1.Order", "SK": "audit-1", "LSI1_N_SK": 21767323445678_u64 }));
+        let original = trace_key(json!({}));
 
         let token = encode(&original);
 
         assert!(!token.contains('='));
-        let decoded = decode(Some(&token), Some(Index::Lsi1N.page_key_schema()))
+        let decoded = decode(Some(&token), Some(&Index::ByTrace.page_key_schema()))
             .unwrap()
             .unwrap();
         assert_eq!(decoded, original);
         assert_eq!(
             decoded.keys().collect::<Vec<_>>(),
-            ["PK", "SK", "LSI1_N_SK"]
+            [
+                "PK",
+                "SK",
+                "tenantKey",
+                "traceId",
+                "traceStage",
+                "createdAt",
+                "id"
+            ]
         );
     }
 
@@ -206,33 +238,42 @@ mod tests {
 
     #[test]
     fn rejects_tokens_that_do_not_match_the_schema() {
-        let schema = Some(Index::Lsi1N.page_key_schema());
+        let schema = Index::ByTrace.page_key_schema();
 
-        for value in [
-            json!({ "PK": "App1.USER", "SK": "audit-123" }),
-            json!({ "PK": "App1.USER", "SK": "audit-123", "LSI1_N_SK": 1, "GSI2_SS_PK": "fail" }),
-            json!({ "PK": "App1.USER", "SK": "audit-123", "LSI1_N_SK": "1" }),
+        for overrides in [
+            json!({ "id": null }),
+            json!({ "status": "fail" }),
+            json!({ "traceStage": "2" }),
         ] {
-            let token = encode(&key(value.clone()));
+            let token = encode(&trace_key(overrides.clone()));
             assert_eq!(
-                decode(Some(&token), schema),
+                decode(Some(&token), Some(&schema)),
                 Err(InvalidNextToken),
-                "{value}"
+                "{overrides}"
             );
         }
     }
 
     #[test]
     fn rejects_start_keys_outside_the_partition() {
-        let token = encode(&key(json!({
-            "PK": "App1.Order", "SK": "audit-1", "GSI2_SS_PK": "warn", "GSI2_SS_SK": "x",
-        })));
+        let token = encode(&trace_key(json!({})));
+        let partition = |tenant: &str, trace: &str| {
+            [
+                ("tenantKey", tenant.to_owned()),
+                ("traceId", trace.to_owned()),
+            ]
+        };
 
-        assert!(exclusive_start_key(Some(&token), Index::Gsi2Ss, "warn").is_ok());
-        assert_eq!(
-            exclusive_start_key(Some(&token), Index::Gsi2Ss, "fail"),
-            Err(InvalidNextToken)
+        assert!(
+            exclusive_start_key(Some(&token), Index::ByTrace, &partition("-", "trace-1")).is_ok()
         );
+        for (tenant, trace) in [("-", "trace-2"), ("tenant-1", "trace-1")] {
+            assert_eq!(
+                exclusive_start_key(Some(&token), Index::ByTrace, &partition(tenant, trace)),
+                Err(InvalidNextToken),
+                "{tenant} {trace}"
+            );
+        }
     }
 
     #[test]

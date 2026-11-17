@@ -1,5 +1,5 @@
 {
-  "description": "Audits with a status",
+  "description": "Summaries of the audits with a status, newest first; LastEvaluatedKey becomes nextToken",
   "route": "GET /status/{status}",
   "request": {
     "method": "GET",
@@ -11,31 +11,35 @@
       "command": "Query",
       "input": {
         "ScanIndexForward": false,
-        "IndexName": "GSI2_SS",
+        "IndexName": "ByStatus",
         "ExpressionAttributeValues": {
-          ":PK": {
+          ":k0": {
+            "S": "-"
+          },
+          ":k1": {
             "S": "fail"
           },
-          ":isParent": {
-            "S": "#"
+          ":k2": {
+            "S": "audit"
           }
         },
         "ExpressionAttributeNames": {
-          "#PK": "GSI2_SS_PK"
+          "#k0": "tenantKey",
+          "#k1": "status",
+          "#k2": "kind"
         },
-        "KeyConditionExpression": "#PK=:PK",
-        "TableName": "TEST-Contract-Audit",
-        "Limit": 100,
-        "FilterExpression": "not contains(SK, :isParent)"
+        "KeyConditionExpression": "#k0 = :k0 AND #k1 = :k1 AND #k2 = :k2",
+        "TableName": "TEST-Contract-Audit-v2",
+        "Limit": 100
       },
       "output": {
         "Items": [
           {
             "PK": {
-              "S": "App1.Order"
+              "S": "App1.Order#audit-1"
             },
             "SK": {
-              "S": "audit-1"
+              "S": "audit"
             },
             "id": {
               "S": "audit-1"
@@ -68,26 +72,35 @@
             "updatedAt": {
               "S": "2026-01-02T03:04:05.678Z"
             },
-            "GSI2_SS_PK": {
-              "S": "fail"
+            "kind": {
+              "S": "audit"
             },
-            "GSI2_SS_SK": {
-              "S": "2026-01-02T03:04:05.678Z#audit-1"
+            "tenantKey": {
+              "S": "-"
             }
           }
         ],
         "LastEvaluatedKey": {
           "PK": {
-            "S": "App1.Order"
+            "S": "App1.Order#audit-1"
           },
           "SK": {
-            "S": "audit-1"
+            "S": "audit"
           },
-          "GSI2_SS_PK": {
+          "tenantKey": {
+            "S": "-"
+          },
+          "status": {
             "S": "fail"
           },
-          "GSI2_SS_SK": {
-            "S": "2026-01-02T03:04:05.678Z#audit-1"
+          "kind": {
+            "S": "audit"
+          },
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "id": {
+            "S": "audit-1"
           }
         }
       }
@@ -113,7 +126,7 @@
         }
       ],
       "pagination": {
-        "nextToken": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJHU0kyX1NTX1BLIjoiZmFpbCIsIkdTSTJfU1NfU0siOiIyMDI2LTAxLTAyVDAzOjA0OjA1LjY3OFojYXVkaXQtMSJ9"
+        "nextToken": "eyJQSyI6IkFwcDEuT3JkZXIjYXVkaXQtMSIsIlNLIjoiYXVkaXQiLCJ0ZW5hbnRLZXkiOiItIiwic3RhdHVzIjoiZmFpbCIsImtpbmQiOiJhdWRpdCIsImNyZWF0ZWRBdCI6IjIwMjYtMDEtMDJUMDM6MDQ6MDUuNjc4WiIsImlkIjoiYXVkaXQtMSJ9"
       }
     }
   }

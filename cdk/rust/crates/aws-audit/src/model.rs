@@ -216,8 +216,8 @@ impl<'de> Deserialize<'de> for Context {
 
 /// An ISO 8601 UTC timestamp, kept as given (`2026-01-02T03:04:05.678Z`).
 ///
-/// Stored timestamps are strings and `GSI2_SS_SK` embeds one, so the text is kept
-/// exactly rather than reformatted.
+/// Stored timestamps are strings and `createdAt` sorts every listing index, so the
+/// text is kept exactly rather than reformatted.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct Timestamp(String);
 
@@ -399,6 +399,50 @@ pub struct Audit {
     /// When the audit was created.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<Timestamp>,
+}
+
+/// An audit as a listing returns it (`AuditSummarySchema`): what tells audits apart,
+/// without the context, event, error or attempts. Fetch the audit for those.
+///
+/// Field order follows the TypeScript schema; other stored attributes (index keys,
+/// `scopes`) are ignored.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditSummary {
+    /// The audit's id.
+    pub id: String,
+    /// The tenant, for multi-tenant apps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
+    /// The latest outcome.
+    pub status: Status,
+    /// Who sees the audit.
+    #[serde(default)]
+    pub tier: Tier,
+    /// The operation's name.
+    pub operation: String,
+    /// A human-readable description. `null` reads as absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// The resource the operation acted on; for a related resource's copy, that
+    /// resource.
+    pub target: ResourceReference,
+    /// The resource that started the operation; for a related resource's copy, the
+    /// audit's target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<ResourceReference>,
+    /// Whether the recorded event can be re-sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerunable: Option<bool>,
+    /// The trace, `{id}:{stage}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<String>,
+    /// When the audit was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<Timestamp>,
+    /// When the audit last changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<Timestamp>,
 }
 
 #[cfg(test)]

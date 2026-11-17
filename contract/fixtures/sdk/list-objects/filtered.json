@@ -1,0 +1,122 @@
+{
+  "description": "Operation and tier filters become a filter expression",
+  "operation": "listObjects",
+  "args": [
+    {
+      "app": "App1",
+      "resource": {
+        "type": "Order"
+      },
+      "operation": "createOrder",
+      "tier": 1
+    }
+  ],
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "Query",
+      "input": {
+        "TableName": "TEST-Contract-Audit-v2",
+        "IndexName": "ByType",
+        "ScanIndexForward": false,
+        "KeyConditionExpression": "#k0 = :k0 AND #k1 = :k1 AND #k2 = :k2",
+        "ExpressionAttributeNames": {
+          "#k0": "tenantKey",
+          "#k1": "app",
+          "#k2": "resourceType",
+          "#operation": "operation",
+          "#tier": "tier"
+        },
+        "ExpressionAttributeValues": {
+          ":k0": {
+            "S": "-"
+          },
+          ":k1": {
+            "S": "App1"
+          },
+          ":k2": {
+            "S": "Order"
+          },
+          ":operation": {
+            "S": "createOrder"
+          },
+          ":tier": {
+            "N": "1"
+          }
+        },
+        "FilterExpression": "#operation = :operation AND #tier = :tier",
+        "Limit": 100
+      },
+      "output": {
+        "Items": [
+          {
+            "PK": {
+              "S": "App1.Order#audit-1"
+            },
+            "SK": {
+              "S": "audit"
+            },
+            "tenantKey": {
+              "S": "-"
+            },
+            "app": {
+              "S": "App1"
+            },
+            "resourceType": {
+              "S": "Order"
+            },
+            "createdAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            },
+            "id": {
+              "S": "audit-1"
+            },
+            "status": {
+              "S": "success"
+            },
+            "tier": {
+              "N": "1"
+            },
+            "operation": {
+              "S": "createOrder"
+            },
+            "target": {
+              "M": {
+                "app": {
+                  "S": "App1"
+                },
+                "type": {
+                  "S": "Order"
+                },
+                "id": {
+                  "S": "order-1"
+                }
+              }
+            },
+            "updatedAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "result": {
+    "items": [
+      {
+        "id": "audit-1",
+        "status": "success",
+        "tier": 1,
+        "operation": "createOrder",
+        "target": {
+          "app": "App1",
+          "id": "order-1",
+          "type": "Order"
+        },
+        "createdAt": "2026-01-02T03:04:05.678Z",
+        "updatedAt": "2026-01-02T03:04:05.678Z"
+      }
+    ],
+    "pagination": {}
+  }
+}

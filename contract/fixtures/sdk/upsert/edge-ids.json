@@ -1,5 +1,5 @@
 {
-  "description": "A numeric id of 0 is an id (in GSI1_SS_PK and for a related copy); a trace id may contain colons",
+  "description": "A numeric id of 0 is an id (as resourceId \"0\" and for a related copy); a trace id may contain colons",
   "operation": "upsertItem",
   "args": [
     {
@@ -36,16 +36,16 @@
       "service": "DynamoDB",
       "command": "UpdateItem",
       "input": {
-        "TableName": "TEST-Contract-Audit",
+        "TableName": "TEST-Contract-Audit-v2",
         "Key": {
           "PK": {
-            "S": "App1.Order"
+            "S": "App1.Order#audit-1"
           },
           "SK": {
-            "S": "audit-1"
+            "S": "audit"
           }
         },
-        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #trace = :trace, #updatedAt = :updatedAt, #LSI1_N_SK = :LSI1_N_SK, #GSI1_SS_PK = :GSI1_SS_PK, #GSI1_SS_SK = :GSI1_SS_SK, #GSI1_SN_PK = :GSI1_SN_PK, #GSI1_SN_SK = :GSI1_SN_SK, #GSI2_SS_PK = :GSI2_SS_PK, #GSI2_SS_SK = :GSI2_SS_SK, #ttl = :ttl",
+        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #trace = :trace, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #traceId = :traceId, #traceStage = :traceStage, #scopes = :scopes, #ttl = :ttl",
         "ExpressionAttributeNames": {
           "#attempts": "attempts",
           "#createdAt": "createdAt",
@@ -56,13 +56,14 @@
           "#operation": "operation",
           "#trace": "trace",
           "#updatedAt": "updatedAt",
-          "#LSI1_N_SK": "LSI1_N_SK",
-          "#GSI1_SS_PK": "GSI1_SS_PK",
-          "#GSI1_SS_SK": "GSI1_SS_SK",
-          "#GSI1_SN_PK": "GSI1_SN_PK",
-          "#GSI1_SN_SK": "GSI1_SN_SK",
-          "#GSI2_SS_PK": "GSI2_SS_PK",
-          "#GSI2_SS_SK": "GSI2_SS_SK",
+          "#tenantKey": "tenantKey",
+          "#app": "app",
+          "#resourceType": "resourceType",
+          "#resourceId": "resourceId",
+          "#kind": "kind",
+          "#traceId": "traceId",
+          "#traceStage": "traceStage",
+          "#scopes": "scopes",
           "#ttl": "ttl"
         },
         "ExpressionAttributeValues": {
@@ -120,26 +121,38 @@
           ":createdAt": {
             "S": "2026-01-02T03:04:05.678Z"
           },
-          ":LSI1_N_SK": {
-            "N": "21767323045678"
+          ":tenantKey": {
+            "S": "-"
           },
-          ":GSI1_SS_PK": {
-            "S": "App1.Order#0"
+          ":app": {
+            "S": "App1"
           },
-          ":GSI1_SS_SK": {
-            "S": "audit-1"
+          ":resourceType": {
+            "S": "Order"
           },
-          ":GSI1_SN_PK": {
+          ":resourceId": {
+            "S": "0"
+          },
+          ":kind": {
+            "S": "audit"
+          },
+          ":traceId": {
             "S": "batch:2026"
           },
-          ":GSI1_SN_SK": {
+          ":traceStage": {
             "N": "3"
           },
-          ":GSI2_SS_PK": {
-            "S": "success"
-          },
-          ":GSI2_SS_SK": {
-            "S": "2026-01-02T03:04:05.678Z#audit-1"
+          ":scopes": {
+            "SS": [
+              "App1",
+              "App1.Order",
+              "*.Order",
+              "App1.Order#0",
+              "TestApp",
+              "TestApp.User",
+              "*.User",
+              "TestApp.User#0"
+            ]
           },
           ":ttl": {
             "N": "1775099045"
@@ -149,6 +162,9 @@
       },
       "output": {
         "Attributes": {
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
           "attempts": {
             "L": [
               {
@@ -174,42 +190,18 @@
       "command": "BatchWriteItem",
       "input": {
         "RequestItems": {
-          "TEST-Contract-Audit": [
+          "TEST-Contract-Audit-v2": [
             {
               "PutRequest": {
                 "Item": {
                   "PK": {
-                    "S": "TestApp.User"
+                    "S": "App1.Order#audit-1"
                   },
                   "SK": {
-                    "S": "audit-1#TestApp.User#0"
-                  },
-                  "LSI1_N_SK": {
-                    "N": "21767323045678"
-                  },
-                  "GSI1_SS_PK": {
-                    "S": "TestApp.User#0"
-                  },
-                  "GSI1_SS_SK": {
-                    "S": "audit-1#TestApp.User#0"
-                  },
-                  "GSI1_SN_PK": {
-                    "S": "batch:2026"
-                  },
-                  "GSI1_SN_SK": {
-                    "N": "3"
-                  },
-                  "GSI2_SS_PK": {
-                    "S": "success"
-                  },
-                  "GSI2_SS_SK": {
-                    "S": "2026-01-02T03:04:05.678Z#audit-1#TestApp.User#0"
-                  },
-                  "ttl": {
-                    "N": "1775099045"
+                    "S": "related#TestApp.User#0"
                   },
                   "id": {
-                    "S": "audit-1#TestApp.User#0"
+                    "S": "audit-1"
                   },
                   "status": {
                     "S": "success"
@@ -217,18 +209,30 @@
                   "tier": {
                     "N": "2"
                   },
+                  "operation": {
+                    "S": "createOrder"
+                  },
                   "target": {
                     "M": {
                       "app": {
                         "S": "TestApp"
                       },
-                      "id": {
-                        "N": "0"
-                      },
                       "type": {
                         "S": "User"
+                      },
+                      "id": {
+                        "N": "0"
                       }
                     }
+                  },
+                  "trace": {
+                    "S": "batch:2026:3"
+                  },
+                  "createdAt": {
+                    "S": "2026-01-02T03:04:05.678Z"
+                  },
+                  "updatedAt": {
+                    "S": "2026-01-02T03:04:05.678Z"
                   },
                   "source": {
                     "M": {
@@ -243,20 +247,26 @@
                       }
                     }
                   },
-                  "operation": {
-                    "S": "createOrder"
-                  },
                   "rerunable": {
                     "BOOL": false
                   },
-                  "trace": {
-                    "S": "batch:2026:3"
+                  "tenantKey": {
+                    "S": "-"
                   },
-                  "updatedAt": {
-                    "S": "2026-01-02T03:04:05.678Z"
+                  "app": {
+                    "S": "TestApp"
                   },
-                  "createdAt": {
-                    "S": "2026-01-02T03:04:05.678Z"
+                  "resourceType": {
+                    "S": "User"
+                  },
+                  "resourceId": {
+                    "S": "0"
+                  },
+                  "kind": {
+                    "S": "related"
+                  },
+                  "ttl": {
+                    "N": "1775099045"
                   }
                 }
               }

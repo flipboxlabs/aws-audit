@@ -4,9 +4,10 @@
 //! fixture's `output` or `error`, and the operation must return the fixture's
 //! `result` or `error`.
 
+use aws_audit::ResourceId;
 use aws_audit::pagination::Pagination;
 use aws_audit::service::{AuditService, ServiceError};
-use aws_audit::storage::{Identifiers, StorageError, TargetFilter};
+use aws_audit::storage::{Identifiers, ListFilter, ResourceFilter, StorageError};
 use aws_audit::testing::{Recorder, compare_calls, contract_service, fixtures};
 use aws_audit::upsert::UpsertAudit;
 use serde_json::{Value, json};
@@ -31,11 +32,27 @@ fn pagination(value: &Value) -> Pagination {
     }
 }
 
-fn filter(params: &Value) -> TargetFilter {
-    TargetFilter {
+/// A string or numeric id as `String(id)` gives it.
+fn id(value: &Value) -> Option<String> {
+    present(value, "id").map(|id| {
+        serde_json::from_value::<ResourceId>(id.clone())
+            .unwrap()
+            .to_key()
+    })
+}
+
+fn filter(params: &Value) -> ListFilter {
+    ListFilter {
+        operation: string(params, "operation"),
+        tier: present(params, "tier").map(|tier| serde_json::from_value(tier.clone()).unwrap()),
+    }
+}
+
+fn resources(params: &Value) -> ResourceFilter {
+    ResourceFilter {
         app: string(params, "app"),
         resource_type: params.get("resource").and_then(|r| string(r, "type")),
-        resource_id: params.get("resource").and_then(|r| string(r, "id")),
+        resource_id: params.get("resource").and_then(id),
     }
 }
 
@@ -72,6 +89,7 @@ async fn run(
                     tenant,
                     &string(params, "app").unwrap(),
                     &string(&params["resource"], "type").unwrap(),
+                    &filter(params),
                     &page
                 )
                 .await?
@@ -82,7 +100,8 @@ async fn run(
                     tenant,
                     &string(params, "app").unwrap(),
                     &string(&params["resource"], "type").unwrap(),
-                    &string(&params["resource"], "id").unwrap(),
+                    &id(&params["resource"]).unwrap(),
+                    &filter(params),
                     &page,
                 )
                 .await?
@@ -93,6 +112,7 @@ async fn run(
                     tenant,
                     &string(params, "trace").unwrap(),
                     &filter(params),
+                    &resources(params),
                     &page
                 )
                 .await?
@@ -103,6 +123,7 @@ async fn run(
                     tenant,
                     string(params, "status").unwrap().parse().unwrap(),
                     &filter(params),
+                    &resources(params),
                     &page
                 )
                 .await?
@@ -118,6 +139,7 @@ fn error_name(error: &ServiceError) -> String {
     match error {
         ServiceError::NotFound(_) => "AuditNotFoundError".into(),
         ServiceError::Storage(StorageError::InvalidNextToken(_)) => "InvalidNextTokenError".into(),
+        ServiceError::Storage(StorageError::IncompleteResourceFilter(_)) => "TypeError".into(),
         other => format!("{other:?}"),
     }
 }

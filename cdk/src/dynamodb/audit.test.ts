@@ -20,29 +20,104 @@ const synth = () => {
   return Template.fromStack(stack);
 };
 
-const LISTING = ["operation", "status", "message", "source", "target", "rerunable", "createdAt"];
+const tables = () => synth().findResources("AWS::DynamoDB::Table");
+
+const key = (AttributeName: string, KeyType: "HASH" | "RANGE") => ({ AttributeName, KeyType });
 
 describe("AuditTable", () => {
-  // The SDK reads parent audits with the same projection (DynamoDB.Projections.LISTING), and a
-  // projection change replaces the index, so pin the synthesized attributes.
-  it("should project the listing attributes into the listing indexes", () => {
-    const [table] = Object.values(synth().findResources("AWS::DynamoDB::Table"));
-    const projections = Object.fromEntries(
-      (
-        table.Properties.GlobalSecondaryIndexes as Array<{
-          IndexName: string;
-          Projection: unknown;
-        }>
-      ).map(({ IndexName, Projection }) => [IndexName, Projection]),
-    );
+  it("should create the v2 table under a new logical id, retained on removal", () => {
+    expect(Object.keys(tables())).toEqual([
+      expect.stringMatching(/^AuditTableAuditTableV2[0-9A-F]{8}$/),
+    ]);
 
-    expect(projections).toEqual({
-      GSI1_SN: { ProjectionType: "INCLUDE", NonKeyAttributes: LISTING },
-      GSI1_SS: {
-        ProjectionType: "INCLUDE",
-        NonKeyAttributes: [...LISTING, "GSI1_SN_PK", "GSI1_SN_SK"],
-      },
-      GSI2_SS: { ProjectionType: "INCLUDE", NonKeyAttributes: LISTING },
+    const [table] = Object.values(tables());
+    expect(table.DeletionPolicy).toBe("Retain");
+    expect(table.UpdateReplacePolicy).toBe("Retain");
+    expect(table.Properties).toMatchObject({
+      TableName: "DEV-Test-Audit-v2",
+      KeySchema: [key("PK", "HASH"), key("SK", "RANGE")],
+      TimeToLiveSpecification: { AttributeName: "ttl", Enabled: true },
+      StreamSpecification: { StreamViewType: "NEW_AND_OLD_IMAGES" },
     });
+    expect(table.Properties).not.toHaveProperty("LocalSecondaryIndexes");
+  });
+
+  // The SDK and the Rust Lambdas query these keys and read these projections, and a
+  // change replaces the index, so pin the synthesized definitions.
+  it("should key and project every listing index", () => {
+    const [table] = Object.values(tables());
+    const summaryLess = (...keys: string[]) =>
+      [
+        "id",
+        "tenantId",
+        "status",
+        "tier",
+        "operation",
+        "message",
+        "target",
+        "source",
+        "rerunable",
+        "trace",
+        "createdAt",
+        "updatedAt",
+      ].filter((name) => !keys.includes(name));
+
+    expect(table.Properties.GlobalSecondaryIndexes).toEqual([
+      {
+        IndexName: "ByType",
+        KeySchema: [
+          key("tenantKey", "HASH"),
+          key("app", "HASH"),
+          key("resourceType", "HASH"),
+          key("createdAt", "RANGE"),
+          key("id", "RANGE"),
+        ],
+        Projection: { ProjectionType: "INCLUDE", NonKeyAttributes: summaryLess("createdAt", "id") },
+      },
+      {
+        IndexName: "ByResource",
+        KeySchema: [
+          key("tenantKey", "HASH"),
+          key("app", "HASH"),
+          key("resourceType", "HASH"),
+          key("resourceId", "HASH"),
+          key("createdAt", "RANGE"),
+          key("id", "RANGE"),
+        ],
+        Projection: { ProjectionType: "INCLUDE", NonKeyAttributes: summaryLess("createdAt", "id") },
+      },
+      {
+        IndexName: "ByStatus",
+        KeySchema: [
+          key("tenantKey", "HASH"),
+          key("status", "HASH"),
+          key("kind", "HASH"),
+          key("createdAt", "RANGE"),
+          key("id", "RANGE"),
+        ],
+        Projection: {
+          ProjectionType: "INCLUDE",
+          NonKeyAttributes: summaryLess("status", "createdAt", "id"),
+        },
+      },
+      {
+        IndexName: "ByTrace",
+        KeySchema: [
+          key("tenantKey", "HASH"),
+          key("traceId", "HASH"),
+          key("traceStage", "RANGE"),
+          key("createdAt", "RANGE"),
+          key("id", "RANGE"),
+        ],
+        Projection: { ProjectionType: "INCLUDE", NonKeyAttributes: summaryLess("createdAt", "id") },
+      },
+    ]);
+
+    expect(table.Properties.AttributeDefinitions).toEqual(
+      expect.arrayContaining([
+        { AttributeName: "traceStage", AttributeType: "N" },
+        { AttributeName: "resourceId", AttributeType: "S" },
+      ]),
+    );
   });
 });

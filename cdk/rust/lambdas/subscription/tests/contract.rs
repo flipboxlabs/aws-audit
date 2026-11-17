@@ -139,9 +139,9 @@ async fn skips_control_messages() {
 #[tokio::test(start_paused = true)]
 async fn stores_each_audit_independently() {
     let recorder = Recorder::answering(|call| {
-        let key = call.input["Key"]["SK"]["S"].as_str().unwrap_or_default();
+        let key = call.input["Key"]["PK"]["S"].as_str().unwrap_or_default();
         match (call.command.as_str(), key) {
-            ("UpdateItem", "audit-2") => json!({
+            ("UpdateItem", "App1.Order#audit-2") => json!({
                 "error": { "name": "ProvisionedThroughputExceededException", "message": "Slow down" }
             }),
             ("UpdateItem", _) => json!({

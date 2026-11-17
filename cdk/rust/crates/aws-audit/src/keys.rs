@@ -1,12 +1,11 @@
-//! Key formats: how an audit's table and index keys are built from its fields, and
-//! how a trace is read back from them (`construct*Key*` and `resolveTrace` in the
-//! TypeScript repository).
+//! Key formats: how an audit's table key, index attributes and `scopes` are built
+//! from its fields (`constructPrimaryKey`, `constructIndexAttributes`,
+//! `resourceScopes` and `filterScope` in the TypeScript repository).
 
 use serde_json::{Map, Value};
 
-use crate::model::ResourceId;
-use crate::table::{TTL_ATTRIBUTE, keys};
-use crate::upsert::StoredAudit;
+use crate::model::{ResourceId, ResourceReference};
+use crate::table::{NO_TENANT, attributes, keys, sort_keys};
 
 /// `{tenantId}#{base}`, or `base` without a tenant.
 pub fn partition(tenant_id: Option<&str>, base: &str) -> String {
@@ -16,7 +15,14 @@ pub fn partition(tenant_id: Option<&str>, base: &str) -> String {
     }
 }
 
-/// The table key: `PK` `[{tenantId}#]{app}.{type}`, `SK` the id.
+/// The tenant part of every index key: the tenant, or [`NO_TENANT`].
+pub fn tenant_key(tenant_id: Option<&str>) -> &str {
+    tenant_id
+        .filter(|tenant| !tenant.is_empty())
+        .unwrap_or(NO_TENANT)
+}
+
+/// An audit's table key: `PK` `[{tenantId}#]{app}.{type}#{id}`, `SK` `audit`.
 pub fn primary_key(
     tenant_id: Option<&str>,
     app: &str,
@@ -26,10 +32,29 @@ pub fn primary_key(
     Map::from_iter([
         (
             keys::PARTITION_KEY.to_owned(),
-            Value::String(partition(tenant_id, &format!("{app}.{resource_type}"))),
+            Value::String(partition(tenant_id, &format!("{app}.{resource_type}#{id}"))),
         ),
-        (keys::SORT_KEY.to_owned(), Value::String(id.to_owned())),
+        (
+            keys::SORT_KEY.to_owned(),
+            Value::String(sort_keys::AUDIT.to_owned()),
+        ),
     ])
+}
+
+/// The sort key of an audit's copy under a related resource:
+/// `related#{app}.{type}#{id}`.
+pub fn related_sort_key(resource: &ResourceReference) -> String {
+    format!(
+        "{}{}.{}#{}",
+        sort_keys::RELATED_PREFIX,
+        resource.app,
+        resource.resource_type,
+        resource
+            .id
+            .as_ref()
+            .map(ResourceId::to_key)
+            .unwrap_or_default()
+    )
 }
 
 /// Whether a resource has an id. A numeric `0` does; only a missing or empty one
@@ -56,110 +81,115 @@ pub fn trace_parts(trace: &str) -> (&str, u64) {
     }
 }
 
-/// The index keys and TTL an audit is written with, in the order the upsert sets
-/// them. `now_millis` is the write time in epoch milliseconds.
-pub fn secondary_keys(
-    audit: &StoredAudit,
-    now_millis: i64,
-    ttl_seconds: u64,
+/// The top-level attributes an item's index keys are built from, in the order the
+/// upsert sets them.
+///
+/// The resource id is stored as a string, so numeric and string ids list together.
+/// Only audits (`kind` `audit`) get the trace attributes, which keeps copies out of
+/// `ByTrace`.
+pub fn index_attributes(
+    tenant_id: Option<&str>,
+    target: &ResourceReference,
+    trace: Option<&str>,
+    kind: &str,
 ) -> Vec<(String, Value)> {
-    let tenant = audit.tenant_id.as_deref();
-    let target = &audit.target;
-    let mut fields = Vec::with_capacity(8);
+    let mut fields = vec![
+        (
+            attributes::TENANT_KEY.to_owned(),
+            Value::String(tenant_key(tenant_id).to_owned()),
+        ),
+        (
+            attributes::APP.to_owned(),
+            Value::String(target.app.clone()),
+        ),
+        (
+            attributes::RESOURCE_TYPE.to_owned(),
+            Value::String(target.resource_type.clone()),
+        ),
+    ];
 
-    // Tier, then epoch milliseconds: a number sorting by tier, then write time
-    let lsi = format!("{}{now_millis}", audit.tier.get());
-    fields.push((
-        keys::LSI1_N_SORT_KEY.to_owned(),
-        lsi.parse::<u64>().map_or(Value::Null, Value::from),
-    ));
-
-    let resource = format!("{}.{}", target.app, target.resource_type);
-    let resource = match &target.id {
-        id if has_resource_id(id.as_ref()) => {
-            format!(
-                "{resource}#{}",
-                id.as_ref().map(ResourceId::to_key).unwrap_or_default()
-            )
-        }
-        _ => resource,
-    };
-    fields.push((
-        keys::GSI1_SS_PARTITION_KEY.to_owned(),
-        Value::String(partition(tenant, &resource)),
-    ));
-    fields.push((
-        keys::GSI1_SS_SORT_KEY.to_owned(),
-        Value::String(audit.id.clone()),
-    ));
-
-    if let Some(trace) = audit.trace.as_deref().filter(|trace| !trace.is_empty()) {
-        let (id, stage) = trace_parts(trace);
+    if let Some(id) = target.id.as_ref().filter(|id| has_resource_id(Some(id))) {
         fields.push((
-            keys::GSI1_SN_PARTITION_KEY.to_owned(),
-            Value::String(partition(tenant, id)),
+            attributes::RESOURCE_ID.to_owned(),
+            Value::String(id.to_key()),
         ));
-        fields.push((keys::GSI1_SN_SORT_KEY.to_owned(), Value::from(stage)));
     }
 
-    fields.push((
-        keys::GSI2_SS_PARTITION_KEY.to_owned(),
-        Value::String(partition(tenant, audit.status.as_str())),
-    ));
-    fields.push((
-        keys::GSI2_SS_SORT_KEY.to_owned(),
-        Value::String(format!("{}#{}", audit.created_at, audit.id)),
-    ));
+    fields.push((attributes::KIND.to_owned(), Value::String(kind.to_owned())));
 
-    let now_seconds = now_millis.div_euclid(1000);
-    fields.push((
-        TTL_ATTRIBUTE.to_owned(),
-        Value::from(now_seconds.saturating_add_unsigned(ttl_seconds)),
-    ));
+    let trace = trace.filter(|trace| kind == crate::table::kinds::AUDIT && !trace.is_empty());
+    if let Some(trace) = trace {
+        let (id, stage) = trace_parts(trace);
+        fields.push((
+            attributes::TRACE_ID.to_owned(),
+            Value::String(id.to_owned()),
+        ));
+        fields.push((attributes::TRACE_STAGE.to_owned(), Value::from(stage)));
+    }
 
     fields
 }
 
-/// Sets an item's `trace`. A stored `trace` string is kept; otherwise it's rebuilt
-/// from the trace index keys (`{id}` at stage 0, else `{id}:{stage}`), without the
-/// tenant prefix. A non-string `trace` is dropped.
-pub fn resolve_trace(item: &mut Map<String, Value>, tenant_id: Option<&str>) {
-    match item.get("trace") {
-        Some(Value::String(_)) => return,
-        Some(_) => {
-            item.shift_remove("trace");
-        }
-        None => {}
+/// What an audit's `scopes` attribute holds for one of its resources: everything a
+/// resource filter can name it by.
+pub fn resource_scopes(resource: &ResourceReference) -> Vec<String> {
+    let app = &resource.app;
+    let resource_type = &resource.resource_type;
+    let mut scopes = vec![
+        app.clone(),
+        format!("{app}.{resource_type}"),
+        format!("*.{resource_type}"),
+    ];
+    if let Some(id) = resource.id.as_ref().filter(|id| has_resource_id(Some(id))) {
+        scopes.push(format!("{app}.{resource_type}#{}", id.to_key()));
     }
+    scopes
+}
 
-    let (Some(Value::String(partition)), Some(stage)) = (
-        item.get(keys::GSI1_SN_PARTITION_KEY),
-        item.get(keys::GSI1_SN_SORT_KEY),
-    ) else {
-        return;
-    };
+/// The `scopes` of an audit: its target's, then each related resource's, each once,
+/// in that order.
+pub fn audit_scopes<'a>(
+    target: &'a ResourceReference,
+    resources: impl IntoIterator<Item = &'a ResourceReference>,
+) -> Vec<String> {
+    let mut scopes: Vec<String> = Vec::new();
+    for scope in std::iter::once(target)
+        .chain(resources)
+        .flat_map(resource_scopes)
+    {
+        if !scopes.contains(&scope) {
+            scopes.push(scope);
+        }
+    }
+    scopes
+}
 
-    let tenant = item
-        .get("tenantId")
-        .and_then(Value::as_str)
-        .or(tenant_id)
-        .filter(|tenant| !tenant.is_empty());
-    let id = tenant
-        .and_then(|tenant| partition.strip_prefix(&format!("{tenant}#")))
-        .unwrap_or(partition);
+/// A resource id filter without its app and resource type.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("A resource id filter needs an app and a resource type")]
+pub struct IncompleteResourceFilter;
 
-    let stage = match stage {
-        Value::Number(number) => crate::js::number_to_string(number),
-        Value::String(text) => text.clone(),
-        _ => return,
-    };
-    let trace = if stage == "0" {
-        id.to_owned()
-    } else {
-        format!("{id}:{stage}")
-    };
+/// The `scopes` value a resource filter matches, if it filters at all.
+pub fn filter_scope(
+    app: Option<&str>,
+    resource_type: Option<&str>,
+    resource_id: Option<&str>,
+) -> Result<Option<String>, IncompleteResourceFilter> {
+    let app = app.filter(|app| !app.is_empty());
+    let resource_type = resource_type.filter(|resource_type| !resource_type.is_empty());
 
-    item.insert("trace".to_owned(), Value::String(trace));
+    Ok(
+        match (app, resource_type, resource_id.filter(|id| !id.is_empty())) {
+            (Some(app), Some(resource_type), Some(id)) => {
+                Some(format!("{app}.{resource_type}#{id}"))
+            }
+            (_, _, Some(_)) => return Err(IncompleteResourceFilter),
+            (Some(app), Some(resource_type), None) => Some(format!("{app}.{resource_type}")),
+            (Some(app), None, None) => Some(app.to_owned()),
+            (None, Some(resource_type), None) => Some(format!("*.{resource_type}")),
+            (None, None, None) => None,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -167,6 +197,10 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    fn resource(value: Value) -> ResourceReference {
+        serde_json::from_value(value).unwrap()
+    }
 
     #[test]
     fn splits_traces_on_the_last_colon() {
@@ -186,17 +220,75 @@ mod tests {
     }
 
     #[test]
-    fn rebuilds_the_trace_without_the_tenant() {
-        let mut item = json!({ "GSI1_SN_PK": "tenant-1#trace-1", "GSI1_SN_SK": 2 });
-        resolve_trace(item.as_object_mut().unwrap(), Some("tenant-1"));
-        assert_eq!(item["trace"], "trace-1:2");
+    fn keys_audits_by_their_id() {
+        assert_eq!(
+            Value::Object(primary_key(Some("tenant-1"), "App1", "Order", "audit-1")),
+            json!({ "PK": "tenant-1#App1.Order#audit-1", "SK": "audit" })
+        );
+    }
 
-        let mut item = json!({ "GSI1_SN_PK": "trace-1", "GSI1_SN_SK": 0 });
-        resolve_trace(item.as_object_mut().unwrap(), None);
-        assert_eq!(item["trace"], "trace-1");
+    #[test]
+    fn leaves_trace_attributes_off_copies() {
+        let target = resource(json!({ "app": "App1", "type": "Order", "id": 0 }));
 
-        let mut item = json!({ "trace": "kept:1", "GSI1_SN_PK": "other", "GSI1_SN_SK": 3 });
-        resolve_trace(item.as_object_mut().unwrap(), None);
-        assert_eq!(item["trace"], "kept:1");
+        let audit = index_attributes(None, &target, Some("trace-1:2"), "audit");
+        let copy = index_attributes(Some("tenant-1"), &target, Some("trace-1:2"), "related");
+
+        assert_eq!(
+            Value::Object(audit.into_iter().collect()),
+            json!({
+                "tenantKey": "-", "app": "App1", "resourceType": "Order", "resourceId": "0",
+                "kind": "audit", "traceId": "trace-1", "traceStage": 2,
+            })
+        );
+        assert_eq!(
+            Value::Object(copy.into_iter().collect()),
+            json!({
+                "tenantKey": "tenant-1", "app": "App1", "resourceType": "Order",
+                "resourceId": "0", "kind": "related",
+            })
+        );
+    }
+
+    #[test]
+    fn scopes_each_resource_once() {
+        let target = resource(json!({ "app": "App1", "type": "Order", "id": "order-1" }));
+        let resources = [
+            resource(json!({ "app": "App1", "type": "User" })),
+            resource(json!({ "app": "App1", "type": "Order", "id": "order-1" })),
+        ];
+
+        assert_eq!(
+            audit_scopes(&target, &resources),
+            [
+                "App1",
+                "App1.Order",
+                "*.Order",
+                "App1.Order#order-1",
+                "App1.User",
+                "*.User"
+            ]
+        );
+    }
+
+    #[test]
+    fn matches_the_narrowest_scope_a_filter_names() {
+        let scope = |app, resource_type, id| filter_scope(app, resource_type, id);
+
+        assert_eq!(scope(None, None, None), Ok(None));
+        assert_eq!(scope(Some("App1"), None, None), Ok(Some("App1".into())));
+        assert_eq!(scope(None, Some("Order"), None), Ok(Some("*.Order".into())));
+        assert_eq!(
+            scope(Some("App1"), Some("Order"), None),
+            Ok(Some("App1.Order".into()))
+        );
+        assert_eq!(
+            scope(Some("App1"), Some("Order"), Some("order-1")),
+            Ok(Some("App1.Order#order-1".into()))
+        );
+        assert_eq!(
+            scope(Some("App1"), None, Some("order-1")),
+            Err(IncompleteResourceFilter)
+        );
     }
 }

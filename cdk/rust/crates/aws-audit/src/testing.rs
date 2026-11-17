@@ -25,9 +25,12 @@ use crate::storage::AuditRepository;
 /// The clock every fixture is recorded at.
 pub const NOW: &str = "2026-01-02T03:04:05.678Z";
 
-/// The table and event bus name the fixtures use (`ENVIRONMENT=test`,
+/// The table name the fixtures use (`ENVIRONMENT=test`,
 /// `SERVICE=Contract`).
-pub const RESOURCE_NAME: &str = "TEST-Contract-Audit";
+pub const TABLE_NAME: &str = "TEST-Contract-Audit-v2";
+
+/// The event bus name the fixtures use.
+pub const EVENT_BUS_NAME: &str = "TEST-Contract-Audit";
 
 /// The `contract/` directory at the repository root.
 pub fn contract_dir() -> PathBuf {
@@ -222,7 +225,7 @@ fn contract_jitter() -> Arc<FixedJitter> {
 /// The fixtures' event bus on `recorder`.
 pub fn contract_event_bus(recorder: &Arc<Recorder>) -> AuditEventBus {
     let (_, eventbridge) = contract_clients(recorder);
-    AuditEventBus::new(eventbridge, RESOURCE_NAME).with_jitter(contract_jitter())
+    AuditEventBus::new(eventbridge, EVENT_BUS_NAME).with_jitter(contract_jitter())
 }
 
 /// An audit service on `recorder`, with the fixtures' config, clock and jitter,
@@ -237,7 +240,7 @@ pub fn contract_service(recorder: &Arc<Recorder>) -> AuditService {
             .with_timezone(&Utc),
     ));
 
-    let storage = AuditRepository::new(dynamodb, RESOURCE_NAME, &config)
+    let storage = AuditRepository::new(dynamodb, TABLE_NAME, &config)
         .with_clock(clock.clone())
         .with_jitter(contract_jitter());
 

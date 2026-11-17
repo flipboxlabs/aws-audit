@@ -4,6 +4,16 @@ import * as cdk from "aws-cdk-lib";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import { Construct } from "constructs";
 
+const ATTRIBUTE_TYPES = {
+  string: dynamodb.AttributeType.STRING,
+  number: dynamodb.AttributeType.NUMBER,
+} as const;
+
+type KeyAttribute = (typeof DynamoDB.Indexes)[keyof typeof DynamoDB.Indexes]["sortKeys"][number];
+
+const attributes = (keys: readonly KeyAttribute[]): dynamodb.Attribute[] =>
+  keys.map(({ name, type }) => ({ name, type: ATTRIBUTE_TYPES[type] }));
+
 export default class extends Construct {
   readonly table: dynamodb.Table;
 
@@ -18,8 +28,12 @@ export default class extends Construct {
 
     /**
      * DynamoDB Table
+     *
+     * A new construct id from the earlier table (`AuditTable`), which had local
+     * secondary indexes that can't be removed. That table is retained when it
+     * leaves the stack; `aws-audit-migrate` copies its audits here.
      */
-    this.table = new dynamodb.Table(this, "AuditTable", {
+    this.table = new dynamodb.Table(this, "AuditTableV2", {
       tableName: DynamoDB.Table.Name(props.config),
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -35,72 +49,18 @@ export default class extends Construct {
       timeToLiveAttribute: DynamoDB.Attributes.TTL,
     });
 
-    /**
-     * LSIs (we can't add LSIs later)
-     */
-    this.table.addLocalSecondaryIndex({
-      indexName: DynamoDB.Indexes.LSI1_N,
-      sortKey: {
-        name: DynamoDB.Keys.LSI1_N_SORT_KEY,
-        type: dynamodb.AttributeType.NUMBER,
-      },
-    });
+    // Multi-attribute keys on top-level attributes; each index projects the audit
+    // summary a listing returns, less its own keys
+    for (const index of Object.values(DynamoDB.Indexes)) {
+      const keys = new Set([...index.partitionKeys, ...index.sortKeys].map(({ name }) => name));
 
-    this.table.addLocalSecondaryIndex({
-      indexName: DynamoDB.Indexes.LSI1_S,
-      sortKey: {
-        name: DynamoDB.Keys.LSI1_S_SORT_KEY,
-        type: dynamodb.AttributeType.STRING,
-      },
-    });
-
-    // List by Trace Id
-    this.table.addGlobalSecondaryIndex({
-      indexName: DynamoDB.Indexes.GSI1_SN,
-      partitionKey: {
-        name: DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
-        type: dynamodb.AttributeType.STRING,
-      },
-      sortKey: {
-        name: DynamoDB.Keys.GSI1_SN_SORT_KEY,
-        type: dynamodb.AttributeType.NUMBER,
-      },
-      projectionType: dynamodb.ProjectionType.INCLUDE,
-      nonKeyAttributes: [...DynamoDB.Projections.LISTING],
-    });
-
-    // List by Resource
-    this.table.addGlobalSecondaryIndex({
-      indexName: DynamoDB.Indexes.GSI1_SS,
-      partitionKey: {
-        name: DynamoDB.Keys.GSI1_SS_PARTITION_KEY,
-        type: dynamodb.AttributeType.STRING,
-      },
-      sortKey: {
-        name: DynamoDB.Keys.GSI1_SS_SORT_KEY,
-        type: dynamodb.AttributeType.STRING,
-      },
-      projectionType: dynamodb.ProjectionType.INCLUDE,
-      nonKeyAttributes: [
-        ...DynamoDB.Projections.LISTING,
-        DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
-        DynamoDB.Keys.GSI1_SN_SORT_KEY,
-      ],
-    });
-
-    // List by Status (with date ordering)
-    this.table.addGlobalSecondaryIndex({
-      indexName: DynamoDB.Indexes.GSI2_SS,
-      partitionKey: {
-        name: DynamoDB.Keys.GSI2_SS_PARTITION_KEY,
-        type: dynamodb.AttributeType.STRING,
-      },
-      sortKey: {
-        name: DynamoDB.Keys.GSI2_SS_SORT_KEY,
-        type: dynamodb.AttributeType.STRING,
-      },
-      projectionType: dynamodb.ProjectionType.INCLUDE,
-      nonKeyAttributes: [...DynamoDB.Projections.LISTING],
-    });
+      this.table.addGlobalSecondaryIndex({
+        indexName: index.name,
+        partitionKeys: attributes(index.partitionKeys),
+        sortKeys: attributes(index.sortKeys),
+        projectionType: dynamodb.ProjectionType.INCLUDE,
+        nonKeyAttributes: DynamoDB.Projections.SUMMARY.filter((name) => !keys.has(name)),
+      });
+    }
   }
 }

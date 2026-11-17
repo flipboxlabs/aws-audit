@@ -10,13 +10,13 @@
       "service": "DynamoDB",
       "command": "GetItem",
       "input": {
-        "TableName": "TEST-Contract-Audit",
+        "TableName": "TEST-Contract-Audit-v2",
         "Key": {
           "PK": {
-            "S": "App1.Order"
+            "S": "App1.Order#missing"
           },
           "SK": {
-            "S": "missing"
+            "S": "audit"
           }
         }
       },

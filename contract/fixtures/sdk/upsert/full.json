@@ -39,16 +39,16 @@
       "service": "DynamoDB",
       "command": "UpdateItem",
       "input": {
-        "TableName": "TEST-Contract-Audit",
+        "TableName": "TEST-Contract-Audit-v2",
         "Key": {
           "PK": {
-            "S": "App1.Order"
+            "S": "App1.Order#audit-1"
           },
           "SK": {
-            "S": "audit-1"
+            "S": "audit"
           }
         },
-        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #source = :source, #context = :context, #operation = :operation, #message = :message, #trace = :trace, #event = :event, #error = :error, #updatedAt = :updatedAt, #LSI1_N_SK = :LSI1_N_SK, #GSI1_SS_PK = :GSI1_SS_PK, #GSI1_SS_SK = :GSI1_SS_SK, #GSI1_SN_PK = :GSI1_SN_PK, #GSI1_SN_SK = :GSI1_SN_SK, #GSI2_SS_PK = :GSI2_SS_PK, #GSI2_SS_SK = :GSI2_SS_SK, #ttl = :ttl",
+        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #source = :source, #context = :context, #operation = :operation, #message = :message, #trace = :trace, #event = :event, #error = :error, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #traceId = :traceId, #traceStage = :traceStage, #scopes = :scopes, #ttl = :ttl",
         "ExpressionAttributeNames": {
           "#attempts": "attempts",
           "#createdAt": "createdAt",
@@ -64,13 +64,14 @@
           "#event": "event",
           "#error": "error",
           "#updatedAt": "updatedAt",
-          "#LSI1_N_SK": "LSI1_N_SK",
-          "#GSI1_SS_PK": "GSI1_SS_PK",
-          "#GSI1_SS_SK": "GSI1_SS_SK",
-          "#GSI1_SN_PK": "GSI1_SN_PK",
-          "#GSI1_SN_SK": "GSI1_SN_SK",
-          "#GSI2_SS_PK": "GSI2_SS_PK",
-          "#GSI2_SS_SK": "GSI2_SS_SK",
+          "#tenantKey": "tenantKey",
+          "#app": "app",
+          "#resourceType": "resourceType",
+          "#resourceId": "resourceId",
+          "#kind": "kind",
+          "#traceId": "traceId",
+          "#traceStage": "traceStage",
+          "#scopes": "scopes",
           "#ttl": "ttl"
         },
         "ExpressionAttributeValues": {
@@ -180,26 +181,34 @@
           ":createdAt": {
             "S": "2026-01-02T03:04:05.678Z"
           },
-          ":LSI1_N_SK": {
-            "N": "11767323045678"
+          ":tenantKey": {
+            "S": "-"
           },
-          ":GSI1_SS_PK": {
-            "S": "App1.Order#order-1"
+          ":app": {
+            "S": "App1"
           },
-          ":GSI1_SS_SK": {
-            "S": "audit-1"
+          ":resourceType": {
+            "S": "Order"
           },
-          ":GSI1_SN_PK": {
+          ":resourceId": {
+            "S": "order-1"
+          },
+          ":kind": {
+            "S": "audit"
+          },
+          ":traceId": {
             "S": "trace-1"
           },
-          ":GSI1_SN_SK": {
+          ":traceStage": {
             "N": "2"
           },
-          ":GSI2_SS_PK": {
-            "S": "fail"
-          },
-          ":GSI2_SS_SK": {
-            "S": "2026-01-02T03:04:05.678Z#audit-1"
+          ":scopes": {
+            "SS": [
+              "App1",
+              "App1.Order",
+              "*.Order",
+              "App1.Order#order-1"
+            ]
           },
           ":ttl": {
             "N": "1775099045"
@@ -209,6 +218,9 @@
       },
       "output": {
         "Attributes": {
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
           "attempts": {
             "L": [
               {

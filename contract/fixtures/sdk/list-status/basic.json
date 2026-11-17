@@ -1,5 +1,5 @@
 {
-  "description": "Audits with a status, excluding related-resource copies; no trace is emitted",
+  "description": "Summaries of a status's audits (not their copies), newest first",
   "operation": "listByStatus",
   "args": [
     {
@@ -11,44 +11,57 @@
       "service": "DynamoDB",
       "command": "Query",
       "input": {
+        "TableName": "TEST-Contract-Audit-v2",
+        "IndexName": "ByStatus",
         "ScanIndexForward": false,
-        "IndexName": "GSI2_SS",
+        "KeyConditionExpression": "#k0 = :k0 AND #k1 = :k1 AND #k2 = :k2",
+        "ExpressionAttributeNames": {
+          "#k0": "tenantKey",
+          "#k1": "status",
+          "#k2": "kind"
+        },
         "ExpressionAttributeValues": {
-          ":PK": {
+          ":k0": {
+            "S": "-"
+          },
+          ":k1": {
             "S": "fail"
           },
-          ":isParent": {
-            "S": "#"
+          ":k2": {
+            "S": "audit"
           }
         },
-        "ExpressionAttributeNames": {
-          "#PK": "GSI2_SS_PK"
-        },
-        "KeyConditionExpression": "#PK=:PK",
-        "TableName": "TEST-Contract-Audit",
-        "Limit": 100,
-        "FilterExpression": "not contains(SK, :isParent)"
+        "Limit": 100
       },
       "output": {
         "Items": [
           {
             "PK": {
-              "S": "App1.Order"
+              "S": "App1.Order#audit-1"
             },
             "SK": {
-              "S": "audit-1"
+              "S": "audit"
             },
-            "GSI2_SS_PK": {
-              "S": "fail"
-            },
-            "GSI2_SS_SK": {
-              "S": "2026-01-02T03:04:05.678Z#audit-1"
-            },
-            "operation": {
-              "S": "createOrder"
+            "tenantKey": {
+              "S": "-"
             },
             "status": {
               "S": "fail"
+            },
+            "kind": {
+              "S": "audit"
+            },
+            "createdAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            },
+            "id": {
+              "S": "audit-1"
+            },
+            "tier": {
+              "N": "2"
+            },
+            "operation": {
+              "S": "createOrder"
             },
             "target": {
               "M": {
@@ -63,7 +76,10 @@
                 }
               }
             },
-            "createdAt": {
+            "trace": {
+              "S": "trace-1:2"
+            },
+            "updatedAt": {
               "S": "2026-01-02T03:04:05.678Z"
             }
           }
@@ -77,13 +93,15 @@
         "id": "audit-1",
         "status": "fail",
         "tier": 2,
+        "operation": "createOrder",
         "target": {
           "app": "App1",
           "id": "order-1",
           "type": "Order"
         },
-        "operation": "createOrder",
-        "createdAt": "2026-01-02T03:04:05.678Z"
+        "trace": "trace-1:2",
+        "createdAt": "2026-01-02T03:04:05.678Z",
+        "updatedAt": "2026-01-02T03:04:05.678Z"
       }
     ],
     "pagination": {}

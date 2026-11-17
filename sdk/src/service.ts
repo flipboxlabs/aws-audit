@@ -14,10 +14,12 @@ import {
 import type { Audit } from "./schema/audit.js";
 import type { Pagination } from "./schema/model.js";
 import { createTypedUpsertAuditSchema, type UpsertAuditInput } from "./schema/service.js";
-import { generateAuditId, hasResourceId } from "./utils.js";
+import { generateAuditId } from "./utils.js";
 
 export type {
+  ListFilters,
   TypedIdentifiers,
+  TypedResourceFilters,
   TypedListByStatusOptions,
   TypedListObjectsOptions,
   TypedListItemsOptions,
@@ -117,11 +119,11 @@ export class AuditService<C extends AuditConfig> {
   /**
    * Creates or updates an audit record and its related resource entries.
    *
-   * For each resource in the `resources` array that has an ID:
-   * - Creates a separate audit entry with the resource as the target
-   * - Links it to the parent audit via a generated composite ID
-   * - Sets the original target as the source
-   * - Inherits rerunable status from the parent or event presence
+   * For each resource in the `resources` array that has an ID, writes a copy of the
+   * audit's summary that lists it under that resource:
+   * - The resource is the copy's target, and the audit's target its source
+   * - It has the audit's id and stored `createdAt`
+   * - It inherits rerunable status from the audit or event presence
    *
    * When an audit with the same ID already exists (retry scenario):
    * - Appends the current execution to the `attempts` array
@@ -172,33 +174,11 @@ export class AuditService<C extends AuditConfig> {
 
     // Upsert main item with atomic attempt tracking
     // This handles both new items and retries in a single atomic operation
-    const attemptNumber = await this.storage.upsertItem(item, currentAttempt);
+    const { attemptNumber, createdAt } = await this.storage.upsertItem(item, currentAttempt);
     currentAttempt.number = attemptNumber;
 
-    // Build batch for related resource items (these don't need retry tracking)
-    const batch: Array<UpsertAuditInput> = Array.from(item.resources || [])
-      .filter((resource) => hasResourceId(resource.id))
-      .map((resource) => ({
-        ...item,
-
-        id: `${item.id}#${resource.app}.${resource.type}#${resource.id}`, // deterministic ID for retry correlation
-
-        // Link the related resource back to the original audit target.
-        target: resource,
-        source: item.target,
-
-        rerunable: item.rerunable !== undefined ? item.rerunable : !!item.event,
-
-        // Remove these (they are only needed on the parent)
-        event: undefined,
-        result: undefined,
-        error: undefined,
-        attempts: undefined,
-      }));
-
-    if (batch.length > 0) {
-      await this.storage.upsertBatch(batch);
-    }
+    // A copy per related resource, sorted with the audit by its stored createdAt
+    await this.storage.upsertRelated(item, createdAt);
 
     try {
       await this.events?.upsertedOrThrow([item]);
@@ -220,8 +200,7 @@ export class AuditService<C extends AuditConfig> {
   /**
    * Lists audit records with filtering and pagination.
    *
-   * Queries audits based on resource type and app.
-   * Results are paginated in descending tier and creation order.
+   * Queries audits based on resource type and app, newest first.
    *
    * @param params - Query parameters for filtering
    * @param pagination - Optional pagination settings
@@ -255,8 +234,7 @@ export class AuditService<C extends AuditConfig> {
   /**
    * Lists audit records with filtering and pagination.
    *
-   * Queries audits based on resource type, app, and optional resource ID.
-   * Results are paginated and can be filtered by various criteria.
+   * Queries audits of a resource (app, resource type and id), newest first.
    *
    * @param params - Query parameters for filtering
    * @param pagination - Optional pagination settings
@@ -291,7 +269,7 @@ export class AuditService<C extends AuditConfig> {
    * Lists audit records by trace ID with pagination.
    *
    * Retrieves all audits associated with a distributed trace,
-   * ordered by their stage in the processing pipeline.
+   * ordered by their stage in the processing pipeline, then oldest first.
    *
    * @param params - Query parameters including the trace ID
    * @param pagination - Optional pagination settings

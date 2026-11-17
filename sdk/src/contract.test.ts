@@ -14,7 +14,7 @@ import type { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import type { EventBridgeClient } from "@aws-sdk/client-eventbridge";
 import { marshall } from "@aws-sdk/util-dynamodb";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
-import { DynamoDB } from "./constants.js";
+import { DynamoDB, type IndexDefinition } from "./constants.js";
 import { BatchHandler } from "./events/batch-handler.js";
 import { AuditEventBus } from "./events/bus.js";
 import { AuditRepository } from "./repository.js";
@@ -28,8 +28,6 @@ const FIXTURES = "../../contract/fixtures/sdk";
 const NOW = "2026-01-02T03:04:05.678Z";
 
 const ENV = { ENVIRONMENT: "test", SERVICE: "Contract" } as const;
-/** Table name the SDK derives from ENV, used to key BatchGetItem responses */
-const TABLE = "TEST-Contract-Audit";
 
 type Call = {
   service: "DynamoDB" | "EventBridge";
@@ -134,10 +132,10 @@ const record = async ({ name, description, operation, args, replies = [] }: Case
   );
 };
 
-// Stored rows, as DynamoDB returns them (marshalled)
+/** An audit's stored item, unmarshalled */
 const auditRow = (overrides: Record<string, unknown> = {}) => ({
-  PK: "App1.Order",
-  SK: "audit-1",
+  PK: "App1.Order#audit-1",
+  SK: "audit",
   id: "audit-1",
   operation: "createOrder",
   status: "success",
@@ -145,61 +143,67 @@ const auditRow = (overrides: Record<string, unknown> = {}) => ({
   target: { app: "App1", type: "Order", id: "order-1" },
   createdAt: NOW,
   updatedAt: NOW,
+  tenantKey: "-",
+  app: "App1",
+  resourceType: "Order",
+  resourceId: "order-1",
+  kind: "audit",
+  scopes: new Set(["App1", "App1.Order", "*.Order", "App1.Order#order-1"]),
+  ttl: 1775099045,
   ...overrides,
 });
 
+/** An audit's stored item, as GetItem returns it */
 const storedAudit = (overrides: Record<string, unknown> = {}) =>
   marshall(auditRow(overrides), { removeUndefinedValues: true });
 
+/** A related-resource copy of `audit-1` under `TestApp.User` `user-1` */
+const copyOverrides = {
+  SK: "related#TestApp.User#user-1",
+  target: { app: "TestApp", type: "User", id: "user-1" },
+  source: { app: "App1", type: "Order", id: "order-1" },
+  app: "TestApp",
+  resourceType: "User",
+  resourceId: "user-1",
+  kind: "related",
+  scopes: undefined,
+};
+
 /**
- * A row as an INCLUDE index returns it: the table keys, the index's keys and
- * the listing attributes the CDK table projects.
+ * A row as an index returns it: the table keys, the index's keys and the summary
+ * attributes the CDK table projects.
  */
-const indexRow = (indexKeys: string[], overrides: Record<string, unknown>) => {
+const indexRow = (index: IndexDefinition, overrides: Record<string, unknown> = {}) => {
   const row: Record<string, unknown> = auditRow(overrides);
   const projected = [
     DynamoDB.Keys.PARTITION_KEY,
     DynamoDB.Keys.SORT_KEY,
-    ...indexKeys,
-    ...DynamoDB.Projections.LISTING,
+    ...[...index.partitionKeys, ...index.sortKeys].map((key) => key.name),
+    ...DynamoDB.Projections.SUMMARY,
   ];
 
   return marshall(
-    Object.fromEntries(projected.filter((key) => key in row).map((key) => [key, row[key]])),
+    Object.fromEntries(
+      projected.filter((key) => row[key] !== undefined).map((key) => [key, row[key]]),
+    ),
   );
 };
 
-const traceRow = (overrides: Record<string, unknown> = {}) =>
-  indexRow([DynamoDB.Keys.GSI1_SN_PARTITION_KEY, DynamoDB.Keys.GSI1_SN_SORT_KEY], {
-    GSI1_SN_PK: "trace-1",
-    GSI1_SN_SK: 0,
-    ...overrides,
-  });
-
-const statusRow = (overrides: Record<string, unknown> = {}) =>
-  indexRow([DynamoDB.Keys.GSI2_SS_PARTITION_KEY, DynamoDB.Keys.GSI2_SS_SORT_KEY], {
-    GSI2_SS_PK: "fail",
-    GSI2_SS_SK: `${NOW}#audit-1`,
-    status: "fail",
-    ...overrides,
-  });
-
-const resourceRow = (overrides: Record<string, unknown> = {}) =>
-  indexRow(
+/** An index row's LastEvaluatedKey: the table keys and the index's keys */
+const lastKey = (index: IndexDefinition, overrides: Record<string, unknown> = {}): PageKey => {
+  const row: Record<string, unknown> = auditRow(overrides);
+  return Object.fromEntries(
     [
-      DynamoDB.Keys.GSI1_SS_PARTITION_KEY,
-      DynamoDB.Keys.GSI1_SS_SORT_KEY,
-      DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
-      DynamoDB.Keys.GSI1_SN_SORT_KEY,
-    ],
-    {
-      GSI1_SS_PK: "App1.Order#order-1",
-      GSI1_SS_SK: "audit-1",
-      GSI1_SN_PK: "trace-1",
-      GSI1_SN_SK: 0,
-      ...overrides,
-    },
+      DynamoDB.Keys.PARTITION_KEY,
+      DynamoDB.Keys.SORT_KEY,
+      ...[...index.partitionKeys, ...index.sortKeys].map((key) => key.name),
+    ].map((key) => [key, row[key] as string | number]),
   );
+};
+
+const { BY_TYPE, BY_RESOURCE, BY_STATUS, BY_TRACE } = DynamoDB.Indexes;
+
+const traced = { trace: "trace-1:2", traceId: "trace-1", traceStage: 2 };
 
 const accepted = (count = 1) => ({
   output: {
@@ -208,9 +212,11 @@ const accepted = (count = 1) => ({
   },
 });
 
-const attempts = (count: number) => ({
+/** UpdateItem's ALL_NEW reply after this many attempts, with the stored createdAt */
+const attempts = (count: number, createdAt = NOW) => ({
   output: {
     Attributes: marshall({
+      createdAt,
       attempts: Array.from({ length: count }, (_, i) => ({
         number: i + 1,
         status: "success",
@@ -233,34 +239,43 @@ const CASES: Case[] = [
   // getItem
   {
     name: "get-item/found",
-    description: "GetItem by app, type and id; a stored string trace is returned as stored",
+    description: "GetItem by app, type and id returns the whole audit without storage attributes",
     operation: "getItem",
     args: [{ app: "App1", resourceType: "Order", id: "audit-1" }],
     replies: [
       {
-        output: { Item: storedAudit({ trace: "trace-1:0", GSI1_SN_PK: "trace-1", GSI1_SN_SK: 0 }) },
+        output: {
+          Item: storedAudit({
+            ...traced,
+            status: "fail",
+            error: "Boom",
+            attempts: [{ number: 1, status: "fail", error: "Boom", at: NOW }],
+            context: { region: "us-east-1" },
+            event: { source: "orders", "detail-type": "OrderCreated", detail: "{}" },
+          }),
+        },
       },
     ],
   },
   {
-    name: "get-item/trace-from-keys",
-    description: "Without a stored trace, the trace is rebuilt from the GSI1_SN keys",
+    name: "get-item/null-trace",
+    description: "A trace stored as NULL (an empty trace) is left out",
     operation: "getItem",
     args: [{ app: "App1", resourceType: "Order", id: "audit-1" }],
-    replies: [{ output: { Item: storedAudit({ GSI1_SN_PK: "trace-1", GSI1_SN_SK: 2 }) } }],
+    replies: [{ output: { Item: storedAudit({ trace: null }) } }],
   },
   {
     name: "get-item/tenant",
-    description: "A tenant prefixes the partition key and is stripped from the rebuilt trace",
+    description: "A tenant prefixes the partition key",
     operation: "getItem",
     args: [{ tenantId: "tenant-1", app: "App1", resourceType: "Order", id: "audit-1" }],
     replies: [
       {
         output: {
           Item: storedAudit({
-            PK: "tenant-1#App1.Order",
-            GSI1_SN_PK: "tenant-1#trace-1",
-            GSI1_SN_SK: 0,
+            PK: "tenant-1#App1.Order#audit-1",
+            tenantId: "tenant-1",
+            tenantKey: "tenant-1",
           }),
         },
       },
@@ -309,25 +324,28 @@ const CASES: Case[] = [
     description: "A second write of the same audit numbers its attempt with a follow-up UpdateItem",
     operation: "upsertItem",
     args: [upsertInput({ status: "fail", error: "Still failing" })],
-    replies: [attempts(2), { output: {} }, accepted()],
+    replies: [attempts(2, "2026-01-01T00:00:00.000Z"), { output: {} }, accepted()],
   },
   {
     name: "upsert/tenant",
-    description: "A tenant prefixes the partition and index keys",
+    description: "A tenant prefixes the partition key and is the index attributes' tenantKey",
     operation: "upsertItem",
     args: [upsertInput({ tenantId: "tenant-1", trace: "trace-1" })],
     replies: [attempts(1), accepted()],
   },
   {
     name: "upsert/related-resources",
-    description: "Each additional resource gets a copy written with BatchWriteItem",
+    description:
+      "Each related resource with an id gets a summary copy in the audit's partition, written with BatchWriteItem",
     operation: "upsertItem",
     args: [
       upsertInput({
         trace: "trace-1",
+        message: "Order created",
         resources: [
           { app: "TestApp", type: "User", id: "user-1" },
           { app: "App1", type: "Unknown", id: 7 },
+          { app: "App1", type: "User" },
         ],
         event: { source: "orders", "detail-type": "OrderCreated", detail: "{}" },
       }),
@@ -335,9 +353,21 @@ const CASES: Case[] = [
     replies: [attempts(1), { output: {} }, accepted()],
   },
   {
+    name: "upsert/retry-related",
+    description: "On a retry, the copies take the audit's stored createdAt, not this attempt's",
+    operation: "upsertItem",
+    args: [
+      upsertInput({
+        status: "fail",
+        resources: [{ app: "TestApp", type: "User", id: "user-1" }],
+      }),
+    ],
+    replies: [attempts(2, "2026-01-01T00:00:00.000Z"), { output: {} }, { output: {} }, accepted()],
+  },
+  {
     name: "upsert/edge-ids",
     description:
-      "A numeric id of 0 is an id (in GSI1_SS_PK and for a related copy); a trace id may contain colons",
+      'A numeric id of 0 is an id (as resourceId "0" and for a related copy); a trace id may contain colons',
     operation: "upsertItem",
     args: [
       upsertInput({
@@ -395,18 +425,14 @@ const CASES: Case[] = [
   {
     name: "list-objects/first-page",
     description:
-      "Audits of a resource type, newest first by tier; LastEvaluatedKey becomes nextToken",
+      "Summaries of a resource type's audits and related copies, newest first; LastEvaluatedKey becomes nextToken",
     operation: "listObjects",
-    args: [{ app: "App1", resource: { type: "Order" } }],
+    args: [{ app: "TestApp", resource: { type: "User" } }],
     replies: [
       {
         output: {
-          Items: [storedAudit({ LSI1_N_SK: 21767323445678, trace: "trace-1" })],
-          LastEvaluatedKey: marshall({
-            PK: "App1.Order",
-            SK: "audit-1",
-            LSI1_N_SK: 21767323445678,
-          }),
+          Items: [indexRow(BY_TYPE, { ...copyOverrides, ...traced })],
+          LastEvaluatedKey: marshall(lastKey(BY_TYPE, copyOverrides)),
         },
       },
     ],
@@ -417,109 +443,82 @@ const CASES: Case[] = [
     operation: "listObjects",
     args: [
       { app: "App1", resource: { type: "Order" } },
-      {
-        pageSize: 2,
-        nextToken: encodeNextPageToken({
-          PK: "App1.Order",
-          SK: "audit-1",
-          LSI1_N_SK: 21767323445678,
-        }),
-      },
+      { pageSize: 2, nextToken: encodeNextPageToken(lastKey(BY_TYPE)) },
     ],
     replies: [{ output: { Items: [] } }],
+  },
+  {
+    name: "list-objects/filtered",
+    description: "Operation and tier filters become a filter expression",
+    operation: "listObjects",
+    args: [{ app: "App1", resource: { type: "Order" }, operation: "createOrder", tier: 1 }],
+    replies: [{ output: { Items: [indexRow(BY_TYPE, { tier: 1 })] } }],
   },
 
   // listItems
   {
     name: "list-items/basic",
-    description: "Audits of one resource by its id; the trace is rebuilt from index keys",
+    description: "Summaries of one resource's audits, newest first",
     operation: "listItems",
     args: [{ app: "App1", resource: { type: "Order", id: "order-1" } }],
-    replies: [
-      {
-        output: {
-          Items: [resourceRow()],
-        },
-      },
-    ],
+    replies: [{ output: { Items: [indexRow(BY_RESOURCE, traced)] } }],
+  },
+  {
+    name: "list-items/numeric-id",
+    description: "A numeric resource id is queried as a string",
+    operation: "listItems",
+    args: [{ app: "App1", resource: { type: "Order", id: 0 } }],
+    replies: [{ output: { Items: [] } }],
   },
 
   // listTraceItems
   {
     name: "list-trace/basic",
-    description: "Audits of a trace, excluding related-resource copies",
+    description: "Summaries of a trace's audits, by stage then oldest first",
     operation: "listTraceItems",
     args: [{ trace: "trace-1" }],
-    replies: [{ output: { Items: [traceRow()] } }],
+    replies: [{ output: { Items: [indexRow(BY_TRACE, traced)] } }],
   },
   {
     name: "list-trace/filtered",
-    description: "App and resource filters match the target; copies are not excluded",
-    operation: "listTraceItems",
-    args: [{ trace: "trace-1", app: "App1", resource: { type: "Order", id: "order-1" } }],
-    replies: [{ output: { Items: [traceRow()] } }],
-  },
-  {
-    name: "list-trace/related-copy",
     description:
-      "A matching related-resource copy is replaced by its parent, read with BatchGetItem",
+      "A resource filter matches the audit's scopes (target or related resource); tier filters too",
     operation: "listTraceItems",
-    args: [{ trace: "trace-1", app: "TestApp" }],
-    replies: [
-      {
-        output: {
-          Items: [
-            traceRow({
-              PK: "TestApp.User",
-              SK: "audit-1#TestApp.User#user-1",
-              target: { app: "TestApp", type: "User", id: "user-1" },
-              source: { app: "App1", type: "Order", id: "order-1" },
-            }),
-          ],
-        },
-      },
-      { output: { Responses: { [TABLE]: [traceRow()] } } },
-    ],
+    args: [{ trace: "trace-1", app: "App1", resource: { type: "Order", id: "order-1" }, tier: 2 }],
+    replies: [{ output: { Items: [indexRow(BY_TRACE, traced)] } }],
   },
 
   // listByStatus
   {
     name: "list-status/basic",
-    description: "Audits with a status, excluding related-resource copies; no trace is emitted",
+    description: "Summaries of a status's audits (not their copies), newest first",
     operation: "listByStatus",
     args: [{ status: "fail" }],
-    replies: [{ output: { Items: [statusRow()] } }],
+    replies: [{ output: { Items: [indexRow(BY_STATUS, { status: "fail", ...traced })] } }],
   },
   {
-    name: "list-status/related-parent-on-page",
-    description: "A matching copy whose parent is on the page is folded into it without a read",
+    name: "list-status/filtered",
+    description: "App and type filters match one scope; an app alone matches its own scope",
     operation: "listByStatus",
-    args: [{ status: "fail", app: "App1" }],
-    replies: [
-      {
-        output: {
-          Items: [
-            statusRow(),
-            statusRow({
-              PK: "App1.Unknown",
-              SK: "audit-1#App1.Unknown#7",
-              target: { app: "App1", type: "Unknown", id: 7 },
-              source: { app: "App1", type: "Order", id: "order-1" },
-            }),
-          ],
-        },
-      },
-    ],
+    args: [{ status: "fail", app: "TestApp", operation: "createOrder" }],
+    replies: [{ output: { Items: [indexRow(BY_STATUS, { status: "fail" })] } }],
   },
   {
     name: "list-status/tenant",
-    description: "A tenant prefixes the status partition key",
+    description: "A tenant is the partition's tenantKey",
     operation: "listByStatus",
     args: [{ tenantId: "tenant-1", status: "fail" }, { pageSize: 10 }],
     replies: [
       {
         output: {
-          Items: [statusRow({ PK: "tenant-1#App1.Order", GSI2_SS_PK: "tenant-1#fail" })],
+          Items: [
+            indexRow(BY_STATUS, {
+              PK: "tenant-1#App1.Order#audit-1",
+              status: "fail",
+              tenantId: "tenant-1",
+              tenantKey: "tenant-1",
+            }),
+          ],
         },
       },
     ],
@@ -537,31 +536,16 @@ const CASES: Case[] = [
     name: "list-status/token-other-index",
     description: "A nextToken holding another index's keys (here listObjects') is refused",
     operation: "listByStatus",
-    args: [
-      { status: "fail" },
-      {
-        nextToken: encodeNextPageToken({
-          PK: "App1.Order",
-          SK: "audit-1",
-          LSI1_N_SK: 21767323445678,
-        }),
-      },
-    ],
+    args: [{ status: "fail" }, { nextToken: encodeNextPageToken(lastKey(BY_TYPE)) }],
     replies: [],
   },
   {
-    name: "list-objects/token-wrong-type",
+    name: "list-trace/token-wrong-type",
     description: "A nextToken key with the wrong attribute type is refused",
-    operation: "listObjects",
+    operation: "listTraceItems",
     args: [
-      { app: "App1", resource: { type: "Order" } },
-      {
-        nextToken: encodeNextPageToken({
-          PK: "App1.Order",
-          SK: "audit-1",
-          LSI1_N_SK: "21767323445678",
-        }),
-      },
+      { trace: "trace-1" },
+      { nextToken: encodeNextPageToken({ ...lastKey(BY_TRACE, traced), traceStage: "2" }) },
     ],
     replies: [],
   },
@@ -572,12 +556,13 @@ const CASES: Case[] = [
     args: [
       { tenantId: "tenant-1", status: "fail" },
       {
-        nextToken: encodeNextPageToken({
-          PK: "tenant-1#App1.Order",
-          SK: "audit-1",
-          GSI2_SS_PK: "tenant-1#warn",
-          GSI2_SS_SK: `${NOW}#audit-1`,
-        }),
+        nextToken: encodeNextPageToken(
+          lastKey(BY_STATUS, {
+            PK: "tenant-1#App1.Order#audit-1",
+            tenantKey: "tenant-1",
+            status: "warn",
+          }),
+        ),
       },
     ],
     replies: [],
@@ -606,15 +591,10 @@ describe("contract fixtures", () => {
   it("pagination tokens", async () => {
     // One LastEvaluatedKey per listing index
     const keys: PageKey[] = [
-      { PK: "tenant-1#App1.Order", SK: "audit-1", LSI1_N_SK: 21767323445678 },
-      {
-        PK: "App1.Order",
-        SK: "audit-1",
-        GSI1_SS_PK: "App1.Order#order-1",
-        GSI1_SS_SK: "audit-1",
-      },
-      { PK: "App1.Order", SK: "audit-1", GSI1_SN_PK: "trace-1", GSI1_SN_SK: 2 },
-      { PK: "App1.Order", SK: "audit-1", GSI2_SS_PK: "fail", GSI2_SS_SK: `${NOW}#audit-1` },
+      lastKey(BY_TYPE, { PK: "tenant-1#App1.Order#audit-1", tenantKey: "tenant-1" }),
+      lastKey(BY_RESOURCE),
+      lastKey(BY_STATUS, { status: "fail" }),
+      lastKey(BY_TRACE, traced),
     ];
     const tokens = keys.map((key) => {
       const token = encodeNextPageToken(key);

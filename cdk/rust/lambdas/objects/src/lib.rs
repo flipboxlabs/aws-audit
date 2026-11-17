@@ -1,8 +1,13 @@
-//! The `/apps/{app}/objects/{object}` Lambda (`objects/handler.ts`):
+//! The `/apps/{app}/objects/{object}` Lambda:
 //!
-//! - `GET /apps/{app}/objects/{object}`: audits of a resource type
-//! - `GET /apps/{app}/objects/{object}/{item}`: audits of one resource
-//! - `GET /apps/{app}/objects/{object}/{item}/{audit}`: one audit
+//! - `GET /apps/{app}/objects/{object}`: summaries of a resource type's audits,
+//!   newest first
+//! - `GET /apps/{app}/objects/{object}/{item}`: summaries of one resource's
+//!   audits, newest first
+//! - `GET /apps/{app}/objects/{object}/{item}/{audit}`: one whole audit
+//!
+//! Both listings include audits that name the resource as a related resource, and
+//! take `filter[operation]` and `filter[tier]`.
 
 use std::sync::Arc;
 
@@ -31,12 +36,13 @@ async fn list_objects(state: Arc<State>, request: HttpRequest) -> http::Result {
     let mut issues = Issues::default();
     let path = ObjectPath::from_request(&state.config, &request, &mut issues);
     let pagination = aws_audit_http::pagination(&request, &mut issues);
+    let filter = aws_audit_http::list_filter(&request, &mut issues);
     issues.finish()?;
     let path = path.expect("a valid path");
 
     let page = state
         .service
-        .list_objects(None, &path.app, &path.resource_type, &pagination)
+        .list_objects(None, &path.app, &path.resource_type, &filter, &pagination)
         .await
         .map_err(service_error)?;
 
@@ -47,6 +53,7 @@ async fn list_items(state: Arc<State>, request: HttpRequest) -> http::Result {
     let mut issues = Issues::default();
     let path = ObjectPath::from_request(&state.config, &request, &mut issues);
     let pagination = aws_audit_http::pagination(&request, &mut issues);
+    let filter = aws_audit_http::list_filter(&request, &mut issues);
     issues.finish()?;
     let path = path.expect("a valid path");
 
@@ -57,6 +64,7 @@ async fn list_items(state: Arc<State>, request: HttpRequest) -> http::Result {
             &path.app,
             &path.resource_type,
             request.param("item"),
+            &filter,
             &pagination,
         )
         .await

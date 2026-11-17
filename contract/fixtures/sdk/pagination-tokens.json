@@ -3,60 +3,88 @@
   "tokens": [
     {
       "key": {
-        "PK": "tenant-1#App1.Order",
-        "SK": "audit-1",
-        "LSI1_N_SK": 21767323445678
+        "PK": "tenant-1#App1.Order#audit-1",
+        "SK": "audit",
+        "tenantKey": "tenant-1",
+        "app": "App1",
+        "resourceType": "Order",
+        "createdAt": "2026-01-02T03:04:05.678Z",
+        "id": "audit-1"
       },
-      "token": "eyJQSyI6InRlbmFudC0xI0FwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJMU0kxX05fU0siOjIxNzY3MzIzNDQ1Njc4fQ",
+      "token": "eyJQSyI6InRlbmFudC0xI0FwcDEuT3JkZXIjYXVkaXQtMSIsIlNLIjoiYXVkaXQiLCJ0ZW5hbnRLZXkiOiJ0ZW5hbnQtMSIsImFwcCI6IkFwcDEiLCJyZXNvdXJjZVR5cGUiOiJPcmRlciIsImNyZWF0ZWRBdCI6IjIwMjYtMDEtMDJUMDM6MDQ6MDUuNjc4WiIsImlkIjoiYXVkaXQtMSJ9",
       "decoded": {
-        "PK": "tenant-1#App1.Order",
-        "SK": "audit-1",
-        "LSI1_N_SK": 21767323445678
+        "PK": "tenant-1#App1.Order#audit-1",
+        "SK": "audit",
+        "tenantKey": "tenant-1",
+        "app": "App1",
+        "resourceType": "Order",
+        "createdAt": "2026-01-02T03:04:05.678Z",
+        "id": "audit-1"
       }
     },
     {
       "key": {
-        "PK": "App1.Order",
-        "SK": "audit-1",
-        "GSI1_SS_PK": "App1.Order#order-1",
-        "GSI1_SS_SK": "audit-1"
+        "PK": "App1.Order#audit-1",
+        "SK": "audit",
+        "tenantKey": "-",
+        "app": "App1",
+        "resourceType": "Order",
+        "resourceId": "order-1",
+        "createdAt": "2026-01-02T03:04:05.678Z",
+        "id": "audit-1"
       },
-      "token": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJHU0kxX1NTX1BLIjoiQXBwMS5PcmRlciNvcmRlci0xIiwiR1NJMV9TU19TSyI6ImF1ZGl0LTEifQ",
+      "token": "eyJQSyI6IkFwcDEuT3JkZXIjYXVkaXQtMSIsIlNLIjoiYXVkaXQiLCJ0ZW5hbnRLZXkiOiItIiwiYXBwIjoiQXBwMSIsInJlc291cmNlVHlwZSI6Ik9yZGVyIiwicmVzb3VyY2VJZCI6Im9yZGVyLTEiLCJjcmVhdGVkQXQiOiIyMDI2LTAxLTAyVDAzOjA0OjA1LjY3OFoiLCJpZCI6ImF1ZGl0LTEifQ",
       "decoded": {
-        "PK": "App1.Order",
-        "SK": "audit-1",
-        "GSI1_SS_PK": "App1.Order#order-1",
-        "GSI1_SS_SK": "audit-1"
+        "PK": "App1.Order#audit-1",
+        "SK": "audit",
+        "tenantKey": "-",
+        "app": "App1",
+        "resourceType": "Order",
+        "resourceId": "order-1",
+        "createdAt": "2026-01-02T03:04:05.678Z",
+        "id": "audit-1"
       }
     },
     {
       "key": {
-        "PK": "App1.Order",
-        "SK": "audit-1",
-        "GSI1_SN_PK": "trace-1",
-        "GSI1_SN_SK": 2
+        "PK": "App1.Order#audit-1",
+        "SK": "audit",
+        "tenantKey": "-",
+        "status": "fail",
+        "kind": "audit",
+        "createdAt": "2026-01-02T03:04:05.678Z",
+        "id": "audit-1"
       },
-      "token": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJHU0kxX1NOX1BLIjoidHJhY2UtMSIsIkdTSTFfU05fU0siOjJ9",
+      "token": "eyJQSyI6IkFwcDEuT3JkZXIjYXVkaXQtMSIsIlNLIjoiYXVkaXQiLCJ0ZW5hbnRLZXkiOiItIiwic3RhdHVzIjoiZmFpbCIsImtpbmQiOiJhdWRpdCIsImNyZWF0ZWRBdCI6IjIwMjYtMDEtMDJUMDM6MDQ6MDUuNjc4WiIsImlkIjoiYXVkaXQtMSJ9",
       "decoded": {
-        "PK": "App1.Order",
-        "SK": "audit-1",
-        "GSI1_SN_PK": "trace-1",
-        "GSI1_SN_SK": 2
+        "PK": "App1.Order#audit-1",
+        "SK": "audit",
+        "tenantKey": "-",
+        "status": "fail",
+        "kind": "audit",
+        "createdAt": "2026-01-02T03:04:05.678Z",
+        "id": "audit-1"
       }
     },
     {
       "key": {
-        "PK": "App1.Order",
-        "SK": "audit-1",
-        "GSI2_SS_PK": "fail",
-        "GSI2_SS_SK": "2026-01-02T03:04:05.678Z#audit-1"
+        "PK": "App1.Order#audit-1",
+        "SK": "audit",
+        "tenantKey": "-",
+        "traceId": "trace-1",
+        "traceStage": 2,
+        "createdAt": "2026-01-02T03:04:05.678Z",
+        "id": "audit-1"
       },
-      "token": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJHU0kyX1NTX1BLIjoiZmFpbCIsIkdTSTJfU1NfU0siOiIyMDI2LTAxLTAyVDAzOjA0OjA1LjY3OFojYXVkaXQtMSJ9",
+      "token": "eyJQSyI6IkFwcDEuT3JkZXIjYXVkaXQtMSIsIlNLIjoiYXVkaXQiLCJ0ZW5hbnRLZXkiOiItIiwidHJhY2VJZCI6InRyYWNlLTEiLCJ0cmFjZVN0YWdlIjoyLCJjcmVhdGVkQXQiOiIyMDI2LTAxLTAyVDAzOjA0OjA1LjY3OFoiLCJpZCI6ImF1ZGl0LTEifQ",
       "decoded": {
-        "PK": "App1.Order",
-        "SK": "audit-1",
-        "GSI2_SS_PK": "fail",
-        "GSI2_SS_SK": "2026-01-02T03:04:05.678Z#audit-1"
+        "PK": "App1.Order#audit-1",
+        "SK": "audit",
+        "tenantKey": "-",
+        "traceId": "trace-1",
+        "traceStage": 2,
+        "createdAt": "2026-01-02T03:04:05.678Z",
+        "id": "audit-1"
       }
     }
   ]

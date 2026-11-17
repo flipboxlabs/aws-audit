@@ -23,6 +23,7 @@ pub mod upsert;
 
 pub use config::AuditConfig;
 pub use model::{
-    Attempt, Audit, Context, EventBridgeEvent, ResourceId, ResourceReference, Status, Tier,
+    Attempt, Audit, AuditSummary, Context, EventBridgeEvent, ResourceId, ResourceReference, Status,
+    Tier,
 };
 pub use pagination::{InvalidNextToken, Page, PageKey, Pagination};

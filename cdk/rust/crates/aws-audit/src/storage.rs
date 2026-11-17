@@ -2,12 +2,12 @@
 //! TypeScript SDK). Requests match the TypeScript SDK's, recorded in
 //! `contract/fixtures/sdk`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use aws_sdk_dynamodb::Client;
-use aws_sdk_dynamodb::types::{KeysAndAttributes, PutRequest, ReturnValue, WriteRequest};
+use aws_sdk_dynamodb::types::{AttributeValue, PutRequest, ReturnValue, WriteRequest};
 use lambda_kit::clock::{Clock, SystemClock};
 use lambda_kit::logging::ErrorChain;
 use lambda_kit::retry::{Backoff, Jitter, RandomJitter};
@@ -15,17 +15,17 @@ use serde_json::{Map, Value};
 
 use crate::attribute::{Item, Marshall, unmarshall, unmarshall_map};
 use crate::config::AuditConfig;
-use crate::keys::{partition, primary_key, resolve_trace, secondary_keys};
-use crate::model::{Attempt, Audit, Status, Timestamp};
+use crate::keys::{
+    IncompleteResourceFilter, audit_scopes, filter_scope, has_resource_id, index_attributes,
+    primary_key, related_sort_key, tenant_key,
+};
+use crate::model::{Attempt, Audit, AuditSummary, Status, Tier, Timestamp};
 use crate::pagination::{self, InvalidNextToken, Page, PageInfo, Pagination};
-use crate::table::{Index, LISTING_PROJECTION, keys};
+use crate::table::{Index, SUMMARY_PROJECTION, attributes, keys, kinds};
 use crate::upsert::{StoredAudit, UpsertAudit};
 
 /// Items per `BatchWriteItem` request (DynamoDB's limit).
 const WRITE_BATCH_SIZE: usize = 25;
-
-/// Keys per `BatchGetItem` request (DynamoDB's limit).
-const GET_BATCH_SIZE: usize = 100;
 
 /// Retries of a batch's unprocessed part before giving up.
 const BATCH_RETRIES: u32 = 8;
@@ -45,12 +45,15 @@ pub enum StorageError {
     /// The listing's `nextToken` isn't one it issued.
     #[error(transparent)]
     InvalidNextToken(#[from] InvalidNextToken),
+    /// A listing's resource filter names an id without its app and type.
+    #[error(transparent)]
+    IncompleteResourceFilter(#[from] IncompleteResourceFilter),
     /// A batch still had unprocessed items after every retry.
     #[error("{operation} failed: unprocessed {noun} after {retries} retries")]
     Unprocessed {
-        /// `BatchWriteItem` or `BatchGetItem`.
+        /// `BatchWriteItem`.
         operation: &'static str,
-        /// What was left: `items` or `keys`.
+        /// What was left: `items`.
         noun: &'static str,
         /// The retries made.
         retries: u32,
@@ -88,15 +91,47 @@ pub struct Identifiers {
     pub id: String,
 }
 
-/// What a filtered listing (trace or status) keeps: audits whose target matches.
+/// Filters every listing takes, applied as a filter expression after a page is
+/// read: a filtered page can hold fewer items than its size, or none, while a
+/// `nextToken` continues the listing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TargetFilter {
-    /// The target's app.
+pub struct ListFilter {
+    /// Only audits of this operation (exact match).
+    pub operation: Option<String>,
+    /// Only audits of this tier.
+    pub tier: Option<Tier>,
+}
+
+/// Filters on an audit's resources, for the status and trace listings. They match
+/// the audit's target or any of its related resources.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResourceFilter {
+    /// The resource's app.
     pub app: Option<String>,
-    /// The target's resource type.
+    /// The resource's type.
     pub resource_type: Option<String>,
-    /// The target's id.
+    /// The resource's id; matched only together with its app and type.
     pub resource_id: Option<String>,
+}
+
+impl ResourceFilter {
+    /// The `scopes` value the filter matches, if it filters at all.
+    pub fn scope(&self) -> Result<Option<String>, IncompleteResourceFilter> {
+        filter_scope(
+            self.app.as_deref(),
+            self.resource_type.as_deref(),
+            self.resource_id.as_deref(),
+        )
+    }
+}
+
+/// What an upsert stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Upserted {
+    /// The attempt's number: its position in the audit's attempts.
+    pub attempt_number: u32,
+    /// The audit's stored `createdAt`; a retry keeps the first one.
+    pub created_at: Timestamp,
 }
 
 /// Reads and writes audits.
@@ -127,7 +162,7 @@ impl AuditRepository {
         }
     }
 
-    /// Uses `clock` for timestamps, index keys and TTLs.
+    /// Uses `clock` for timestamps and TTLs.
     pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
         self.clock = clock;
         self
@@ -170,19 +205,21 @@ impl AuditRepository {
 
         output
             .item()
-            .map(|item| transform_item(unmarshall_map(item)))
+            .map(|item| parse_item(unmarshall_map(item)))
             .transpose()
     }
 
-    /// Creates or updates the audit `id`, appending `attempt` to its attempts, and
-    /// returns the attempt's number: its position in the stored list, which differs
-    /// from `attempt.number` on a retry.
+    /// Creates or updates the audit `id`, appending `attempt` to its attempts.
+    ///
+    /// Returns the attempt's number (its position in the stored list, which differs
+    /// from `attempt.number` on a retry) and the stored `createdAt`, which a retry
+    /// keeps, so the audit keeps its place in every listing.
     pub async fn upsert_item(
         &self,
         audit: &UpsertAudit,
         id: &str,
         attempt: &Attempt,
-    ) -> Result<u32, StorageError> {
+    ) -> Result<Upserted, StorageError> {
         let now = self.clock.now();
         let stored = StoredAudit::new(audit, id.to_owned(), &Timestamp::from(now));
         let key = primary_key(
@@ -211,14 +248,21 @@ impl AuditRepository {
         let Value::Object(payload) = serde_json::to_value(&stored)? else {
             unreachable!("an audit serializes to an object");
         };
-        let fields = payload.into_iter().chain(secondary_keys(
-            &stored,
-            now.timestamp_millis(),
-            self.ttl_seconds,
-        ));
+        let scopes = audit_scopes(&stored.target, audit.resources.iter().flatten());
+        let fields = payload
+            .into_iter()
+            .chain(index_attributes(
+                stored.tenant_id.as_deref(),
+                &stored.target,
+                stored.trace.as_deref(),
+                kinds::AUDIT,
+            ))
+            // A placeholder: marshalled as a string set below
+            .chain([(attributes::SCOPES.to_owned(), Value::Null)])
+            .chain([(attributes::TTL.to_owned(), Value::from(self.ttl(now)))]);
         for (name, value) in fields {
             // The list_append clause owns attempts; createdAt's clause is above
-            if name == "attempts" || value.is_null() {
+            if name == "attempts" || (value.is_null() && name != attributes::SCOPES) {
                 continue;
             }
             names.insert(format!("#{name}"), name.clone());
@@ -228,6 +272,12 @@ impl AuditRepository {
             values.insert(format!(":{name}"), value);
         }
 
+        let mut values = Marshall::ITEM.map(&values);
+        values.insert(
+            format!(":{}", attributes::SCOPES),
+            AttributeValue::Ss(scopes),
+        );
+
         let output = self
             .client
             .update_item()
@@ -235,17 +285,22 @@ impl AuditRepository {
             .set_key(Some(Marshall::ITEM.map(&key)))
             .update_expression(format!("SET {}", clauses.join(", ")))
             .set_expression_attribute_names(Some(names))
-            .set_expression_attribute_values(Some(Marshall::ITEM.map(&values)))
+            .set_expression_attribute_values(Some(values))
             .return_values(ReturnValue::AllNew)
             .send()
             .await?;
 
-        let attempts = output
-            .attributes()
-            .and_then(|attributes| attributes.get("attempts"))
+        let attributes = output.attributes().ok_or(StorageError::MissingAttributes)?;
+        let attempts = attributes
+            .get("attempts")
             .and_then(|attempts| attempts.as_l().ok())
             .ok_or(StorageError::MissingAttributes)?;
         let number = u32::try_from(attempts.len()).unwrap_or(u32::MAX);
+        let created_at = attributes
+            .get("createdAt")
+            .and_then(|created_at| created_at.as_s().ok())
+            .and_then(|created_at| Timestamp::try_from(created_at.clone()).ok())
+            .unwrap_or(stored.created_at);
 
         // A retry appended to earlier attempts: renumber this one by its position
         if number != attempt.number {
@@ -267,35 +322,74 @@ impl AuditRepository {
                 .await?;
         }
 
-        Ok(number)
+        Ok(Upserted {
+            attempt_number: number,
+            created_at,
+        })
     }
 
-    /// Writes audits whole (no attempt tracking), 25 per `BatchWriteItem`, retrying
-    /// unprocessed items. Used for related-resource copies.
-    pub async fn upsert_batch(&self, audits: &[UpsertAudit]) -> Result<(), StorageError> {
+    /// Writes the copy of audit `id` that lists it under each related resource with
+    /// an id, 25 per `BatchWriteItem`, retrying unprocessed items.
+    ///
+    /// A copy holds the audit's summary, with the resource as `target` and the
+    /// audit's target as `source`, in the audit's partition (`SK`
+    /// `related#{app}.{type}#{resourceId}`). It takes the audit's stored
+    /// `created_at` (from [`upsert_item`](Self::upsert_item)), so it sorts with the
+    /// audit. Copies are replaced on every upsert.
+    pub async fn upsert_related(
+        &self,
+        audit: &UpsertAudit,
+        id: &str,
+        created_at: &Timestamp,
+    ) -> Result<(), StorageError> {
         let now = self.clock.now();
-        let timestamp = Timestamp::from(now);
+        let mut stored = StoredAudit::new(audit, id.to_owned(), &Timestamp::from(now));
+        stored.created_at = created_at.clone();
+        let key = primary_key(
+            stored.tenant_id.as_deref(),
+            &stored.target.app,
+            &stored.target.resource_type,
+            &stored.id,
+        );
 
-        let mut requests = Vec::with_capacity(audits.len());
-        for audit in audits {
-            let id = audit.id.clone().unwrap_or_else(crate::id::generate);
-            let stored = StoredAudit::new(audit, id, &timestamp);
+        let Value::Object(payload) = serde_json::to_value(&stored)? else {
+            unreachable!("an audit serializes to an object");
+        };
+        let summary: Map<String, Value> = payload
+            .into_iter()
+            .filter(|(name, _)| SUMMARY_PROJECTION.contains(&name.as_str()))
+            .collect();
+        let source = serde_json::to_value(&stored.target)?;
+        let rerunable = stored.rerunable.unwrap_or(stored.event.is_some());
 
-            let mut item = primary_key(
+        let mut requests = Vec::new();
+        for resource in audit
+            .resources
+            .iter()
+            .flatten()
+            .filter(|resource| has_resource_id(resource.id.as_ref()))
+        {
+            let mut item = Map::from_iter([
+                (
+                    keys::PARTITION_KEY.to_owned(),
+                    key[keys::PARTITION_KEY].clone(),
+                ),
+                (
+                    keys::SORT_KEY.to_owned(),
+                    Value::String(related_sort_key(resource)),
+                ),
+            ]);
+            item.extend(summary.clone());
+            item.insert("target".to_owned(), serde_json::to_value(resource)?);
+            item.insert("source".to_owned(), source.clone());
+            item.insert("rerunable".to_owned(), Value::Bool(rerunable));
+            item.extend(index_attributes(
                 stored.tenant_id.as_deref(),
-                &stored.target.app,
-                &stored.target.resource_type,
-                &stored.id,
-            );
-            item.extend(secondary_keys(
-                &stored,
-                now.timestamp_millis(),
-                self.ttl_seconds,
+                resource,
+                None,
+                kinds::RELATED,
             ));
-            let Value::Object(payload) = serde_json::to_value(&stored)? else {
-                unreachable!("an audit serializes to an object");
-            };
-            item.extend(payload);
+            item.insert(attributes::TTL.to_owned(), Value::from(self.ttl(now)));
 
             requests.push(
                 WriteRequest::builder()
@@ -314,6 +408,13 @@ impl AuditRepository {
         }
 
         Ok(())
+    }
+
+    /// The TTL of an item written at `now`: epoch seconds.
+    fn ttl(&self, now: chrono::DateTime<chrono::Utc>) -> i64 {
+        now.timestamp_millis()
+            .div_euclid(1000)
+            .saturating_add_unsigned(self.ttl_seconds)
     }
 
     async fn write_batch(&self, requests: Vec<WriteRequest>) -> Result<(), StorageError> {
@@ -360,366 +461,199 @@ impl AuditRepository {
         }
     }
 
-    /// Reads `keys` with `attributes` projected, 100 per `BatchGetItem`, retrying
-    /// unprocessed keys. Items come back in no particular order.
-    async fn get_batch(
-        &self,
-        keys: &[Map<String, Value>],
-        attributes: &[&str],
-    ) -> Result<Vec<Map<String, Value>>, StorageError> {
-        let names: HashMap<String, String> = attributes
-            .iter()
-            .enumerate()
-            .map(|(i, attribute)| (format!("#a{i}"), (*attribute).to_owned()))
-            .collect();
-        let projection = (0..attributes.len())
-            .map(|i| format!("#a{i}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        let mut items = Vec::new();
-        for chunk in keys.chunks(GET_BATCH_SIZE) {
-            let mut pending: Vec<Item> = chunk.iter().map(|key| Marshall::PLAIN.map(key)).collect();
-            let mut attempt = 0;
-
-            loop {
-                let request = KeysAndAttributes::builder()
-                    .set_keys(Some(pending))
-                    .projection_expression(&projection)
-                    .set_expression_attribute_names(Some(names.clone()))
-                    .build()?;
-                let output = self
-                    .client
-                    .batch_get_item()
-                    .request_items(&self.table, request)
-                    .send()
-                    .await?;
-
-                if let Some(found) = output
-                    .responses()
-                    .and_then(|responses| responses.get(&self.table))
-                {
-                    items.extend(found.iter().map(unmarshall_map));
-                }
-
-                let unprocessed: Vec<Item> = output
-                    .unprocessed_keys()
-                    .and_then(|keys| keys.get(&self.table))
-                    .map(|keys| keys.keys().to_vec())
-                    .unwrap_or_default();
-                if unprocessed.is_empty() {
-                    break;
-                }
-
-                attempt += 1;
-                if attempt > BATCH_RETRIES {
-                    tracing::error!(
-                        count = unprocessed.len(),
-                        attempt,
-                        "BatchGetItem: unprocessed keys remain after max retries"
-                    );
-                    return Err(StorageError::Unprocessed {
-                        operation: "BatchGetItem",
-                        noun: "keys",
-                        retries: BATCH_RETRIES,
-                    });
-                }
-
-                let delay = self.backoff.delay(attempt, self.jitter.sample());
-                tracing::warn!(
-                    count = unprocessed.len(),
-                    attempt,
-                    delayMs = delay.as_millis() as u64,
-                    "BatchGetItem: retrying unprocessed keys"
-                );
-                tokio::time::sleep(delay).await;
-                pending = unprocessed;
-            }
-        }
-
-        Ok(items)
-    }
-
-    /// Audits of a resource type, by tier then most recent write.
+    /// Summaries of a resource type's audits, newest first. Audits that name a
+    /// resource of this type as a related resource are listed too, with that
+    /// resource as `target` and the audit's own target as `source`.
     pub async fn list_objects(
         &self,
         tenant_id: Option<&str>,
         app: &str,
         resource_type: &str,
+        filter: &ListFilter,
         pagination: &Pagination,
-    ) -> Result<Page<Audit>, StorageError> {
-        let pk = partition(tenant_id, &format!("{app}.{resource_type}"));
-        let (items, next_token) = self
-            .query(Index::Lsi1N, &pk, false, None, pagination)
-            .await?;
+    ) -> Result<Page<AuditSummary>, StorageError> {
+        let partition = vec![
+            (attributes::TENANT_KEY, tenant_key(tenant_id).to_owned()),
+            (attributes::APP, app.to_owned()),
+            (attributes::RESOURCE_TYPE, resource_type.to_owned()),
+        ];
 
-        Ok(Page {
-            items: items
-                .into_iter()
-                .map(|item| transform_list_item(item, tenant_id, true))
-                .collect::<Result<_, _>>()?,
-            pagination: PageInfo { next_token },
-        })
+        self.list_index(Index::ByType, partition, false, filter, None, pagination)
+            .await
     }
 
-    /// Audits of one resource, most recent first.
+    /// Summaries of one resource's audits, newest first, including audits that name
+    /// it as a related resource.
     pub async fn list_items(
         &self,
         tenant_id: Option<&str>,
         app: &str,
         resource_type: &str,
         resource_id: &str,
+        filter: &ListFilter,
         pagination: &Pagination,
-    ) -> Result<Page<Audit>, StorageError> {
-        let pk = partition(tenant_id, &format!("{app}.{resource_type}#{resource_id}"));
-        let (items, next_token) = self
-            .query(Index::Gsi1Ss, &pk, false, None, pagination)
-            .await?;
+    ) -> Result<Page<AuditSummary>, StorageError> {
+        let partition = vec![
+            (attributes::TENANT_KEY, tenant_key(tenant_id).to_owned()),
+            (attributes::APP, app.to_owned()),
+            (attributes::RESOURCE_TYPE, resource_type.to_owned()),
+            (attributes::RESOURCE_ID, resource_id.to_owned()),
+        ];
 
-        Ok(Page {
-            items: items
-                .into_iter()
-                .map(|item| transform_list_item(item, tenant_id, true))
-                .collect::<Result<_, _>>()?,
-            pagination: PageInfo { next_token },
-        })
+        self.list_index(
+            Index::ByResource,
+            partition,
+            false,
+            filter,
+            None,
+            pagination,
+        )
+        .await
     }
 
-    /// Audits of a trace, by stage. Related-resource copies are listed as their
-    /// parent audit.
+    /// Summaries of a trace's audits, by stage, then oldest first. Resource filters
+    /// match an audit's target or any of its related resources.
     pub async fn list_trace_items(
         &self,
         tenant_id: Option<&str>,
         trace: &str,
-        filter: &TargetFilter,
+        filter: &ListFilter,
+        resources: &ResourceFilter,
         pagination: &Pagination,
-    ) -> Result<Page<Audit>, StorageError> {
-        let pk = partition(tenant_id, trace);
-        let (items, next_token) = self
-            .query(Index::Gsi1Sn, &pk, true, Some(filter), pagination)
-            .await?;
-        let items = self
-            .resolve_related(
-                items,
-                keys::GSI1_SN_PARTITION_KEY,
-                &pk,
-                &[keys::GSI1_SN_PARTITION_KEY, keys::GSI1_SN_SORT_KEY],
-                tenant_id,
-            )
-            .await?;
+    ) -> Result<Page<AuditSummary>, StorageError> {
+        let partition = vec![
+            (attributes::TENANT_KEY, tenant_key(tenant_id).to_owned()),
+            (attributes::TRACE_ID, trace.to_owned()),
+        ];
 
-        Ok(Page {
-            items: items
-                .into_iter()
-                .map(|item| transform_list_item(item, tenant_id, true))
-                .collect::<Result<_, _>>()?,
-            pagination: PageInfo { next_token },
-        })
+        self.list_index(
+            Index::ByTrace,
+            partition,
+            true,
+            filter,
+            resources.scope()?,
+            pagination,
+        )
+        .await
     }
 
-    /// Audits with a status, most recent first. Related-resource copies are listed
-    /// as their parent audit.
+    /// Summaries of a status's audits (not their related-resource copies), newest
+    /// first. Resource filters match an audit's target or any of its related
+    /// resources.
     pub async fn list_by_status(
         &self,
         tenant_id: Option<&str>,
         status: Status,
-        filter: &TargetFilter,
+        filter: &ListFilter,
+        resources: &ResourceFilter,
         pagination: &Pagination,
-    ) -> Result<Page<Audit>, StorageError> {
-        let pk = partition(tenant_id, status.as_str());
-        let (items, next_token) = self
-            .query(Index::Gsi2Ss, &pk, false, Some(filter), pagination)
-            .await?;
-        let items = self
-            .resolve_related(
-                items,
-                keys::GSI2_SS_PARTITION_KEY,
-                &pk,
-                &[keys::GSI2_SS_PARTITION_KEY, keys::GSI2_SS_SORT_KEY],
-                tenant_id,
-            )
-            .await?;
+    ) -> Result<Page<AuditSummary>, StorageError> {
+        let partition = vec![
+            (attributes::TENANT_KEY, tenant_key(tenant_id).to_owned()),
+            (attributes::STATUS, status.as_str().to_owned()),
+            (attributes::KIND, kinds::AUDIT.to_owned()),
+        ];
 
-        Ok(Page {
-            items: items
-                .into_iter()
-                .map(|item| transform_list_item(item, tenant_id, false))
-                .collect::<Result<_, _>>()?,
-            pagination: PageInfo { next_token },
-        })
+        self.list_index(
+            Index::ByStatus,
+            partition,
+            false,
+            filter,
+            resources.scope()?,
+            pagination,
+        )
+        .await
     }
 
-    /// Queries one page of `index`'s partition `pk`.
-    async fn query(
+    /// Reads a page of an index partition (each partition key attribute with its
+    /// value) as audit summaries.
+    async fn list_index(
         &self,
         index: Index,
-        pk: &str,
+        partition: Vec<(&'static str, String)>,
         forward: bool,
-        filter: Option<&TargetFilter>,
+        filter: &ListFilter,
+        scope: Option<String>,
         pagination: &Pagination,
-    ) -> Result<(Vec<Map<String, Value>>, Option<String>), StorageError> {
+    ) -> Result<Page<AuditSummary>, StorageError> {
         let start_key =
-            pagination::exclusive_start_key(pagination.next_token.as_deref(), index, pk)?;
+            pagination::exclusive_start_key(pagination.next_token.as_deref(), index, &partition)?;
 
-        let mut names = HashMap::from([("#PK".to_owned(), index.partition_key().to_owned())]);
-        let mut values = Map::from_iter([(":PK".to_owned(), Value::String(pk.to_owned()))]);
-        let filter_expression = filter.map(|filter| target_filter(filter, &mut names, &mut values));
+        let mut names = HashMap::new();
+        let mut values = Map::new();
+        let mut conditions = Vec::with_capacity(partition.len());
+        for (i, (name, value)) in partition.into_iter().enumerate() {
+            names.insert(format!("#k{i}"), name.to_owned());
+            values.insert(format!(":k{i}"), Value::String(value));
+            conditions.push(format!("#k{i} = :k{i}"));
+        }
+        let filter_expression = filter_expression(filter, scope, &mut names, &mut values);
 
         let output = self
             .client
             .query()
             .table_name(&self.table)
             .index_name(index.name())
-            .key_condition_expression("#PK=:PK")
+            .scan_index_forward(forward)
+            .key_condition_expression(conditions.join(" AND "))
             .set_expression_attribute_names(Some(names))
             .set_expression_attribute_values(Some(Marshall::PLAIN.map(&values)))
-            .scan_index_forward(forward)
+            .set_filter_expression(filter_expression)
             .limit(i32::try_from(pagination.limit()).unwrap_or(i32::MAX))
             .set_exclusive_start_key(start_key.map(|key| Marshall::PLAIN.map(&key)))
-            .set_filter_expression(filter_expression)
             .send()
             .await?;
 
-        let items = output.items().iter().map(unmarshall_map).collect();
+        let items = output
+            .items()
+            .iter()
+            .map(|item| {
+                Ok(serde_json::from_value(Value::Object(without_null_trace(
+                    unmarshall_map(item),
+                )))?)
+            })
+            .collect::<Result<_, StorageError>>()?;
         let next_token = output
             .last_evaluated_key()
             .map(|key| pagination::encode(&page_key(key, index)));
 
-        Ok((items, next_token))
-    }
-
-    /// Replaces related-resource copies (`SK` `{parentId}#…`) with their parent
-    /// audit, once per page, reading parents not on the page. A parent outside the
-    /// queried partition (`partition_key` = `partition_value`), or a copy without a
-    /// source, is skipped.
-    async fn resolve_related(
-        &self,
-        items: Vec<Map<String, Value>>,
-        partition_key: &str,
-        partition_value: &str,
-        partition_attributes: &[&str],
-        tenant_id: Option<&str>,
-    ) -> Result<Vec<Map<String, Value>>, StorageError> {
-        let sort_key = |item: &Map<String, Value>| {
-            item.get(keys::SORT_KEY)
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned()
-        };
-        let is_related = |item: &Map<String, Value>| sort_key(item).contains('#');
-        if !items.iter().any(is_related) {
-            return Ok(items);
-        }
-
-        let key_of = |key: &Map<String, Value>| {
-            (
-                key.get(keys::PARTITION_KEY)
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-                key.get(keys::SORT_KEY)
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-            )
-        };
-
-        // The table key of the audit each row lists
-        let parent_keys: Vec<Option<Map<String, Value>>> = items
-            .iter()
-            .map(|item| {
-                if !is_related(item) {
-                    return Some(primary_key_of(item));
-                }
-                let source = item.get("source")?.as_object()?;
-                let sk = sort_key(item);
-                let parent_id = sk.split('#').next().unwrap_or_default();
-                Some(primary_key(
-                    tenant_id,
-                    source.get("app")?.as_str()?,
-                    source.get("type")?.as_str()?,
-                    parent_id,
-                ))
-            })
-            .collect();
-
-        let mut parents: HashMap<(String, String), Map<String, Value>> = items
-            .iter()
-            .filter(|item| !is_related(item))
-            .map(|item| (key_of(item), item.clone()))
-            .collect();
-
-        let mut seen = HashSet::new();
-        let missing: Vec<Map<String, Value>> = parent_keys
-            .iter()
-            .flatten()
-            .filter(|key| !parents.contains_key(&key_of(key)) && seen.insert(key_of(key)))
-            .cloned()
-            .collect();
-
-        if !missing.is_empty() {
-            let attributes: Vec<&str> = [keys::PARTITION_KEY, keys::SORT_KEY]
-                .into_iter()
-                .chain(partition_attributes.iter().copied())
-                .chain(LISTING_PROJECTION)
-                .collect();
-            for parent in self.get_batch(&missing, &attributes).await? {
-                if parent.get(partition_key).and_then(Value::as_str) == Some(partition_value) {
-                    parents.insert(key_of(&parent), parent);
-                }
-            }
-        }
-
-        let mut listed = HashSet::new();
-        let mut resolved = Vec::with_capacity(items.len());
-        for (item, key) in items.iter().zip(&parent_keys) {
-            let Some(parent) = key
-                .as_ref()
-                .map(key_of)
-                .and_then(|key| parents.get(&key).map(|parent| (key, parent)))
-            else {
-                tracing::debug!(sk = %sort_key(item), "Skipping related audit without a listable parent");
-                continue;
-            };
-            if listed.insert(parent.0) {
-                resolved.push(parent.1.clone());
-            }
-        }
-
-        Ok(resolved)
+        Ok(Page {
+            items,
+            pagination: PageInfo { next_token },
+        })
     }
 }
 
-/// The filter expression for a target filter, adding its names and values. Without
-/// any criteria, it excludes related-resource copies.
-fn target_filter(
-    filter: &TargetFilter,
+/// A listing's filter expression, adding its names and values, or `None` when
+/// nothing filters. Filters apply after a page is read, so a filtered page can hold
+/// fewer items than its size (or none) while a `nextToken` continues the listing.
+fn filter_expression(
+    filter: &ListFilter,
+    scope: Option<String>,
     names: &mut HashMap<String, String>,
     values: &mut Map<String, Value>,
-) -> String {
-    let mut clauses = Vec::new();
-    let criteria = [
-        (&filter.resource_id, ":resourceId", "#id", "id"),
-        (&filter.resource_type, ":resourceType", "#type", "type"),
-        (&filter.app, ":app", "#app", "app"),
-    ];
+) -> Option<String> {
+    let mut conditions = Vec::new();
 
-    for (value, placeholder, name, attribute) in criteria {
-        let Some(value) = value.as_deref().filter(|value| !value.is_empty()) else {
-            continue;
-        };
-        values.insert(placeholder.to_owned(), Value::String(value.to_owned()));
-        names.insert("#target".to_owned(), "target".to_owned());
-        names.insert(name.to_owned(), attribute.to_owned());
-        clauses.push(format!("#target.{name} = {placeholder}"));
+    if let Some(operation) = &filter.operation {
+        conditions.push("#operation = :operation");
+        names.insert("#operation".to_owned(), "operation".to_owned());
+        values.insert(":operation".to_owned(), Value::String(operation.clone()));
     }
 
-    if clauses.is_empty() {
-        values.insert(":isParent".to_owned(), Value::String("#".to_owned()));
-        clauses.push("not contains(SK, :isParent)".to_owned());
+    if let Some(tier) = filter.tier {
+        conditions.push("#tier = :tier");
+        names.insert("#tier".to_owned(), "tier".to_owned());
+        values.insert(":tier".to_owned(), Value::from(tier.get()));
     }
 
-    clauses.join(" AND ")
+    if let Some(scope) = scope {
+        conditions.push("contains(#scopes, :scope)");
+        names.insert("#scopes".to_owned(), attributes::SCOPES.to_owned());
+        values.insert(":scope".to_owned(), Value::String(scope));
+    }
+
+    (!conditions.is_empty()).then(|| conditions.join(" AND "))
 }
 
 /// A `LastEvaluatedKey` as a token key: the index's key attributes in schema order,
@@ -727,8 +661,8 @@ fn target_filter(
 fn page_key(key: &Item, index: Index) -> Map<String, Value> {
     let mut page_key = Map::new();
     for (name, _) in index.page_key_schema() {
-        if let Some(value) = key.get(*name) {
-            page_key.insert((*name).to_owned(), unmarshall(value));
+        if let Some(value) = key.get(name) {
+            page_key.insert(name.to_owned(), unmarshall(value));
         }
     }
     for (name, value) in unmarshall_map(key) {
@@ -737,40 +671,18 @@ fn page_key(key: &Item, index: Index) -> Map<String, Value> {
     page_key
 }
 
-fn primary_key_of(item: &Map<String, Value>) -> Map<String, Value> {
-    [keys::PARTITION_KEY, keys::SORT_KEY]
-        .into_iter()
-        .filter_map(|name| item.get(name).map(|value| (name.to_owned(), value.clone())))
-        .collect()
+/// Drops a `trace` that isn't a string. An empty trace is written as NULL
+/// (`convertEmptyValues`), which the models don't accept.
+fn without_null_trace(mut item: Map<String, Value>) -> Map<String, Value> {
+    if item.get("trace").is_some_and(|trace| !trace.is_string()) {
+        item.shift_remove("trace");
+    }
+    item
 }
 
-/// A stored item as an audit: the trace rebuilt from its keys, and the id the last
-/// segment of its `id`.
-fn transform_item(mut item: Map<String, Value>) -> Result<Audit, StorageError> {
-    resolve_trace(&mut item, None);
-    if let Some(id) = item.get("id").and_then(Value::as_str) {
-        let id = id.rsplit('#').next().unwrap_or(id).to_owned();
-        item.insert("id".to_owned(), Value::String(id));
-    }
-    Ok(serde_json::from_value(Value::Object(item))?)
-}
-
-/// A listed item as an audit: the id the first segment of its `SK`, and (unless
-/// `trace` is false) the trace rebuilt from its keys.
-fn transform_list_item(
-    mut item: Map<String, Value>,
-    tenant_id: Option<&str>,
-    trace: bool,
-) -> Result<Audit, StorageError> {
-    if trace {
-        resolve_trace(&mut item, tenant_id);
-    }
-    let id = item
-        .get(keys::SORT_KEY)
-        .and_then(Value::as_str)
-        .map(|sk| sk.split('#').next().unwrap_or(sk).to_owned());
-    if let Some(id) = id {
-        item.insert("id".to_owned(), Value::String(id));
-    }
-    Ok(serde_json::from_value(Value::Object(item))?)
+/// A stored audit as an audit.
+fn parse_item(item: Map<String, Value>) -> Result<Audit, StorageError> {
+    Ok(serde_json::from_value(Value::Object(without_null_trace(
+        item,
+    )))?)
 }
