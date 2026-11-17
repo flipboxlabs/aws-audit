@@ -1,14 +1,18 @@
 # Contract
 
-What the TypeScript implementation sends to AWS and answers over HTTP, recorded as JSON so the Rust port (#93) can be tested against the same behavior. The TypeScript SDK keeps writing the same table, so the two must agree.
+What the audit Lambdas send to AWS and answer over HTTP, as JSON, so the Rust Lambdas (#93) are tested against the behavior the TypeScript implementation had. The TypeScript SDK keeps writing the same table, so the two must agree.
 
-Nothing here is written by hand. `sdk/src/contract.test.ts` and `cdk/src/contract.test.ts` generate every file and compare them on each `pnpm test`. A change in behavior fails the tests until the files are regenerated:
+The files have two owners:
 
-```sh
-pnpm contract:update
-```
+- **Generated from TypeScript:** `fixtures/sdk`, `fixtures/layer` and the audit response schemas (`detail`, `items`, `objects`, `status` and `trace`). `sdk/src/contract.test.ts` and `cdk/src/contract.test.ts` generate them from the SDK and the config layer, and compare them on each `pnpm test`. A change there fails the tests until the files are regenerated:
 
-Review the diff before committing it, because it is a change to the contract the Rust code must follow.
+  ```sh
+  pnpm contract:update
+  ```
+
+  Review the diff before committing it, because it is a change to the contract the Rust code must follow.
+
+- **Owned by the Rust Lambdas:** `fixtures/http`, `fixtures/subscription`, the `*.path` and `*.query` schemas, and `config.response`. They were recorded from the Node handlers, which the Rust Lambdas replaced (#144). To change that behavior, edit the fixture and the Rust code together; the Rust tests replay every fixture. Keep the fixed inputs below, and add a fixture for each new case.
 
 ## Layout
 
@@ -71,7 +75,7 @@ Responses to index queries hold only what the index projects: the table keys, th
 }
 ```
 
-The handlers received an API Gateway REST (v1) proxy event built from `request`. `body` is the parsed JSON body, or `null` when there is none.
+The Lambda receives an API Gateway REST (v1) proxy event built from `request`. `body` is the parsed JSON body, or `null` when there is none.
 
 ## Subscription fixtures
 
@@ -87,13 +91,13 @@ The handlers received an API Gateway REST (v1) proxy event built from `request`.
 }
 ```
 
-The handler received `{"awslogs": {"data": ...}}`, where `data` is `logs` as gzipped JSON in base64; encode it the same way to replay one. The audit lines come from the SDK's `Audits`, so they're what an app writes. Every fixture makes at most one audit's calls, because the handler stores a batch's audits concurrently and their calls can interleave in any order.
+The Lambda receives `{"awslogs": {"data": ...}}`, where `data` is `logs` as gzipped JSON in base64; encode it the same way to replay one. The audit lines come from the SDK's `Audits`, so they're what an app writes. Every fixture makes at most one audit's calls, because the Lambda stores a batch's audits concurrently and their calls can interleave in any order.
 
 ## Comparing
 
 - **Compare JSON as values, not text.** Object key order isn't part of the contract. Expression strings (`UpdateExpression`, `KeyConditionExpression`, `FilterExpression`, `ProjectionExpression`) are, so compare them exactly.
 - **The Upserted event's `Detail`** is a JSON string. Compare it parsed.
 - **A rerun `Detail`** must be the stored string byte for byte. `rerun/sent` stores one with a space and `1.0` to catch any re-serialization.
-- **422 bodies:** `statusCode`, `error`, `message` and each issue's `path` are the contract. Issue `message` text comes from zod and may differ.
+- **422 bodies** are compared whole. Issue messages are zod's (`Invalid option: expected one of "App1"|"TestApp"`), which the Rust Lambdas reproduce.
 - **Error names** (`AuditNotFoundError`, `InvalidNextTokenError`, `PutEventsError`) are the TypeScript classes. Map them to the Rust error they correspond to.
-- **Error bodies** are `{statusCode, error, message}`, with the error's class name in `error` (`NotFoundError`, `BadRequestError`, `RequestValidationError`, `InternalServerError`). 422s add `details.issues`.
+- **Error bodies** are `{statusCode, error, message}`, with the TypeScript error class's name in `error` (`NotFoundError`, `BadRequestError`, `RequestValidationError`, `InternalServerError`). 422s add `details.issues`.

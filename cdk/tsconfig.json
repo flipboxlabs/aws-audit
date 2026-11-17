@@ -3,6 +3,6 @@
   "compilerOptions": {
     "preserveConstEnums": true
   },
-  "include": ["src/**/*.ts", "src/**/handler.ts", "src/**/*handler.ts"],
+  "include": ["src/**/*.ts"],
   "exclude": ["dist", ".test.ts", "node_modules", "coverage"]
 }

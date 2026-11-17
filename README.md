@@ -69,19 +69,27 @@ export type AuditConfig = typeof auditConfig;
 ### 3. Deploy infrastructure with CDK
 
 ```typescript
-import {
-  DynamoDBConstruct,
-  EventBridgeConstruct,
-  CloudWatchConstruct,
-} from "@flipboxlabs/aws-audit-cdk";
+import { ConfigLayerConstruct } from "@flipboxlabs/aws-audit-cdk/lambda";
+import { CloudWatchConstruct } from "@flipboxlabs/aws-audit-cdk/cloudwatch";
+import { DynamoDBConstruct } from "@flipboxlabs/aws-audit-cdk/dynamodb";
+import { EventBridgeConstruct } from "@flipboxlabs/aws-audit-cdk/eventbridge";
 
-// In your CDK stack
-new DynamoDBConstruct(this, "AuditTable");
-new EventBridgeConstruct(this, "AuditEventBus");
-new CloudWatchConstruct(this, "AuditSubscription", {
-  handler: subscriptionLambda,
+// In your CDK stack, with `config` your CDKConfig
+const { layer } = new ConfigLayerConstruct(this, "AuditConfigLayer", {
+  apps: auditConfig.apps,
+  resourceTypes: auditConfig.resourceTypes,
+});
+const { table } = new DynamoDBConstruct(this, "DynamoDB", { config });
+const { eventBus } = new EventBridgeConstruct(this, "EventBridge", { config });
+new CloudWatchConstruct(this, "CloudWatch", {
+  config,
+  lambda: { layers: [layer] },
+  table,
+  eventBus,
 });
 ```
+
+The Lambdas the constructs deploy are prebuilt Rust binaries shipped in the package, so synth bundles nothing: no esbuild, Docker or Rust toolchain needed. See the [CDK README](cdk/README.md) for every construct, including the REST API.
 
 ### 4. Log audits in your Lambda functions
 

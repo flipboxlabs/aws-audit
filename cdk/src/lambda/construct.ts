@@ -16,8 +16,8 @@ export interface AuditConfigLayerProps {
 }
 
 /**
- * Path where handlers should import the audit config from.
- * This is the standard Lambda layer path for Node.js.
+ * Path where your own Node.js Lambdas import the audit config from: the standard
+ * Lambda layer path for Node.js.
  *
  * The `.mjs` extension makes Node load it as an ES module no matter which
  * `package.json` ends up at `/opt/nodejs` once Lambda merges every layer into `/opt`.
@@ -25,7 +25,7 @@ export interface AuditConfigLayerProps {
 export const AUDIT_CONFIG_LAYER_MODULE_PATH = "/opt/nodejs/audit-config.mjs";
 
 /**
- * Earlier path of the audit config, kept for handlers that still import it.
+ * Earlier path of the audit config, kept for Lambdas that still import it.
  *
  * It loads as an ES module only through the layer's `nodejs/package.json`
  * (`{"type":"module"}`), which another layer shipping its own
@@ -34,17 +34,18 @@ export const AUDIT_CONFIG_LAYER_MODULE_PATH = "/opt/nodejs/audit-config.mjs";
 export const AUDIT_CONFIG_LAYER_PATH = "/opt/nodejs/audit-config.js";
 
 /**
- * Path where Rust handlers read the audit config from: the layer's root, which
- * Lambda mounts at `/opt` for every runtime.
+ * Path where the audit Lambdas, which are Rust, read the audit config from: the
+ * layer's root, which Lambda mounts at `/opt` for every runtime.
  */
 export const AUDIT_CONFIG_JSON_PATH = "/opt/audit-config.json";
 
 /**
  * Creates a Lambda layer containing the audit configuration.
  *
- * The layer exports raw `apps` and `resourceTypes` arrays that Node handlers
- * can use with `defineAuditConfig` from the SDK, and writes the same arrays to
- * {@link AUDIT_CONFIG_JSON_PATH} for Rust handlers.
+ * The audit Lambdas read the `apps` and `resourceTypes` from
+ * {@link AUDIT_CONFIG_JSON_PATH}. The layer also exports them as a Node.js module
+ * at {@link AUDIT_CONFIG_LAYER_MODULE_PATH}, for your own Lambdas to use with
+ * `defineAuditConfig` from the SDK.
  *
  * @example
  * ```typescript

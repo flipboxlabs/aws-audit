@@ -16,7 +16,7 @@ pnpm add @flipboxlabs/aws-audit-cdk
 import * as cdk from "aws-cdk-lib";
 import type { Construct } from "constructs";
 import type { CDKConfig } from "@flipboxlabs/aws-audit-cdk";
-import { AuditConfigLayer } from "@flipboxlabs/aws-audit-cdk/lambda";
+import { ConfigLayerConstruct } from "@flipboxlabs/aws-audit-cdk/lambda";
 import { CloudWatchConstruct as CloudWatch } from "@flipboxlabs/aws-audit-cdk/cloudwatch";
 import { DynamoDBConstruct as DynamoDB } from "@flipboxlabs/aws-audit-cdk/dynamodb";
 import { EventBridgeConstruct as EventBridge } from "@flipboxlabs/aws-audit-cdk/eventbridge";
@@ -31,7 +31,7 @@ export class AuditStack extends cdk.NestedStack {
     super(scope, id, { description: "Audit" });
 
     // Create audit config layer with your apps and resource types
-    const auditConfigLayer = new AuditConfigLayer(this, "AuditConfigLayer", {
+    const auditConfigLayer = new ConfigLayerConstruct(this, "AuditConfigLayer", {
       apps: ["Orders", "Inventory"],
       resourceTypes: ["Order", "Product"],
     });
@@ -65,14 +65,14 @@ export class AuditStack extends cdk.NestedStack {
 
 ## Constructs
 
-### AuditConfigLayer
+### ConfigLayerConstruct
 
 Creates a Lambda layer containing your audit configuration (apps and resource types). This layer is required by all other constructs.
 
 ```typescript
-import { AuditConfigLayer } from "@flipboxlabs/aws-audit-cdk/lambda";
+import { ConfigLayerConstruct } from "@flipboxlabs/aws-audit-cdk/lambda";
 
-const auditConfigLayer = new AuditConfigLayer(this, "AuditConfigLayer", {
+const auditConfigLayer = new ConfigLayerConstruct(this, "AuditConfigLayer", {
   apps: ["Orders", "Inventory"],
   resourceTypes: ["Order", "Product"],
 });
@@ -116,7 +116,7 @@ Getting or rerunning a single audit answers `404` when `{audit}` doesn't exist o
 
 Every route runs as a prebuilt Rust binary, like the subscription Lambda. Every route answers errors as `{statusCode, error, message}`, and a `422` lists each invalid input under `details.issues`, with its location as `path` (e.g. `["query", "filter[app]"]`).
 
-`GET /config` reads the `AuditConfigLayer` only, so its Lambda has no DynamoDB or EventBridge permissions. Its `version` comes from this package's `package.json` at synth time. Deployments from before the route was added answer `GET /config` with a `403` `{"message":"Missing Authentication Token"}` (API Gateway's response for an unknown route), not a `404`.
+`GET /config` reads the config layer only, so its Lambda has no DynamoDB or EventBridge permissions. Its `version` comes from this package's `package.json` at synth time. Deployments from before the route was added answer `GET /config` with a `403` `{"message":"Missing Authentication Token"}` (API Gateway's response for an unknown route), not a `404`.
 
 > **Upgrading:** `RestApiConstruct` always adds a `/config` resource at the API root. If your stack already adds its own `config` resource to `restApi.root`, synth fails after upgrading, with a duplicate construct or path error. Rename or remove your route before upgrading.
 
