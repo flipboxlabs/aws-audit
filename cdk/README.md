@@ -139,7 +139,7 @@ type CDKConfig = {
 
 ## Peer Dependencies
 
-- `aws-cdk-lib` >= 2.135.0
+- `aws-cdk-lib` >= 2.226.0
 - `constructs` >= 10.3.0
 
 ## Upgrading from 1.x
