@@ -31,9 +31,13 @@
     ".": "./src/index.ts",
     "./batch": "./src/batch/index.ts",
     "./config": "./src/config.ts",
-    "./middleware": "./src/middleware/middy.ts"
+    "./middleware": "./src/middleware/middy.ts",
+    "./migrate": "./src/migrate/index.ts"
   },
   "publishConfig": {
+    "bin": {
+      "aws-audit-migrate": "./dist/migrate/cli.js"
+    },
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
@@ -50,6 +54,10 @@
       "./middleware": {
         "types": "./dist/middleware/middy.d.ts",
         "import": "./dist/middleware/middy.js"
+      },
+      "./migrate": {
+        "types": "./dist/migrate/index.d.ts",
+        "import": "./dist/migrate/index.js"
       }
     },
     "main": "./dist/index.js",

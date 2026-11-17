@@ -94,7 +94,7 @@ type DynamoDBPrimaryKey = {
 /**
  * The top-level attributes the index keys are built from.
  */
-type IndexAttributes = {
+export type IndexAttributes = {
   tenantKey: string;
   app: string;
   resourceType: string;
@@ -308,6 +308,65 @@ function buildFilter(filters: ListFilters & { scope?: string }) {
 const tenantKey = (tenantId?: string) => tenantId || DynamoDB.NO_TENANT;
 
 /**
+ * Constructs the DynamoDB primary key of an audit.
+ *
+ * When tenantId is provided, it prefixes the partition key for multi-tenant isolation.
+ *
+ * @param identifiers - Object containing tenantId (optional), app, id, and resourceType
+ * @returns Primary key object with PK and SK attributes
+ * @internal
+ */
+export function constructPrimaryKey({
+  tenantId,
+  app,
+  id,
+  resourceType,
+}: Omit<Identifiers, "resourceId">): DynamoDBPrimaryKey {
+  const pkBase = `${app}.${resourceType}#${id}`;
+  return {
+    [Keys.PARTITION_KEY]: tenantId ? `${tenantId}#${pkBase}` : pkBase,
+    [Keys.SORT_KEY]: DynamoDB.SortKeys.AUDIT,
+  };
+}
+
+/**
+ * The sort key of an audit's copy under a related resource.
+ *
+ * @internal
+ */
+export function relatedSortKey(resource: ResourceReference): string {
+  return `${DynamoDB.SortKeys.RELATED_PREFIX}${resource.app}.${resource.type}#${resource.id}`;
+}
+
+/**
+ * Constructs the top-level attributes the index keys are built from.
+ *
+ * The resource id is stored as a string, so numeric and string ids list together.
+ * Only audits get the trace attributes, which keeps copies out of `ByTrace`.
+ *
+ * @param item - The audit, or a related-resource copy
+ * @param kind - Whether the item is the audit or a copy
+ * @returns The index attributes
+ * @internal
+ */
+export function constructIndexAttributes(
+  item: Pick<AuditStorage, "tenantId" | "target" | "trace">,
+  kind: IndexAttributes["kind"],
+): IndexAttributes {
+  const trace = kind === DynamoDB.Kinds.AUDIT && item.trace ? getTraceParts(item.trace) : undefined;
+
+  return {
+    tenantKey: tenantKey(item.tenantId),
+    app: item.target.app,
+    resourceType: item.target.type,
+    // A numeric id of 0 is an id; only a missing or empty one is left out
+    ...(hasResourceId(item.target.id) ? { resourceId: String(item.target.id) } : {}),
+    kind,
+    ...(trace ? { traceId: trace.id, traceStage: trace.stage } : {}),
+  };
+}
+
+/**
  * Repository for managing audit records in DynamoDB.
  *
  * Provides CRUD operations for audit records with support for:
@@ -390,7 +449,7 @@ export class AuditRepository<C extends AuditConfig> {
       const { Item: item } = await this.client.send(
         new GetItemCommand({
           TableName: DynamoDB.Table.Name(),
-          Key: marshall(this.constructPrimaryKey(identifiers), MARSHALL_OPTIONS),
+          Key: marshall(constructPrimaryKey(identifiers), MARSHALL_OPTIONS),
         }),
       );
 
@@ -449,7 +508,7 @@ export class AuditRepository<C extends AuditConfig> {
       updatedAt: now,
     });
 
-    const primaryKey = this.constructPrimaryKey({
+    const primaryKey = constructPrimaryKey({
       tenantId: payload.tenantId,
       id: payload.id,
       resourceType: payload.target.type,
@@ -471,7 +530,7 @@ export class AuditRepository<C extends AuditConfig> {
     // Add all payload fields dynamically
     const allFields: Record<string, unknown> = {
       ...payload,
-      ...this.constructIndexAttributes(payload, DynamoDB.Kinds.AUDIT),
+      ...constructIndexAttributes(payload, DynamoDB.Kinds.AUDIT),
       [Attributes.SCOPES]: new Set(
         [payload.target, ...(item.resources ?? [])].flatMap(resourceScopes),
       ),
@@ -556,7 +615,7 @@ export class AuditRepository<C extends AuditConfig> {
     const BATCH_SIZE = 25;
 
     const payload = AuditStorageSchema.parse({ ...item, createdAt, updatedAt: new Date() });
-    const primaryKey = this.constructPrimaryKey({
+    const primaryKey = constructPrimaryKey({
       tenantId: payload.tenantId,
       id: payload.id,
       resourceType: payload.target.type,
@@ -581,9 +640,9 @@ export class AuditRepository<C extends AuditConfig> {
             Item: marshall(
               {
                 [Keys.PARTITION_KEY]: primaryKey.PK,
-                [Keys.SORT_KEY]: `${DynamoDB.SortKeys.RELATED_PREFIX}${resource.app}.${resource.type}#${resource.id}`,
+                [Keys.SORT_KEY]: relatedSortKey(resource),
                 ...copy,
-                ...this.constructIndexAttributes(copy, DynamoDB.Kinds.RELATED),
+                ...constructIndexAttributes(copy, DynamoDB.Kinds.RELATED),
                 ...ttl,
               },
               MARSHALL_OPTIONS,
@@ -856,57 +915,6 @@ export class AuditRepository<C extends AuditConfig> {
         nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
       },
     });
-  }
-
-  /**
-   * Constructs the DynamoDB primary key of an audit.
-   *
-   * When tenantId is provided, it prefixes the partition key for multi-tenant isolation.
-   *
-   * @param identifiers - Object containing tenantId (optional), app, id, and resourceType
-   * @returns Primary key object with PK and SK attributes
-   * @internal
-   */
-  private constructPrimaryKey({
-    tenantId,
-    app,
-    id,
-    resourceType,
-  }: Omit<Identifiers, "resourceId">): DynamoDBPrimaryKey {
-    const pkBase = `${app}.${resourceType}#${id}`;
-    return {
-      [Keys.PARTITION_KEY]: tenantId ? `${tenantId}#${pkBase}` : pkBase,
-      [Keys.SORT_KEY]: DynamoDB.SortKeys.AUDIT,
-    };
-  }
-
-  /**
-   * Constructs the top-level attributes the index keys are built from.
-   *
-   * The resource id is stored as a string, so numeric and string ids list together.
-   * Only audits get the trace attributes, which keeps copies out of `ByTrace`.
-   *
-   * @param item - The audit, or a related-resource copy
-   * @param kind - Whether the item is the audit or a copy
-   * @returns The index attributes
-   * @internal
-   */
-  private constructIndexAttributes(
-    item: Pick<AuditStorage, "tenantId" | "target" | "trace">,
-    kind: IndexAttributes["kind"],
-  ): IndexAttributes {
-    const trace =
-      kind === DynamoDB.Kinds.AUDIT && item.trace ? getTraceParts(item.trace) : undefined;
-
-    return {
-      tenantKey: tenantKey(item.tenantId),
-      app: item.target.app,
-      resourceType: item.target.type,
-      // A numeric id of 0 is an id; only a missing or empty one is left out
-      ...(hasResourceId(item.target.id) ? { resourceId: String(item.target.id) } : {}),
-      kind,
-      ...(trace ? { traceId: trace.id, traceStage: trace.stage } : {}),
-    };
   }
 
   /**
