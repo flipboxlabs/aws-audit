@@ -157,7 +157,14 @@ impl AuditRepository {
             .await
             .map_err(|error| {
                 let error = StorageError::from(error);
-                tracing::error!(?identifiers, error = %ErrorChain(&error), "Failed to read audit item");
+                tracing::error!(
+                    tenantId = identifiers.tenant_id.as_deref(),
+                    app = %identifiers.app,
+                    resourceType = %identifiers.resource_type,
+                    id = %identifiers.id,
+                    error = %ErrorChain(&error),
+                    "Failed to read audit item"
+                );
                 error
             })?;
 
@@ -345,7 +352,7 @@ impl AuditRepository {
             tracing::warn!(
                 count,
                 attempt,
-                delay_ms = delay.as_millis() as u64,
+                delayMs = delay.as_millis() as u64,
                 "BatchWriteItem: retrying unprocessed items"
             );
             tokio::time::sleep(delay).await;
@@ -422,7 +429,7 @@ impl AuditRepository {
                 tracing::warn!(
                     count = unprocessed.len(),
                     attempt,
-                    delay_ms = delay.as_millis() as u64,
+                    delayMs = delay.as_millis() as u64,
                     "BatchGetItem: retrying unprocessed keys"
                 );
                 tokio::time::sleep(delay).await;

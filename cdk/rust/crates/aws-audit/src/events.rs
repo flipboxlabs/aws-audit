@@ -158,7 +158,7 @@ impl AuditEventBus {
             tracing::warn!(
                 count = retry.len(),
                 attempt,
-                delay_ms = delay.as_millis() as u64,
+                delayMs = delay.as_millis() as u64,
                 "Retrying event bridge events"
             );
             tokio::time::sleep(delay).await;
