@@ -54,8 +54,8 @@ async fn reports_both_invalid_path_parameters() {
 #[tokio::test(start_paused = true)]
 async fn finds_a_numeric_target_id_by_its_string_form() {
     let item = json!({
-        "PK": { "S": "App1.Order" },
-        "SK": { "S": "audit-1" },
+        "PK": { "S": "App1.Order#audit-1" },
+        "SK": { "S": "audit" },
         "id": { "S": "audit-1" },
         "status": { "S": "success" },
         "tier": { "N": "2" },
@@ -65,6 +65,8 @@ async fn finds_a_numeric_target_id_by_its_string_form() {
             "type": { "S": "Order" },
             "id": { "N": "42" },
         }},
+        "createdAt": { "S": "2026-01-02T03:04:05.678Z" },
+        "updatedAt": { "S": "2026-01-02T03:04:05.678Z" },
     });
     let fixture = |item_path: &str| {
         json!({
@@ -73,7 +75,7 @@ async fn finds_a_numeric_target_id_by_its_string_form() {
             "calls": [{
                 "service": "DynamoDB",
                 "command": "GetItem",
-                "input": { "TableName": "TEST-Contract-Audit", "Key": { "PK": { "S": "App1.Order" }, "SK": { "S": "audit-1" } } },
+                "input": { "TableName": "TEST-Contract-Audit-v2", "Key": { "PK": { "S": "App1.Order#audit-1" }, "SK": { "S": "audit" } } },
                 "output": { "Item": item },
             }],
         })
@@ -82,7 +84,9 @@ async fn finds_a_numeric_target_id_by_its_string_form() {
     let found = replay("numeric", &fixture("42"), contract_router).await;
     assert_eq!(found.answer["statusCode"], 200, "{:?}", found.answer);
     assert_eq!(found.answer["body"]["target"]["id"], 42);
+    assert_eq!(found.failures, Vec::<String>::new());
 
     let other = replay("numeric-other", &fixture("43"), contract_router).await;
     assert_eq!(other.answer["statusCode"], 404);
+    assert_eq!(other.failures, Vec::<String>::new());
 }
