@@ -62,4 +62,6 @@ The workspace lives in the cdk package because the binaries ship in it: release-
 
 ## Matching the TypeScript SDK
 
-The TypeScript SDK writes the same table, so both must agree exactly. The tests check against the fixtures in [`contract/`](../../contract/README.md), which the TypeScript tests record: `crates/aws-audit/tests/contract.rs` covers tokens and the HTTP audit shape, and `crates/aws-audit/tests/replay.rs` replays every SDK fixture through the real AWS SDK clients, asserting each request body, then the result or error. When a behavior changes, change the TypeScript first, run `pnpm contract:update`, then make the Rust tests pass. When the two disagree, fix whichever is wrong, in both if need be, rather than copying a bug.
+The TypeScript SDK writes the same table, so both must agree exactly. The tests check against the fixtures in [`contract/`](../../contract/README.md): `crates/aws-audit/tests/contract.rs` covers tokens and the HTTP audit shape, `crates/aws-audit/tests/replay.rs` replays every SDK fixture through the real AWS SDK clients, asserting each request body, then the result or error, and each Lambda replays its own fixtures.
+
+When storage behavior changes (what the SDK also does), change the TypeScript first, run `pnpm contract:update`, then make the Rust tests pass. The HTTP and subscription fixtures belong to the Lambdas, which are only in Rust now: change those fixtures by hand along with the Rust code. When the two implementations disagree, fix whichever is wrong, in both if need be, rather than copying a bug.

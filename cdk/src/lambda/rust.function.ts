@@ -43,9 +43,9 @@ export interface RustFunctionProps extends lambda.FunctionOptions {
 }
 
 /**
- * Factory function that creates Rust Lambda functions with the same standard
- * configuration as {@link ESMNodeFunctionFactory}, running a prebuilt binary on
- * `provided.al2023`.
+ * Factory function that creates the audit Lambdas: a prebuilt Rust binary on
+ * `provided.al2023`, with the standard settings from `functionDefaults` and
+ * `functionEnvironment`.
  *
  * The audit config layer should be passed via the `layers` prop; Rust Lambdas
  * read it from `/opt/audit-config.json`.

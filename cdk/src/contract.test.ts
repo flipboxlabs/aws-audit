@@ -1,611 +1,51 @@
 /**
- * Records the REST handlers' contract for the Rust port (#93) under `contract/`:
+ * Records the parts of `contract/` that TypeScript still defines for the Rust
+ * Lambdas (#93):
  *
- * - `fixtures/http`: a request, the AWS calls the handler made (input and the
- *   response fed back), and the HTTP response it answered.
- * - `schemas`: JSON Schema 2020-12 for each route's path, query and response,
- *   generated from the handlers' zod schemas.
- * - `fixtures/subscription`: CloudWatch Logs data the subscription Lambda
- *   received (decoded) and the AWS calls it made.
- * - `fixtures/layer`: the `audit-config.json` the config layer writes for Rust
- *   Lambdas.
+ * - `schemas/{detail,items,objects,status,trace}.response`: JSON Schema 2020-12 for
+ *   the audits the REST API answers with, generated from the SDK's
+ *   `AuditPayloadSchema`. The SDK still reads and writes the same table.
+ * - `fixtures/layer`: the `audit-config.json` the config layer writes for the
+ *   Rust Lambdas.
  *
- * Handlers run for real on recording AWS clients; only the clients' `send` is
- * replaced. The committed files are file snapshots, so this test fails when a
- * handler's behavior drifts from them. Regenerate with `pnpm contract:update`.
+ * The HTTP and subscription fixtures, the request schemas and
+ * `config.response` were recorded from the Node handlers, which are gone. They
+ * belong to the Rust Lambdas now and change by hand along with them (see
+ * `contract/README.md`).
+ *
+ * The committed files are file snapshots, so this test fails when the SDK or the
+ * layer drifts from them. Regenerate with `pnpm contract:update`.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { gzipSync } from "node:zlib";
-import type { APIGatewayProxyEvent, Context } from "aws-lambda";
 import * as cdk from "aws-cdk-lib";
-import { marshall } from "@aws-sdk/util-dynamodb";
-import { Audits, type LogAuditInput } from "@flipboxlabs/aws-audit-sdk";
+import { AuditPayloadSchema, PaginationCollectionSchema } from "@flipboxlabs/aws-audit-sdk";
 import { z } from "zod";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
+import { ConfigLayerConstruct } from "./lambda/construct.js";
 import { testConfig } from "./test-config.js";
 
-const FIXTURES = "../../contract/fixtures/http";
 const SCHEMAS = "../../contract/schemas";
 const LAYER = "../../contract/fixtures/layer";
-const SUBSCRIPTION = "../../contract/fixtures/subscription";
 
-/** Fixed clock for any time the handlers or SDK read */
+/** The fixtures' clock: an attempt's `at` defaults to the time the schema is built */
 const NOW = "2026-01-02T03:04:05.678Z";
 
-type Call = {
-  service: "DynamoDB" | "EventBridge";
-  command: string;
-  input: unknown;
-  output?: unknown;
-  error?: { name: string; message: string };
-};
+const AuditCollectionSchema = PaginationCollectionSchema(AuditPayloadSchema);
 
-type Reply = { output: unknown } | { error: { name: string; message: string } };
-
-const recorder = vi.hoisted(() => {
-  // Read by the handlers at import, so set before any of them load
-  Object.assign(process.env, {
-    ENVIRONMENT: "test",
-    SERVICE: "Contract",
-    AWS_REGION: "us-east-1",
-    AWS_AUDIT_CDK_VERSION: "0.0.0-contract",
-    POWERTOOLS_LOG_LEVEL: "SILENT",
-    POWERTOOLS_DEV: "false",
-  });
-
-  const state = { calls: [] as Call[], queue: [] as Reply[] };
-
-  const send =
-    (service: Call["service"]) =>
-    async (command: { constructor: { name: string }; input: unknown }) => {
-      const call: Call = {
-        service,
-        command: command.constructor.name.replace(/Command$/, ""),
-        input: structuredClone(command.input),
-      };
-      state.calls.push(call);
-
-      const reply = state.queue.shift() ?? { output: {} };
-      if ("error" in reply) {
-        call.error = reply.error;
-        throw Object.assign(new Error(reply.error.message), { name: reply.error.name });
-      }
-
-      call.output = reply.output;
-      return structuredClone(reply.output);
-    };
-
-  return { state, send };
-});
-
-vi.mock("./audit-config.js", () => ({ auditConfig: testConfig }));
-
-vi.mock("@aws-sdk/client-dynamodb", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@aws-sdk/client-dynamodb")>()),
-  DynamoDBClient: class RecordingDynamoDBClient {
-    send = recorder.send("DynamoDB");
-  },
-}));
-
-vi.mock("@aws-sdk/client-eventbridge", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@aws-sdk/client-eventbridge")>()),
-  EventBridgeClient: class RecordingEventBridgeClient {
-    send = recorder.send("EventBridge");
-  },
-}));
-
-import { handler as configHandler } from "./rest-api/resources/config/handler.js";
-import * as configSchema from "./rest-api/resources/config/schema.js";
-import { handler as statusHandler } from "./rest-api/resources/status/handler.js";
-import * as statusSchema from "./rest-api/resources/status/schema.js";
-import { handler as traceHandler } from "./rest-api/resources/trace/handler.js";
-import * as traceSchema from "./rest-api/resources/trace/schema.js";
-import { handler as objectsHandler } from "./rest-api/resources/app/resources/objects/handler.js";
-import * as objectsSchema from "./rest-api/resources/app/resources/objects/schema.js";
-import { handler as rerunHandler } from "./rest-api/resources/app/resources/objects/resources/rerun/handler.js";
-import * as rerunSchema from "./rest-api/resources/app/resources/objects/resources/rerun/schema.js";
-import { ConfigLayerConstruct } from "./lambda/construct.js";
-import { handler as subscriptionHandler } from "./cloudwatch/subscription.handler.js";
-
-type Handler = (event: unknown, context: Context) => Promise<unknown>;
-
-/** API Gateway resource paths, as the REST API routes them to each Lambda */
-const ROUTES = {
-  config: { resource: "/config", handler: configHandler },
-  status: { resource: "/status/{status}", handler: statusHandler },
-  trace: { resource: "/trace/{trace}", handler: traceHandler },
-  objects: { resource: "/apps/{app}/objects/{object}", handler: objectsHandler },
-  items: { resource: "/apps/{app}/objects/{object}/{item}", handler: objectsHandler },
-  detail: { resource: "/apps/{app}/objects/{object}/{item}/{audit}", handler: objectsHandler },
-  rerun: { resource: "/apps/{app}/objects/{object}/{item}/{audit}/rerun", handler: rerunHandler },
-} satisfies Record<string, { resource: string; handler: Handler }>;
-
-type Route = keyof typeof ROUTES;
-
-type Request = {
-  method: "GET" | "POST";
-  path: string;
-  query?: Record<string, string>;
-};
-
-type Case = {
-  name: string;
-  description: string;
-  route: Route;
-  request: Request;
-  replies?: Reply[];
-};
-
-const context = {
-  functionName: "contract",
-  awsRequestId: "request-id",
-  getRemainingTimeInMillis: () => 10_000,
-} as unknown as Context;
-
-/** Builds the API Gateway REST (v1) proxy event the Lambda receives */
-const proxyEvent = (route: Route, { method, path, query }: Request): APIGatewayProxyEvent => {
-  const { resource } = ROUTES[route];
-  const names = [...resource.matchAll(/\{(\w+)\}/g)].map(([, name]) => name);
-  const pattern = new RegExp(`^${resource.replace(/\{\w+\}/g, "([^/]+)")}$`);
-  const values = pattern.exec(path)?.slice(1) ?? [];
-
-  return {
-    resource,
-    path,
-    httpMethod: method,
-    headers: { accept: "application/json" },
-    multiValueHeaders: { accept: ["application/json"] },
-    pathParameters: names.length
-      ? Object.fromEntries(names.map((name, i) => [name, decodeURIComponent(values[i])]))
-      : null,
-    queryStringParameters: query ?? null,
-    multiValueQueryStringParameters: query
-      ? Object.fromEntries(Object.entries(query).map(([key, value]) => [key, [value]]))
-      : null,
-    stageVariables: null,
-    body: null,
-    isBase64Encoded: false,
-    requestContext: {
-      accountId: "123456789012",
-      apiId: "contract",
-      httpMethod: method,
-      path: `/test${path}`,
-      protocol: "HTTP/1.1",
-      requestId: "request-id",
-      requestTimeEpoch: Date.parse(NOW),
-      resourceId: "resource",
-      resourcePath: resource,
-      stage: "test",
-      identity: { sourceIp: "127.0.0.1", userAgent: "contract" },
-    },
-  } as unknown as APIGatewayProxyEvent;
-};
-
-const record = async ({ name, description, route, request, replies = [] }: Case) => {
-  recorder.state.calls = [];
-  recorder.state.queue = [...replies];
-
-  const result = (await ROUTES[route].handler(proxyEvent(route, request), context)) as {
-    statusCode: number;
-    headers?: Record<string, string>;
-    body?: string;
-  };
-
-  const fixture = {
-    description,
-    route: `${request.method} ${ROUTES[route].resource}`,
-    request,
-    calls: recorder.state.calls,
-    response: {
-      statusCode: result.statusCode,
-      contentType: result.headers?.["content-type"] ?? null,
-      body: result.body ? JSON.parse(result.body) : null,
-    },
-  };
-
-  await expect(`${JSON.stringify(fixture, null, 2)}\n`).toMatchFileSnapshot(
-    `${FIXTURES}/${name}.json`,
-  );
-};
-
-// Stored rows, as DynamoDB returns them (marshalled)
-const auditRow = (overrides: Record<string, unknown> = {}) =>
-  marshall(
-    {
-      PK: "App1.Order",
-      SK: "audit-1",
-      id: "audit-1",
-      operation: "createOrder",
-      status: "fail",
-      tier: 2,
-      target: { app: "App1", type: "Order", id: "order-1" },
-      createdAt: NOW,
-      updatedAt: NOW,
-      ...overrides,
-    },
-    { removeUndefinedValues: true },
-  );
-
-const rerunableRow = (overrides: Record<string, unknown> = {}) =>
-  auditRow({
-    rerunable: true,
-    event: {
-      source: "orders",
-      "detail-type": "OrderCreated",
-      detail: '{"orderId":"order-1", "n":1.0}',
-    },
-    ...overrides,
-  });
-
-const CASES: Case[] = [
-  {
-    name: "config/get",
-    description: "Configured apps and resource types, and the package version",
-    route: "config",
-    request: { method: "GET", path: "/config" },
-  },
-
-  // status
-  {
-    name: "status/list",
-    description: "Audits with a status",
-    route: "status",
-    request: { method: "GET", path: "/status/fail" },
-    replies: [
-      {
-        output: {
-          Items: [auditRow({ GSI2_SS_PK: "fail", GSI2_SS_SK: `${NOW}#audit-1` })],
-          LastEvaluatedKey: marshall({
-            PK: "App1.Order",
-            SK: "audit-1",
-            GSI2_SS_PK: "fail",
-            GSI2_SS_SK: `${NOW}#audit-1`,
-          }),
-        },
-      },
-    ],
-  },
-  {
-    name: "status/list-filtered",
-    description: "Pagination and filters come from bracketed query parameters",
-    route: "status",
-    request: {
-      method: "GET",
-      path: "/status/fail",
-      query: {
-        "pagination[pageSize]": "5",
-        "filter[app]": "App1",
-        "filter[resourceType]": "Order",
-      },
-    },
-    replies: [{ output: { Items: [] } }],
-  },
-  {
-    name: "status/invalid-status",
-    description: "A status outside the enum is a 422",
-    route: "status",
-    request: { method: "GET", path: "/status/unknown" },
-  },
-  {
-    name: "status/invalid-filter",
-    description: "An app outside the config is a 422",
-    route: "status",
-    request: { method: "GET", path: "/status/fail", query: { "filter[app]": "Nope" } },
-  },
-  {
-    name: "status/invalid-page-size",
-    description: "A pageSize that isn't a positive integer is a 422",
-    route: "status",
-    request: { method: "GET", path: "/status/fail", query: { "pagination[pageSize]": "-1" } },
-  },
-  {
-    name: "status/page-size-too-large",
-    description: "A pageSize over the maximum is a 422",
-    route: "status",
-    request: { method: "GET", path: "/status/fail", query: { "pagination[pageSize]": "1001" } },
-  },
-  {
-    name: "status/invalid-token",
-    description: "A nextToken the listing didn't issue is a 422, without querying",
-    route: "status",
-    request: {
-      method: "GET",
-      path: "/status/fail",
-      query: { "pagination[nextToken]": "not-a-token" },
-    },
-  },
-  {
-    name: "status/storage-error",
-    description: "A DynamoDB failure is a logged 500",
-    route: "status",
-    request: { method: "GET", path: "/status/fail" },
-    replies: [{ error: { name: "ProvisionedThroughputExceededException", message: "Slow down" } }],
-  },
-
-  // trace
-  {
-    name: "trace/list",
-    description: "Audits of a trace; trace is rebuilt from the index keys",
-    route: "trace",
-    request: { method: "GET", path: "/trace/trace-1", query: { "filter[app]": "App1" } },
-    replies: [{ output: { Items: [auditRow({ GSI1_SN_PK: "trace-1", GSI1_SN_SK: 1 })] } }],
-  },
-  {
-    name: "trace/list-filtered",
-    description: "A trace filtered by resource type, a page at a time",
-    route: "trace",
-    request: {
-      method: "GET",
-      path: "/trace/trace-1",
-      query: { "pagination[pageSize]": "5", "filter[resourceType]": "Order" },
-    },
-    replies: [{ output: { Items: [] } }],
-  },
-  {
-    name: "trace/invalid-filter",
-    description: "A resource type outside the config is a 422",
-    route: "trace",
-    request: { method: "GET", path: "/trace/trace-1", query: { "filter[resourceType]": "Nope" } },
-  },
-
-  // objects
-  {
-    name: "objects/list",
-    description: "Audits of a resource type",
-    route: "objects",
-    request: { method: "GET", path: "/apps/App1/objects/Order" },
-    replies: [{ output: { Items: [auditRow({ LSI1_N_SK: 21767323445678, trace: "trace-1:0" })] } }],
-  },
-  {
-    name: "objects/invalid-app",
-    description: "An app outside the config is a 422",
-    route: "objects",
-    request: { method: "GET", path: "/apps/Nope/objects/Order" },
-  },
-  {
-    name: "objects/items",
-    description: "Audits of one resource",
-    route: "items",
-    request: { method: "GET", path: "/apps/App1/objects/Order/order-1" },
-    replies: [
-      {
-        output: {
-          Items: [auditRow({ GSI1_SS_PK: "App1.Order#order-1", GSI1_SS_SK: "audit-1" })],
-        },
-      },
-    ],
-  },
-  {
-    name: "objects/detail",
-    description: "One audit; event, attempts and error are included",
-    route: "detail",
-    request: { method: "GET", path: "/apps/App1/objects/Order/order-1/audit-1" },
-    replies: [
-      {
-        output: {
-          Item: rerunableRow({
-            trace: "trace-1:2",
-            error: "Boom",
-            attempts: [{ number: 1, status: "fail", error: "Boom", at: NOW }],
-          }),
-        },
-      },
-    ],
-  },
-  {
-    name: "objects/detail-not-found",
-    description: "A missing audit is a 404",
-    route: "detail",
-    request: { method: "GET", path: "/apps/App1/objects/Order/order-1/missing" },
-    replies: [{ output: {} }],
-  },
-  {
-    name: "objects/detail-other-item",
-    description: "An audit of another item is the same 404 as a missing one",
-    route: "detail",
-    request: { method: "GET", path: "/apps/App1/objects/Order/order-2/audit-1" },
-    replies: [{ output: { Item: auditRow() } }],
-  },
-
-  // rerun
-  {
-    name: "rerun/sent",
-    description: "The stored event is re-sent with its detail string as stored; 204",
-    route: "rerun",
-    request: { method: "POST", path: "/apps/App1/objects/Order/order-1/audit-1/rerun" },
-    replies: [
-      { output: { Item: rerunableRow() } },
-      { output: { FailedEntryCount: 0, Entries: [{ EventId: "event-1" }] } },
-    ],
-  },
-  {
-    name: "rerun/not-rerunable",
-    description: "An audit without an event is a 400 and nothing is sent",
-    route: "rerun",
-    request: { method: "POST", path: "/apps/App1/objects/Order/order-1/audit-1/rerun" },
-    replies: [{ output: { Item: auditRow() } }],
-  },
-  {
-    name: "rerun/not-found",
-    description: "A missing audit is a 404 and nothing is sent",
-    route: "rerun",
-    request: { method: "POST", path: "/apps/App1/objects/Order/order-1/missing/rerun" },
-    replies: [{ output: {} }],
-  },
-  {
-    name: "rerun/rejected",
-    description: "A rejected entry is a 500, without a retry",
-    route: "rerun",
-    request: { method: "POST", path: "/apps/App1/objects/Order/order-1/audit-1/rerun" },
-    replies: [
-      { output: { Item: rerunableRow() } },
-      {
-        output: {
-          FailedEntryCount: 1,
-          Entries: [{ ErrorCode: "ThrottlingException", ErrorMessage: "Rate exceeded" }],
-        },
-      },
-    ],
-  },
-];
-
-/** Each route's request and response schemas, by the file name they're written to */
-const SCHEMA_FILES = {
-  "config.response": configSchema.ResponseSchema,
-  "status.path": statusSchema.PathSchema,
-  "status.query": statusSchema.QuerySchema,
-  "status.response": statusSchema.ResponseCollectionSchema,
-  "trace.path": traceSchema.PathSchema,
-  "trace.query": traceSchema.QuerySchema,
-  "trace.response": traceSchema.ResponseCollectionSchema,
-  "objects.path": objectsSchema.ObjectPathSchema,
-  "objects.query": objectsSchema.QuerySchema,
-  "objects.response": objectsSchema.ResponseCollectionSchema,
-  "items.path": objectsSchema.PathSchema,
-  "items.query": objectsSchema.QuerySchema,
-  "items.response": objectsSchema.ResponseCollectionSchema,
-  "detail.path": objectsSchema.DetailPathSchema,
-  "detail.response": objectsSchema.ResponseDetailSchema,
-  "rerun.path": rerunSchema.PathSchema,
+/** Response schemas, by the route they answer */
+const RESPONSE_SCHEMAS = {
+  // GET /apps/{app}/objects/{object}/{item}/{audit}
+  detail: AuditPayloadSchema,
+  // GET /apps/{app}/objects/{object}/{item}
+  items: AuditCollectionSchema,
+  // GET /apps/{app}/objects/{object}
+  objects: AuditCollectionSchema,
+  // GET /status/{status}
+  status: AuditCollectionSchema,
+  // GET /trace/{trace}
+  trace: AuditCollectionSchema,
 } satisfies Record<string, z.ZodType>;
-
-// subscription
-
-/** The lines an app's `Audits` writes to stdout for these audits */
-const auditLines = (...items: LogAuditInput[]): string[] => {
-  const lines: string[] = [];
-  const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
-    lines.push(String(chunk).trimEnd());
-    return true;
-  });
-
-  try {
-    const audits = new Audits({ config: testConfig });
-    for (const item of items) {
-      audits.addAudit(item as Parameters<typeof audits.addAudit>[0]);
-    }
-    audits.publishStoredAudits();
-  } finally {
-    write.mockRestore();
-  }
-
-  return lines;
-};
-
-/** CloudWatch Logs data as the subscription receives it, decoded */
-const logData = (messages: string[]) => ({
-  messageType: "DATA_MESSAGE",
-  owner: "123456789012",
-  logGroup: "/aws/lambda/orders",
-  logStream: "2026/01/02/[$LATEST]0123456789abcdef0123456789abcdef",
-  subscriptionFilters: ["TESTAccountLevelSubscriptionPolicy"],
-  logEvents: messages.map((message, index) => ({
-    id: `3929416263219867021238914598174926734618373427609960${String(index).padStart(2, "0")}`,
-    timestamp: Date.parse(NOW),
-    message,
-  })),
-});
-
-// Replies to an upsert: the stored attempts, then the Upserted event's entry
-const stored: Reply = {
-  output: { Attributes: marshall({ attempts: [{ number: 1, status: "success", at: NOW }] }) },
-};
-const published: Reply = { output: { FailedEntryCount: 0, Entries: [{ EventId: "event-1" }] } };
-
-const order = {
-  id: "audit-1",
-  operation: "createOrder",
-  target: { app: "App1", type: "Order", id: "order-1" },
-  trace: "1-5759e988-bd862e3fe1be46a994272793",
-} satisfies LogAuditInput;
-
-type SubscriptionCase = {
-  name: string;
-  description: string;
-  logs: ReturnType<typeof logData>;
-  replies?: Reply[];
-};
-
-const SUBSCRIPTION_CASES: SubscriptionCase[] = [
-  {
-    name: "stores-an-audit",
-    description: "An audit an app logged is upserted",
-    logs: logData(auditLines(order)),
-    replies: [stored, published],
-  },
-  {
-    name: "related-resources",
-    description: "A failed, rerunable audit with a related resource, which gets a copy",
-    logs: logData(
-      auditLines({
-        ...order,
-        status: "fail",
-        error: "Payment declined",
-        context: { attempt: 2 },
-        resources: new Set([{ app: "App1", type: "User", id: "user-1" }]),
-        event: {
-          source: "orders",
-          "detail-type": "OrderCreated",
-          detail: '{"orderId":"order-1"}',
-        },
-      }),
-    ),
-    replies: [stored, { output: {} }, published],
-  },
-  {
-    name: "skips-lines-without-an-audit",
-    description:
-      "Lines that aren't JSON or hold no _audit are skipped, and invalid audits are logged; neither stops the rest",
-    logs: logData([
-      "START RequestId: 8f507cfc-6dd5-4c1b-8b2a-9a3b5f0f0f0f Version: $LATEST",
-      '{"level":"INFO","message":"Order created"}',
-      "null",
-      '{"_audit":{"operation":"createOrder","target":{"app":"Nope","type":"Order","id":"order-2"}}}',
-      '{"_audit":{"target":{"app":"App1","type":"Order","id":"order-3"}}}',
-      ...auditLines(order),
-    ]),
-    replies: [stored, published],
-  },
-  {
-    name: "control-message",
-    description: "CloudWatch's check of a new subscription holds no audits",
-    logs: {
-      messageType: "CONTROL_MESSAGE",
-      owner: "CloudwatchLogs",
-      logGroup: "",
-      logStream: "",
-      subscriptionFilters: [],
-      logEvents: [
-        {
-          id: "",
-          timestamp: Date.parse(NOW),
-          message: "CWL CONTROL MESSAGE: Checking health of destination Lambda.",
-        },
-      ],
-    },
-  },
-  {
-    name: "storage-error",
-    description: "A failed write is logged; the invocation still succeeds",
-    logs: logData(auditLines(order)),
-    replies: [{ error: { name: "ProvisionedThroughputExceededException", message: "Slow down" } }],
-  },
-];
-
-const recordSubscription = async ({ name, description, logs, replies = [] }: SubscriptionCase) => {
-  recorder.state.calls = [];
-  recorder.state.queue = [...replies];
-
-  const event = { awslogs: { data: gzipSync(JSON.stringify(logs)).toString("base64") } };
-  await expect(subscriptionHandler(event, context)).resolves.toBeUndefined();
-
-  const fixture = { description, logs, calls: recorder.state.calls };
-
-  await expect(`${JSON.stringify(fixture, null, 2)}\n`).toMatchFileSnapshot(
-    `${SUBSCRIPTION}/${name}.json`,
-  );
-};
 
 describe("contract", () => {
   beforeAll(() => {
@@ -616,30 +56,17 @@ describe("contract", () => {
     vi.useRealTimers();
   });
 
-  describe("http fixtures", () => {
-    it.each(CASES)("$name", async (fixture) => {
-      await record(fixture);
-    });
-  });
-
-  describe("subscription fixtures", () => {
-    it.each(SUBSCRIPTION_CASES)("$name", async (fixture) => {
-      await recordSubscription(fixture);
-    });
-  });
-
-  describe("schemas", () => {
-    it.each(Object.entries(SCHEMA_FILES))("%s", async (name, schema) => {
-      // Requests are validated as received, responses as sent
-      const io = name.endsWith(".response") ? "output" : "input";
+  describe("response schemas", () => {
+    it.each(Object.entries(RESPONSE_SCHEMAS))("%s", async (name, schema) => {
+      // Responses are validated as sent
       const jsonSchema = z.toJSONSchema(schema, {
         target: "draft-2020-12",
-        io,
+        io: "output",
         unrepresentable: "any",
       });
 
       await expect(`${JSON.stringify(jsonSchema, null, 2)}\n`).toMatchFileSnapshot(
-        `${SCHEMAS}/${name}.schema.json`,
+        `${SCHEMAS}/${name}.response.schema.json`,
       );
     });
   });

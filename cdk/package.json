@@ -79,27 +79,16 @@
     "cdk:deploy": "cdk deploy --app 'npx tsx bin/app.ts' --require-approval never"
   },
   "dependencies": {
-    "@aws-lambda-powertools/event-handler": "catalog:aws-powertools",
-    "@aws-lambda-powertools/logger": "catalog:aws-powertools",
-    "@aws-sdk/client-eventbridge": "catalog:aws-sdk",
-    "@flipboxlabs/aws-audit-sdk": "workspace:^",
-    "@middy/core": "catalog:middleware",
-    "qs": "catalog:utilities",
-    "zod": "catalog:utilities"
+    "@flipboxlabs/aws-audit-sdk": "workspace:^"
   },
   "devDependencies": {
-    "@aws-sdk/client-dynamodb": "catalog:aws-sdk",
-    "@aws-sdk/util-dynamodb": "catalog:aws-sdk",
     "@tsconfig/node22": "catalog:build",
-    "@types/aws-lambda": "catalog:types",
     "@types/node": "catalog:types",
-    "@types/qs": "catalog:types",
     "aws-cdk-lib": "catalog:cdk",
     "constructs": "catalog:cdk",
-    "esbuild": "catalog:build",
-    "ts-node": "catalog:build",
     "typescript": "catalog:build",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "zod": "catalog:utilities"
   },
   "peerDependencies": {
     "aws-cdk-lib": "^2.224.0",

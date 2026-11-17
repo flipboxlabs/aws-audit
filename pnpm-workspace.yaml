@@ -9,7 +9,6 @@ catalogs:
   aws-powertools:
     "@aws-lambda-powertools/batch": ^2.32.0
     "@aws-lambda-powertools/commons": ^2.32.0
-    "@aws-lambda-powertools/event-handler": ^2.32.0
     "@aws-lambda-powertools/logger": ^2.32.0
 
   aws-sdk:
@@ -17,20 +16,15 @@ catalogs:
     "@aws-sdk/client-eventbridge": ^3.750.0
     "@aws-sdk/util-dynamodb": ^3.750.0
 
-  middleware:
-    "@middy/core": ^6.4.5
-
   utilities:
     ksuid: ^3.0.0
     lodash.merge: ^4.6.2
-    qs: ^6.14.0
     zod: ^4.0.0
 
   build:
     typescript: ^5.9.3
     "@tsconfig/node22": ^22.0.1
     ts-node: ^10.9.2
-    esbuild: ^0.23.1
     "@commitlint/cli": ^19.8.1
     "@commitlint/config-conventional": ^19.8.1
 
@@ -38,7 +32,6 @@ catalogs:
     "@types/aws-lambda": ^8.10.156
     "@types/lodash.merge": ^4.6.9
     "@types/node": ^22.15.0
-    "@types/qs": ^6.9.18
 
   cdk:
     aws-cdk-lib: 2.276.0
