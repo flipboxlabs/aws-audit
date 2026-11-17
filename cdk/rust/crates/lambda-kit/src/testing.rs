@@ -1,10 +1,12 @@
 //! Helpers for testing functions built on this crate.
 
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Once};
 
 use serde_json::{Map, Value};
-use tracing::subscriber::DefaultGuard;
+use tracing::span::{Attributes, Id, Record};
+use tracing::subscriber::{DefaultGuard, Interest};
+use tracing::{Event, Metadata, Subscriber};
 use tracing_subscriber::Registry;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -36,13 +38,24 @@ impl LogCapture {
 
     /// Starts capturing, with `service` as the `service` key.
     pub fn with_service(service: Option<&str>) -> Self {
+        // Tests run on parallel threads, most without a capture. A log callsite one
+        // of them reaches first would be cached as uninteresting everywhere, so this
+        // capture would miss its lines; a global default that's interested
+        // "sometimes" keeps each callsite asking the current thread's subscriber
+        static UNDECIDED: Once = Once::new();
+        UNDECIDED.call_once(|| {
+            let _ = tracing::subscriber::set_global_default(Undecided);
+        });
+
         let buffer = Buffer::default();
         let subscriber =
             Registry::default().with(logging::layer(service.map(str::to_owned), buffer.clone()));
+        let guard = tracing::subscriber::set_default(subscriber);
+        tracing::callsite::rebuild_interest_cache();
 
         LogCapture {
             buffer,
-            _guard: tracing::subscriber::set_default(subscriber),
+            _guard: guard,
         }
     }
 
@@ -50,6 +63,33 @@ impl LogCapture {
     pub fn lines(&self) -> Vec<Map<String, Value>> {
         self.buffer.lines()
     }
+}
+
+/// Records nothing, but never lets a callsite be cached as uninteresting.
+struct Undecided;
+
+impl Subscriber for Undecided {
+    fn register_callsite(&self, _: &'static Metadata<'static>) -> Interest {
+        Interest::sometimes()
+    }
+
+    fn enabled(&self, _: &Metadata<'_>) -> bool {
+        false
+    }
+
+    fn new_span(&self, _: &Attributes<'_>) -> Id {
+        Id::from_u64(1)
+    }
+
+    fn record(&self, _: &Id, _: &Record<'_>) {}
+
+    fn record_follows_from(&self, _: &Id, _: &Id) {}
+
+    fn event(&self, _: &Event<'_>) {}
+
+    fn enter(&self, _: &Id) {}
+
+    fn exit(&self, _: &Id) {}
 }
 
 /// Where captured lines are written.
