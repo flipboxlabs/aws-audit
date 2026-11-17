@@ -5,10 +5,88 @@
 //! sent, and [`answer`] reads a response back in the fixtures' shape, so the two
 //! compare as values (see `contract/README.md`).
 
+use std::sync::Arc;
+
+use aws_audit::testing::{Recorder, compare_calls, fixtures};
 use lambda_http::http::header::CONTENT_TYPE;
 use lambda_http::request::LambdaRequest;
 use lambda_http::{Body, Request, Response};
+use lambda_kit::http::Router;
 use serde_json::{Map, Value, json};
+
+/// A replayed fixture: the answer, in the fixtures' shape, and how the run
+/// differed from the fixture.
+#[derive(Debug)]
+pub struct Replay {
+    /// `{statusCode, contentType, body}`.
+    pub answer: Value,
+    /// One message per difference in the calls, the response, or the 200 body's
+    /// schema; empty when it matches.
+    pub failures: Vec<String>,
+}
+
+/// Runs a fixture through the router `router` builds on a [`Recorder`] that
+/// replays the fixture's calls.
+///
+/// The calls must match the fixture's and the answer its `response`; a 200's body
+/// must also follow its route's schema in `contract/schemas`.
+pub async fn replay<S: Send + Sync + 'static>(
+    name: &str,
+    fixture: &Value,
+    router: impl FnOnce(&Arc<Recorder>) -> Router<S>,
+) -> Replay {
+    let calls = fixture["calls"].as_array().map_or(&[][..], Vec::as_slice);
+    let recorder = Recorder::replaying(calls);
+    let answer = answer(&router(&recorder).handle(request(fixture)).await);
+
+    let mut failures = compare_calls(name, &recorder.calls(), calls);
+    if let Some(response) = fixture.get("response") {
+        failures.extend(compare_response(name, &answer, response));
+    }
+    if answer["statusCode"] == 200
+        && let Some(schema) = response_schema(fixture["route"].as_str().unwrap_or_default())
+    {
+        failures.extend(check_response_schema(name, schema, &answer["body"]));
+    }
+
+    Replay { answer, failures }
+}
+
+/// Replays every fixture in `contract/fixtures/{dir}` (see [`replay`]) and
+/// panics with every difference.
+pub async fn replay_fixtures<S: Send + Sync + 'static>(
+    dir: &str,
+    router: impl Fn(&Arc<Recorder>) -> Router<S>,
+) {
+    let fixtures = fixtures(dir);
+    assert!(!fixtures.is_empty(), "no fixtures in {dir}");
+
+    let mut failures = Vec::new();
+    for (name, fixture) in &fixtures {
+        failures.extend(replay(name, fixture, &router).await.failures);
+    }
+
+    assert!(
+        failures.is_empty(),
+        "{} mismatches in {} fixtures:\n\n{}",
+        failures.len(),
+        fixtures.len(),
+        failures.join("\n\n")
+    );
+}
+
+/// The `contract/schemas` response schema a route's 200s follow.
+fn response_schema(route: &str) -> Option<&'static str> {
+    match route {
+        "GET /config" => Some("config"),
+        "GET /status/{status}" => Some("status"),
+        "GET /trace/{trace}" => Some("trace"),
+        "GET /apps/{app}/objects/{object}" => Some("objects"),
+        "GET /apps/{app}/objects/{object}/{item}" => Some("items"),
+        "GET /apps/{app}/objects/{object}/{item}/{audit}" => Some("detail"),
+        _ => None,
+    }
+}
 
 /// The request a fixture describes, as API Gateway delivers it for the fixture's
 /// `route` (e.g. `GET /status/{status}`).

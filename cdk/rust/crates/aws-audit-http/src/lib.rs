@@ -8,10 +8,10 @@
 use std::fmt;
 
 use aws_audit::AuditConfig;
-use aws_audit::model::Status;
+use aws_audit::model::{Audit, Status};
 use aws_audit::pagination::Pagination;
-use aws_audit::service::ServiceError;
-use aws_audit::storage::StorageError;
+use aws_audit::service::{AuditService, ServiceError};
+use aws_audit::storage::{Identifiers, StorageError};
 use lambda_kit::http::{self, HttpError, HttpRequest, Issue, Issues};
 
 #[cfg(feature = "testing")]
@@ -92,6 +92,66 @@ pub fn pagination(request: &HttpRequest, issues: &mut Issues) -> Pagination {
     }
 }
 
+/// The `{app}` and `{object}` path parameters every `/apps/{app}/objects/{object}`
+/// route has.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjectPath {
+    /// `{app}`, one the config lists.
+    pub app: String,
+    /// `{object}`, a resource type the config lists.
+    pub resource_type: String,
+}
+
+impl ObjectPath {
+    /// The path's app and resource type, or `None` after recording what's wrong
+    /// with them in `issues`.
+    pub fn from_request(
+        config: &AuditConfig,
+        request: &HttpRequest,
+        issues: &mut Issues,
+    ) -> Option<Self> {
+        let app = issues.check(["path", "app"], app(config, request.param("app")));
+        let resource_type = issues.check(
+            ["path", "object"],
+            resource_type(config, request.param("object")),
+        );
+
+        Some(ObjectPath {
+            app: app?,
+            resource_type: resource_type?,
+        })
+    }
+
+    /// The identifiers of audit `id` under this path.
+    pub fn audit(&self, id: &str) -> Identifiers {
+        Identifiers {
+            tenant_id: None,
+            app: self.app.clone(),
+            resource_type: self.resource_type.clone(),
+            id: id.to_owned(),
+        }
+    }
+}
+
+/// The audit at `identifiers`, as `/apps/{app}/objects/{object}/{item}/{audit}`
+/// addresses it: a 404 `Audit not found` when it's missing, or when its target
+/// is another item than `item`. The lookup itself ignores `{item}`. A target
+/// without an id can't be told apart, so any `item` finds it.
+pub async fn audit_of_item(
+    service: &AuditService,
+    identifiers: &Identifiers,
+    item: &str,
+) -> http::Result<Audit> {
+    let audit = service.get_item(identifiers).await.map_err(service_error)?;
+
+    match &audit.target.id {
+        Some(id) if id.to_key() != item => Err(HttpError::not_found(NOT_FOUND).into()),
+        _ => Ok(audit),
+    }
+}
+
+const NOT_FOUND: &str = "Audit not found";
+
 /// An audit operation's failure as an HTTP error:
 ///
 /// - a missing audit is a 404 `Audit not found`;
@@ -99,7 +159,7 @@ pub fn pagination(request: &HttpRequest, issues: &mut Issues) -> Pagination {
 /// - anything else is a logged 500.
 pub fn service_error(error: ServiceError) -> http::Error {
     match error {
-        ServiceError::NotFound(_) => HttpError::not_found("Audit not found").into(),
+        ServiceError::NotFound(_) => HttpError::not_found(NOT_FOUND).into(),
         ServiceError::Storage(StorageError::InvalidNextToken(_)) => {
             HttpError::validation(vec![Issue {
                 message: "Invalid pagination token".to_owned(),

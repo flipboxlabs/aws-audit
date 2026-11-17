@@ -9,6 +9,7 @@ use lambda_kit::retry::{Backoff, Jitter, RandomJitter};
 use serde_json::json;
 
 use crate::js;
+use crate::model::EventBridgeEvent;
 use crate::upsert::UpsertAudit;
 
 /// The source of audit events.
@@ -97,6 +98,47 @@ impl AuditEventBus {
             .collect();
 
         self.put_events_with_retry(entries).await
+    }
+
+    /// Sends an audit's recorded event again, in one `PutEvents` without retries
+    /// (`putEventsOrThrow` in the TypeScript rerun handler): a rerun answers its
+    /// caller, who can retry. The detail is sent as stored, byte for byte, and
+    /// left out when there's none.
+    ///
+    /// Fails when the call fails, or the entry comes back rejected or not at all.
+    pub async fn resend(
+        &self,
+        event: &EventBridgeEvent,
+    ) -> Result<PutEventsResultEntry, PutEventsError> {
+        let entry = PutEventsRequestEntry::builder()
+            .set_source(event.source.clone())
+            .event_bus_name(&self.bus_name)
+            .set_detail(event.detail.clone())
+            .set_detail_type(event.detail_type.clone())
+            .build();
+
+        let output = self
+            .client
+            .put_events()
+            .entries(entry)
+            .send()
+            .await
+            .map_err(|error| PutEventsError {
+                message: "PutEvents failed".to_owned(),
+                failed_entries: Vec::new(),
+                results: Vec::new(),
+                cause: Some(Box::new(error.into())),
+            })?;
+
+        match output.entries().first() {
+            Some(result) if result.error_code().is_none() => Ok(result.clone()),
+            result => Err(PutEventsError {
+                message: "EventBridge accepted 0 of 1 events after 1 attempt".to_owned(),
+                failed_entries: result.cloned().into_iter().collect(),
+                results: output.entries().to_vec(),
+                cause: None,
+            }),
+        }
     }
 
     /// Sends entries, 10 per `PutEvents`. Entries rejected with a retryable code
