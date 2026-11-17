@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.10.1](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.10.0...cdk-v1.10.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* **cdk:** remove the Node handlers and the dependencies only they used ([a7aee0a](https://github.com/flipboxlabs/aws-audit/commit/a7aee0aaf927355b792da2b0a8300118811cc576)), closes [#144](https://github.com/flipboxlabs/aws-audit/issues/144) [#93](https://github.com/flipboxlabs/aws-audit/issues/93)
+* **cdk:** remove the Node handlers and their dependencies ([c161319](https://github.com/flipboxlabs/aws-audit/commit/c16131964a8c7acc6ad8fdfc9d95510bebaa3888))
+
 ## [1.10.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.9.0...cdk-v1.10.0) (2026-11-17)
 
 
