@@ -88,7 +88,9 @@ The subscription Lambda is a Rust binary (`provided.al2023`, arm64) that ships p
 
 ### DynamoDBConstruct
 
-DynamoDB table for audit storage with optimized indexes for querying by app, resource, and trace.
+The audit table, `{ENV}-{service}-Audit-v2`, retained when removed. Each audit is one item, keyed by its target and id; a copy of its summary sits in the same partition for each related resource with an id, so it lists under that resource too. Four global secondary indexes on multi-attribute keys serve the listings, each projecting the audit summary: by resource type, by resource, by status and by trace.
+
+`table` grants cover the indexes. Upgrading from 1.x replaces the table; see [Upgrading from 1.x](#upgrading-from-1x).
 
 ### EventBridgeConstruct
 
@@ -101,18 +103,18 @@ REST API for querying audits by resource, status, or trace ID. Every route requi
 | Method | Path                                              | Description                                                     |
 | ------ | ------------------------------------------------- | --------------------------------------------------------------- |
 | `GET`  | `/config`                                         | The deployment's apps, resource types, statuses and CDK version |
-| `GET`  | `/apps/{app}/objects/{type}`                      | Audits for a resource type                                      |
-| `GET`  | `/apps/{app}/objects/{type}/{item}`               | Audits for a resource                                           |
+| `GET`  | `/apps/{app}/objects/{type}`                      | Summaries of a resource type's audits, newest first             |
+| `GET`  | `/apps/{app}/objects/{type}/{item}`               | Summaries of a resource's audits, newest first                  |
 | `GET`  | `/apps/{app}/objects/{type}/{item}/{audit}`       | A single audit                                                  |
 | `POST` | `/apps/{app}/objects/{type}/{item}/{audit}/rerun` | Rerun an audit's event                                          |
-| `GET`  | `/status/{status}`                                | Audits by status                                                |
-| `GET`  | `/trace/{trace}`                                  | Audits by trace ID                                              |
+| `GET`  | `/status/{status}`                                | Summaries of a status's audits, newest first                    |
+| `GET`  | `/trace/{trace}`                                  | Summaries of a trace's audits, by stage                         |
 
-An audit's `trace` is the trace it was written with, and is omitted when it has none. `GET /apps/{app}/objects/{type}/{item}` and `GET /trace/{trace}` rebuild it from index keys, so there a trace written with stage `0` (`abc:0`) comes back as the equivalent `abc`. `GET /status/{status}` omits `trace`, because the status index doesn't project it; fetch the single audit to read it.
+Every listing returns audit summaries: `id`, `tenantId`, `status`, `tier`, `operation`, `message`, `target`, `source`, `rerunable`, `trace`, `createdAt` and `updatedAt`. Fetch the single audit for its `context`, `event`, `error` and `attempts`. Listings are newest first; `GET /trace/{trace}` lists by trace stage, then oldest first. An audit's `trace` is the trace it was written with, and is omitted when it has none.
 
 Getting or rerunning a single audit answers `404` when `{audit}` doesn't exist or belongs to a resource other than `{item}`. A rerun sends the audit's recorded event once, with its `detail` exactly as stored, and answers `204`. It answers `400` when the audit isn't rerunable, and `500` when EventBridge doesn't accept the event; the caller can retry. An audit that lists a resource in `resources` also appears in that resource's listing, with the audit's `id` and its target as the `source`; fetch or rerun it under the source: `/apps/{source.app}/objects/{source.type}/{source.id}/{id}`.
 
-`GET /status/{status}` and `GET /trace/{trace}` take `filter[app]` and `filter[resourceType]` query parameters. A filter matches an audit's target or any of its additional `resources`, and the audit is returned with its own target. Each audit appears once per page, but it can appear again on another page when more than one of its resources matches.
+Every listing takes `filter[operation]` (an exact operation name) and `filter[tier]` (`1`, `2` or `3`). `GET /status/{status}` and `GET /trace/{trace}` also take `filter[app]` and `filter[resourceType]`, which match an audit's target or any of its additional `resources`; the audit is returned once, with its own target. Filters apply after a page is read, so a filtered page can hold fewer items than `pagination[pageSize]`, or none, while its `nextToken` continues the listing.
 
 Every route runs as a prebuilt Rust binary, like the subscription Lambda. Every route answers errors as `{statusCode, error, message}`, and a `422` lists each invalid input under `details.issues`, with its location as `path` (e.g. `["query", "filter[app]"]`).
 
@@ -139,6 +141,26 @@ type CDKConfig = {
 
 - `aws-cdk-lib` >= 2.135.0
 - `constructs` >= 10.3.0
+
+## Upgrading from 1.x
+
+2.0 stores audits in a new table, `{ENV}-{service}-Audit-v2`: the 1.x table's local secondary indexes can't be removed, and its listings couldn't sort by creation time. Upgrade `@flipboxlabs/aws-audit-cdk` and `@flipboxlabs/aws-audit-sdk` together, in every app that uses the SDK, since 2.0 reads and writes only the new table.
+
+1. Deploy. The new table is created empty and the Lambdas switch to it; the 1.x table (`{ENV}-{service}-Audit`) is retained, not deleted.
+2. Copy the 1.x audits with the SDK's `aws-audit-migrate`, with credentials for the account and region:
+
+   ```bash
+   npx -p @flipboxlabs/aws-audit-sdk aws-audit-migrate \
+     --from PROD-Orders-Audit --to PROD-Orders-Audit-v2 --dry-run
+   npx -p @flipboxlabs/aws-audit-sdk aws-audit-migrate \
+     --from PROD-Orders-Audit --to PROD-Orders-Audit-v2
+   ```
+
+   It prints a JSON report: audits and related-resource copies written, those already in the new table (left alone), and any items that weren't valid audits. Writes are conditional, so it can be run again.
+
+3. Once the listings look right, delete the 1.x table yourself.
+
+Run the migration soon after deploying: until it finishes, listings hold only the audits written since. A retry of a 1.x audit in that window starts a new audit in the new table, which the migration then leaves as it is.
 
 ## License
 

@@ -92,6 +92,39 @@ try {
 
 `AuditRepository.getItem` resolves `undefined` only when the item does not exist; any other failure rejects.
 
+## Listing
+
+`AuditService` lists audits by resource type (`listObjects`), resource
+(`listItems`), status (`listByStatus`) and trace (`listTraceItems`). Each returns
+a page of `AuditSummary` (no `context`, `event`, `error` or `attempts`; `getItem`
+returns the whole audit), newest first, or by stage then oldest first for a trace.
+Each takes `operation` and `tier` filters; the status and trace listings also take
+`app` and `resource` (`type`, and `id` together with both), which match an
+audit's target or any of its related resources.
+
+```typescript
+const { items, pagination } = await service.listByStatus(
+  { status: "fail", app: "Orders", resource: { type: "Order" }, tier: 1 },
+  { pageSize: 50 },
+);
+```
+
+Filters apply after a page is read, so a filtered page can hold fewer items than
+its size, or none, while `pagination.nextToken` continues the listing.
+
+## Migrating from 1.x
+
+2.0 stores audits in a new table, `{ENV}-{service}-Audit-v2`. After deploying
+`@flipboxlabs/aws-audit-cdk` 2.0, copy the 1.x audits with the bundled CLI:
+
+```bash
+npx -p @flipboxlabs/aws-audit-sdk aws-audit-migrate --from PROD-Orders-Audit --to PROD-Orders-Audit-v2
+```
+
+`--dry-run` reads and transforms without writing. The migration is also
+available as `migrate` from `@flipboxlabs/aws-audit-sdk/migrate`. See the
+[CDK upgrade steps](../cdk/README.md#upgrading-from-1x).
+
 ## Features
 
 - Audit logging with structured data

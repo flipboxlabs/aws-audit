@@ -12,9 +12,9 @@ crates/lambda-kit       Building blocks any Rust Lambda can use, the way the Typ
 crates/aws-audit        The audit core: model, config, names, table layout, pagination
                         tokens, and the DynamoDB repository, EventBridge publisher and
                         service the Lambdas call
-crates/aws-audit-http   What the REST Lambdas share: the pagination query, checks
-                        against the configured apps, resource types and statuses, and
-                        audit errors as HTTP errors
+crates/aws-audit-http   What the REST Lambdas share: the pagination and filter
+                        queries, checks against the configured apps, resource types
+                        and statuses, and audit errors as HTTP errors
 lambdas/<name>          One binary per Lambda. The directory, package and binary share
                         the name; RustFunctionFactory runs it by that name
 lambdas/subscription    The CloudWatch Logs subscription (CloudWatchConstruct)
