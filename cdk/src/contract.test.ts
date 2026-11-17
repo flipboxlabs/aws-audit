@@ -8,10 +8,9 @@
  * - `fixtures/layer`: the `audit-config.json` the config layer writes for the
  *   Rust Lambdas.
  *
- * The HTTP and subscription fixtures, the request schemas and
- * `config.response` were recorded from the Node handlers, which are gone. They
- * belong to the Rust Lambdas now and change by hand along with them (see
- * `contract/README.md`).
+ * The HTTP and subscription fixtures and `config.response` were recorded from
+ * the Node handlers, which are gone. They belong to the Rust Lambdas now and
+ * change by hand along with them (see `contract/README.md`).
  *
  * The committed files are file snapshots, so this test fails when the SDK or the
  * layer drifts from them. Regenerate with `pnpm contract:update`.
