@@ -80,6 +80,19 @@ const v141 = await run("@flipboxlabs/aws-audit-sdk", "v141", [
     target: job,
     resources: [{ app: "CRM", type: "Contact", id: "8" }],
   },
+  // Its copy's SK ends as an own-target copy's would, job#Jobs.Job#7#Jobs.Job#1
+  {
+    ...base,
+    id: "own",
+    target: job,
+    resources: [{ app: "Jobs", type: "Job", id: "7#Jobs.Job#1" }],
+  },
+  // Without an id: the writer generates the audit's, but keys its copy undefined#CRM.Contact#9
+  {
+    ...base,
+    target: { app: "Jobs", type: "Job", id: "2" },
+    resources: [{ app: "CRM", type: "Contact", id: "9" }],
+  },
   // Empty strings, which the writer stores as NULL
   {
     ...base,
@@ -94,6 +107,11 @@ const v141 = await run("@flipboxlabs/aws-audit-sdk", "v141", [
 
 const v180 = await run("sdk18", "v180", [
   { ...base, id: "job", target: job, resources: [{ app: "CRM", type: "Contact", id: "7" }] },
+  {
+    ...base,
+    target: { app: "Jobs", type: "Job", id: "2" },
+    resources: [{ app: "CRM", type: "Contact", id: "9" }],
+  },
 ]);
 
 console.log(JSON.stringify({ "1.4.1": v141, "1.8.0": v180 }, null, 2));

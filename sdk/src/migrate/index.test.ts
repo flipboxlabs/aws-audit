@@ -1,5 +1,6 @@
 import {
   ConditionalCheckFailedException,
+  DeleteItemCommand,
   type DynamoDBClient,
   GetItemCommand,
   PutItemCommand,
@@ -10,6 +11,7 @@ import {
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { relatedSortKey } from "../repository.js";
 import { migrate } from "./index.js";
 
 const FROM = "TEST-Audit";
@@ -75,14 +77,38 @@ const conditionFailed = () =>
 
 /**
  * A client whose scan returns `pages`, whose reads find the items on them (or in
- * `v2`, for the v2 table), and whose writes `reject` can refuse with a failed
- * condition.
+ * the v2 table, which starts as `v2`), and whose writes `reject` can refuse with a
+ * failed condition. The v2 table keeps the writes, checking the conditions on keys
+ * and revisions the migration sets; a merge's own condition is left to `reject`.
  */
 const stubClient = (
   pages: Record<string, unknown>[][],
   reject: (command: PutItemCommand | UpdateItemCommand) => boolean = () => false,
   v2: Record<string, unknown>[] = [],
 ) => {
+  const table = v2.map((item) => structuredClone(item));
+  const find = (key: Record<string, unknown>) =>
+    table.find((item) => item.PK === key.PK && item.SK === key.SK);
+  const holds = (
+    condition: string | undefined,
+    item: Record<string, unknown> | undefined,
+    values: Record<string, unknown>,
+  ) => {
+    switch (condition) {
+      case "attribute_not_exists(#pk)":
+        return !item;
+      case "attribute_exists(#pk)":
+        return !!item;
+      case "attribute_exists(#pk) AND (attribute_not_exists(#revision) OR #revision <= :revision)":
+        return (
+          !!item &&
+          (item.revision === undefined || Number(item.revision) <= Number(values[":revision"]))
+        );
+      default:
+        return true;
+    }
+  };
+
   const send = vi.fn(async (command: unknown) => {
     if (command instanceof ScanCommand) {
       const page = command.input.ExclusiveStartKey
@@ -94,23 +120,63 @@ const stubClient = (
       };
     }
     if (command instanceof GetItemCommand) {
-      const { PK, SK } = unmarshall(command.input.Key!);
-      const items = command.input.TableName === TO ? v2 : pages.flat();
-      const item = items.find((item) => item.PK === PK && item.SK === SK);
+      const key = unmarshall(command.input.Key!);
+      const item =
+        command.input.TableName === TO
+          ? find(key)
+          : pages.flat().find(({ PK, SK }) => PK === key.PK && SK === key.SK);
       return { Item: item && marshall(item, { removeUndefinedValues: true }) };
     }
     if (command instanceof QueryCommand) {
       const { ":pk": PK } = unmarshall(command.input.ExpressionAttributeValues!);
-      const copies = v2.filter((item) => item.PK === PK && String(item.SK).startsWith("related#"));
+      const copies = table.filter(
+        (item) => item.PK === PK && String(item.SK).startsWith("related#"),
+      );
       return { Items: copies.map(({ target }) => marshall({ target })) };
     }
     if (reject(command as PutItemCommand | UpdateItemCommand)) {
       throw conditionFailed();
     }
-    return {};
+
+    const { input } = command as PutItemCommand | UpdateItemCommand | DeleteItemCommand;
+    const values = input.ExpressionAttributeValues
+      ? unmarshall(input.ExpressionAttributeValues)
+      : {};
+    const key = unmarshall("Item" in input ? input.Item! : input.Key!);
+    const item = find(key);
+    if (!holds(input.ConditionExpression, item, values)) {
+      throw conditionFailed();
+    }
+    if (command instanceof PutItemCommand) {
+      table.splice(item ? table.indexOf(item) : table.length, item ? 1 : 0, key);
+      return {};
+    }
+    if (command instanceof DeleteItemCommand) {
+      if (item) table.splice(table.indexOf(item), 1);
+      return {};
+    }
+
+    // SET #name = :value, … and ADD #name :set
+    const names = (command as UpdateItemCommand).input.ExpressionAttributeNames!;
+    const [set = "", add] = String((command as UpdateItemCommand).input.UpdateExpression)
+      .replace(/^SET /, "")
+      .split("ADD ");
+    const updated = item!;
+    for (const clause of set.split(", ").filter(Boolean)) {
+      const [name, value] = clause.trim().split(" = ");
+      updated[names[name]] = values[value];
+    }
+    if (add) {
+      const [name, value] = add.trim().split(" ");
+      updated[names[name]] = new Set([
+        ...((updated[names[name]] as Set<string>) ?? []),
+        ...(values[value] as Set<string>),
+      ]);
+    }
+    return { Attributes: marshall(updated, { removeUndefinedValues: true }) };
   });
 
-  return { client: { send } as unknown as DynamoDBClient, send };
+  return { client: { send } as unknown as DynamoDBClient, send, table };
 };
 
 const commands = <T>(send: ReturnType<typeof vi.fn>, type: new (...args: never[]) => T): T[] =>
@@ -223,18 +289,29 @@ describe("migrate", () => {
       ttl: 1775099045,
     });
 
-    // After every audit is written, whichever page it was on
+    // After every audit is written, whichever page it was on, then its copies from it
     const [update] = commands(send, UpdateItemCommand);
-    expect(send.mock.calls.at(-1)?.[0]).toBe(update);
+    const calls = send.mock.calls.map(([command]) => command);
+    expect(calls.slice(calls.indexOf(update))).toEqual([
+      update,
+      expect.any(QueryCommand),
+      expect.any(PutItemCommand),
+    ]);
     expect(update.input).toMatchObject({
       TableName: TO,
       Key: marshall({ PK: "-#App1#Order#audit-1", SK: "audit" }),
       UpdateExpression: "ADD #scopes :scopes",
       ConditionExpression: "attribute_exists(#pk)",
       ExpressionAttributeNames: { "#scopes": "scopes", "#pk": "PK" },
+      ReturnValues: "ALL_NEW",
     });
     expect(unmarshall(update.input.ExpressionAttributeValues!)).toEqual({
       ":scopes": new Set(["TestApp", "TestApp#User", "*#User", "TestApp#User#user-1"]),
+    });
+    expect((calls.at(-2) as QueryCommand).input.ConsistentRead).toBe(true);
+    expect(unmarshall((calls.at(-1) as PutItemCommand).input.Item!)).toEqual({
+      ...copy,
+      revision: 1,
     });
     expect(report).toMatchObject({
       scanned: 2,
@@ -244,9 +321,9 @@ describe("migrate", () => {
     });
   });
 
-  it("gives a copy its audit's createdAt, which the earlier table didn't keep on it", async () => {
+  it("puts each copy again from its audit, with its createdAt, which the earlier table didn't keep on it", async () => {
     const EARLIER = "2026-01-01T00:00:00.000Z";
-    const { client, send } = stubClient([
+    const { client, table } = stubClient([
       [
         v1Copy({ createdAt: NOW }),
         v1Copy({
@@ -254,10 +331,9 @@ describe("migrate", () => {
           target: { app: "TestApp", type: "Order", id: "order-9" },
         }),
         v1Copy({ tenantId: "tenant-a", createdAt: NOW }),
-        v1Copy({ SK: "audit-2#TestApp.User#user-1", createdAt: NOW }),
       ],
       [
-        v1Audit({ createdAt: EARLIER }),
+        v1Audit({ createdAt: EARLIER, message: "Order failed" }),
         v1Audit({
           PK: "tenant-a#App1.Order",
           tenantId: "tenant-a",
@@ -268,42 +344,12 @@ describe("migrate", () => {
 
     await migrate({ client, from: FROM, to: TO });
 
-    const copies = putItems(send).filter(({ SK }) => SK !== "audit");
-    expect(copies.map(({ PK, createdAt }) => [PK, createdAt])).toEqual([
-      ["-#App1#Order#audit-1", EARLIER],
-      ["-#App1#Order#audit-1", EARLIER],
-      ["tenant-a#App1#Order#audit-1", "2025-06-01T00:00:00.000Z"],
-      // Without its audit, a copy keeps its own
-      ["-#App1#Order#audit-2", NOW],
+    const copies = table.filter(({ related }) => related);
+    expect(copies.map(({ PK, createdAt, message }) => [PK, createdAt, message])).toEqual([
+      ["-#App1#Order#audit-1", EARLIER, "Order failed"],
+      ["-#App1#Order#audit-1", EARLIER, "Order failed"],
+      ["tenant-a#App1#Order#audit-1", "2025-06-01T00:00:00.000Z", undefined],
     ]);
-    // Read from both tables, once per audit
-    expect(
-      commands(send, GetItemCommand).map(({ input }) => [input.TableName, unmarshall(input.Key!)]),
-    ).toEqual([
-      [FROM, { PK: "App1.Order", SK: "audit-1" }],
-      [TO, { PK: "-#App1#Order#audit-1", SK: "audit" }],
-      [FROM, { PK: "tenant-a#App1.Order", SK: "audit-1" }],
-      [TO, { PK: "tenant-a#App1#Order#audit-1", SK: "audit" }],
-      [FROM, { PK: "App1.Order", SK: "audit-2" }],
-      [TO, { PK: "-#App1#Order#audit-2", SK: "audit" }],
-    ]);
-  });
-
-  it("gives a copy the v2 audit's createdAt when an upsert since the deploy gave it the earlier", async () => {
-    const EARLIER = "2026-01-01T00:00:00.000Z";
-    // The copy is on the page after its audit, which a merge gave the v2 createdAt
-    const { client, send } = stubClient(
-      [[v1Audit({ createdAt: NOW })], [v1Copy({ createdAt: NOW })]],
-      () => false,
-      [{ PK: "-#App1#Order#audit-1", SK: "audit", createdAt: EARLIER }],
-    );
-
-    await migrate({ client, from: FROM, to: TO });
-
-    const copy = putItems(send).find(({ SK }) => SK !== "audit");
-    expect(copy?.createdAt).toBe(EARLIER);
-    const reads = commands(send, GetItemCommand).filter(({ input }) => input.TableName === TO);
-    expect(reads.map(({ input }) => input.ConsistentRead)).toEqual([true]);
   });
 
   describe("a copy written before SDK 1.4.2", () => {
@@ -348,11 +394,13 @@ describe("migrate", () => {
     });
 
     it("keeps its resource id as its SK holds it, as text", async () => {
-      const { client, send } = stubClient([[v1LegacyCopy({ SK: "audit-1#TestApp.Order#7" })]]);
+      const { client, send } = stubClient([
+        [v1LegacyCopy({ SK: "audit-1#TestApp.Order#7" }), v1Audit()],
+      ]);
 
       await migrate({ client, from: FROM, to: TO });
 
-      expect(putItems(send)[0]).toMatchObject({
+      expect(putItems(send).find(({ related }) => related)).toMatchObject({
         SK: "related#TestApp#Order#7",
         target: { app: "TestApp", type: "Order", id: "7" },
       });
@@ -381,7 +429,7 @@ describe("migrate", () => {
       ]);
     });
 
-    it("is reported when its SK splits no way, or more than one way and none after an audit's id", async () => {
+    it("is reported when its SK names no audit, or it has no source", async () => {
       const { client, send } = stubClient([
         [
           v1LegacyCopy({ SK: "audit-1#TestApp-User#user-1" }),
@@ -396,12 +444,15 @@ describe("migrate", () => {
         "An item without attempts, which isn't an audit, whose SK names neither its target nor a resource after an audit's id";
       expect(report.invalid).toEqual([
         { PK: "App1.Order", SK: "audit-1#TestApp-User#user-1", reason: neither },
-        { PK: "App1.Order", SK: "audit-1#TestApp.User#user-1", reason: neither },
+        {
+          PK: "App1.Order",
+          SK: "audit-1#TestApp.User#user-1",
+          reason: "A related resource's copy needs a source",
+        },
         {
           PK: "App1.Order",
           SK: "audit-9#TestApp.User#x#TestApp.User#1",
-          reason:
-            "A related resource's copy whose SK splits more than one way, none after an audit's id",
+          reason: "A related resource's copy whose SK names no audit in the earlier table",
         },
       ]);
       expect(putItems(send)).toEqual([]);
@@ -409,30 +460,42 @@ describe("migrate", () => {
   });
 
   describe("items as the released SDKs stored them", () => {
-    it("writes SDK 1.4.1's copies under the resources their SKs name, refusing an ambiguous one", async () => {
-      const { client, send } = stubClient([released["1.4.1"]]);
+    it("writes SDK 1.4.1's copies under the resources their SKs name, refusing those without one audit", async () => {
+      const { client, table } = stubClient([released["1.4.1"]]);
 
       const report = await migrate({ client, from: FROM, to: TO });
 
       expect(report).toMatchObject({
-        scanned: 8,
-        audits: { written: 5 },
-        copies: { written: 2, ownTarget: 0 },
+        scanned: 12,
+        audits: { written: 7 },
+        copies: { written: 3, ownTarget: 0 },
         invalid: [
           {
             PK: "Jobs.Job",
             SK: "a#CRM.Contact#7#CRM.Contact#8",
-            reason:
-              "A related resource's copy whose SK splits more than one way after an audit's id",
+            reason: "A related resource's copy whose SK reads as more than one audit's",
+          },
+          // Written for an audit without a given id, whose generated id it doesn't hold
+          {
+            PK: "Jobs.Job",
+            SK: "undefined#CRM.Contact#9",
+            reason: "A related resource's copy whose SK names no audit in the earlier table",
           },
         ],
       });
-      const copies = putItems(send).filter(({ related }) => related);
+      const copies = table.filter(({ related }) => related);
       expect(copies.map(({ id, SK, target, source }) => ({ id, SK, target, source }))).toEqual([
         {
           id: "job",
           SK: "related#CRM#Contact#7",
           target: { app: "CRM", type: "Contact", id: "7" },
+          source: { app: "Jobs", type: "Job", id: "1" },
+        },
+        // Its SK ends as a copy under the audit's own target would
+        {
+          id: "own",
+          SK: relatedSortKey({ app: "Jobs", type: "Job", id: "7#Jobs.Job#1" }),
+          target: { app: "Jobs", type: "Job", id: "7#Jobs.Job#1" },
           source: { app: "Jobs", type: "Job", id: "1" },
         },
         {
@@ -443,7 +506,7 @@ describe("migrate", () => {
         },
       ]);
       // In each audit's partition
-      const audits = putItems(send).filter(({ SK }) => SK === "audit");
+      const audits = table.filter(({ SK }) => SK === "audit");
       for (const copy of copies) {
         expect(audits.find(({ id }) => id === copy.id)?.PK).toBe(copy.PK);
       }
@@ -465,13 +528,13 @@ describe("migrate", () => {
       expect(audit).not.toHaveProperty("message");
     });
 
-    it("writes SDK 1.8.0's copy under its target", async () => {
+    it("writes SDK 1.8.0's copies under their targets", async () => {
       const { client, send } = stubClient([released["1.8.0"]]);
 
       const report = await migrate({ client, from: FROM, to: TO });
 
-      expect(report).toMatchObject({ audits: { written: 1 }, copies: { written: 1 }, invalid: [] });
-      const [copy] = putItems(send).filter(({ related }) => related);
+      expect(report).toMatchObject({ audits: { written: 2 }, copies: { written: 2 }, invalid: [] });
+      const copy = putItems(send).find(({ related, id }) => related && id === "job");
       expect(copy).toMatchObject({
         PK: "-#Jobs#Job#job",
         SK: "related#CRM#Contact#7",
@@ -652,6 +715,42 @@ describe("migrate", () => {
         ttl: 1775999999,
         revision: 2,
       });
+    });
+
+    it("gives its copies the audit as merged, whichever page its copy is on", async () => {
+      const failed = v1Audit({ createdAt: EARLIER, status: "fail" });
+      const copy = v1Copy({ status: "fail" });
+      const run = async (pages: Record<string, unknown>[][]) => {
+        const { client, send, table } = stubClient(pages, () => false, [v2Audit()]);
+        await migrate({ client, from: FROM, to: TO });
+        // Read consistently, so a copy put just before is found
+        for (const query of commands(send, QueryCommand)) {
+          expect(query.input.ConsistentRead).toBe(true);
+        }
+        return table.find(({ related }) => related);
+      };
+
+      const copyFirst = await run([[copy], [failed]]);
+      const auditFirst = await run([[failed], [copy]]);
+
+      expect(copyFirst).toEqual(auditFirst);
+      expect(auditFirst).toMatchObject({ status: "success", createdAt: EARLIER, revision: 2 });
+    });
+
+    it("deletes a copy under its target, from before a retry made that resource its target", async () => {
+      const { client, table } = stubClient([[v1Audit()]], () => false, [
+        v2Audit(given),
+        {
+          PK: "-#App1#Order#audit-1",
+          SK: "related#App1#Order#order-1",
+          target: { app: "App1", type: "Order", id: "order-1" },
+          revision: 1,
+        },
+      ]);
+
+      await migrate({ client, from: FROM, to: TO });
+
+      expect(table.filter(({ related, SK }) => related || SK !== "audit")).toEqual([]);
     });
 
     it("gives its copies the earlier fields the retries left out", async () => {
@@ -888,6 +987,37 @@ describe("migrate", () => {
       },
     ]);
     expect(putItems(send).map(({ PK }) => PK)).toEqual(["-#App1#Order#audit-1"]);
+  });
+
+  it("reports an item whose v2 keys are longer than DynamoDB allows, on a dry run too, and copies the rest", async () => {
+    // Each within the earlier table's limits, but not escaped and joined
+    const tenantId = "t".repeat(1500);
+    const id = "%".repeat(200);
+    const long = v1Audit({ PK: `${tenantId}#App1.Order`, SK: id, id, tenantId });
+    const longCopy = v1Copy({
+      SK: `audit-1#TestApp.User#${"%".repeat(400)}`,
+      target: { app: "TestApp", type: "User", id: "%".repeat(400) },
+    });
+
+    for (const dryRun of [true, false]) {
+      const { client } = stubClient([[long, longCopy, v1Audit()]]);
+
+      const report = await migrate({ client, from: FROM, to: TO, dryRun });
+
+      expect(report.audits.written).toBe(1);
+      expect(report.invalid).toEqual([
+        {
+          PK: long.PK,
+          SK: id,
+          reason: "Its v2 PK would be 2112 bytes, over DynamoDB's 2048-byte limit for a key",
+        },
+        {
+          PK: "TestApp.User",
+          SK: longCopy.SK,
+          reason: "Its v2 SK would be 1221 bytes, over DynamoDB's 1024-byte limit for a key",
+        },
+      ]);
+    }
   });
 
   it("defaults the tier, and takes createdAt from updatedAt, when an earlier audit left them out", async () => {
