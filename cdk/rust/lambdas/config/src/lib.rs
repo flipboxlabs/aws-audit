@@ -1,10 +1,12 @@
-//! The `GET /config` Lambda (`config/handler.ts`): the apps, resource types and
-//! statuses audits may use, and the package version the stack was deployed with.
+//! The `GET /config` Lambda (`config/handler.ts`): the apps, each with its
+//! resource types, and the statuses audits may use, and the package version the
+//! stack was deployed with.
 //!
 //! None of it changes while the Lambda runs, so the body is built once.
 
 use aws_audit::AuditConfig;
 use aws_audit::model::Status;
+use indexmap::IndexMap;
 use lambda_kit::http::{self, HttpRequest, Router};
 use serde::Serialize;
 use std::sync::Arc;
@@ -29,10 +31,8 @@ pub fn version_from_env() -> Result<String, MissingVersion> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigBody {
-    /// The apps audits may target.
-    pub apps: Vec<String>,
-    /// The resource types audits may target.
-    pub resource_types: Vec<String>,
+    /// The apps audits may target, each with its resource types.
+    pub apps: IndexMap<String, Vec<String>>,
     /// Every status.
     pub statuses: Vec<Status>,
     /// The CDK package version.
@@ -44,7 +44,6 @@ impl ConfigBody {
     pub fn new(config: &AuditConfig, version: String) -> Self {
         ConfigBody {
             apps: config.apps.clone(),
-            resource_types: config.resource_types.clone(),
             statuses: Status::ALL.to_vec(),
             version,
         }

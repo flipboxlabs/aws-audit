@@ -49,8 +49,7 @@ export type {
  * @example
  * ```typescript
  * const config = defineAuditConfig({
- *   apps: ['Orders', 'Inventory'] as const,
- *   resourceTypes: ['Order', 'Product'] as const,
+ *   apps: { Orders: ['Order'], Inventory: ['Product'] },
  * });
  *
  * const service = new AuditService(logger, config);

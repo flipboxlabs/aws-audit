@@ -80,8 +80,7 @@ export type StrictLogAuditInput<C extends AuditConfig> = Omit<
  * @example
  * ```typescript
  * const config = defineAuditConfig({
- *   apps: ['Orders', 'Inventory'] as const,
- *   resourceTypes: ['Order', 'Product'] as const,
+ *   apps: { Orders: ['Order'], Inventory: ['Product'] },
  * });
  *
  * const audits = new Audits({ config });

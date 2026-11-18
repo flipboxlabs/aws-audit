@@ -12,7 +12,7 @@
 //! use aws_audit::{AuditConfig, ResourceReference, Status};
 //! use aws_audit::log::{Audits, LogAudit};
 //!
-//! let config = Arc::new(AuditConfig::new(["Orders"], ["Order"]));
+//! let config = Arc::new(AuditConfig::new([("Orders", ["Order"])]));
 //!
 //! let mut audits = Audits::new(config);
 //! audits.add(
@@ -395,7 +395,10 @@ mod tests {
     }
 
     fn config() -> Arc<AuditConfig> {
-        Arc::new(AuditConfig::new(["App1", "TestApp"], ["Order", "User"]))
+        Arc::new(AuditConfig::new([
+            ("App1", ["Order", "User"]),
+            ("TestApp", ["Order", "User"]),
+        ]))
     }
 
     fn audits() -> (Audits, Captured) {

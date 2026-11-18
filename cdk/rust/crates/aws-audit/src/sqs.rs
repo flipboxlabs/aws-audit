@@ -223,7 +223,7 @@ mod tests {
     #[tokio::test]
     async fn audits_each_message_and_reports_failures() {
         let out = Captured::default();
-        let mut audits = Audits::new(Arc::new(AuditConfig::new(["App1"], ["Order"])))
+        let mut audits = Audits::new(Arc::new(AuditConfig::new([("App1", ["Order"])])))
             .with_writer(out.clone())
             .with_disabled(false)
             .with_trace_id("xray");
@@ -291,7 +291,7 @@ mod tests {
     #[tokio::test]
     async fn handles_messages_concurrently_and_reports_in_order() {
         let out = Captured::default();
-        let mut audits = Audits::new(Arc::new(AuditConfig::new(["App1"], ["Order"])))
+        let mut audits = Audits::new(Arc::new(AuditConfig::new([("App1", ["Order"])])))
             .with_writer(out.clone())
             .with_disabled(false);
         let mut batch = SqsEvent::default();

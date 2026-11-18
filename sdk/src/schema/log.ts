@@ -175,8 +175,7 @@ export type LogAuditInput = z.input<typeof _BaseLogAuditSchema>;
  * @example
  * ```typescript
  * const config = defineAuditConfig({
- *   apps: ['Orders', 'Inventory'] as const,
- *   resourceTypes: ['Order', 'Product'] as const,
+ *   apps: { Orders: ['Order'], Inventory: ['Product'] },
  * });
  *
  * const typedSchema = createTypedLogAuditSchema(config.schemas.resourceReference);

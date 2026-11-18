@@ -6,8 +6,7 @@ import type { AuditConfig } from "./config.js";
  * @example
  * ```typescript
  * const config = defineAuditConfig({
- *   apps: ['Orders', 'Inventory'] as const,
- *   resourceTypes: ['Order', 'Product'] as const,
+ *   apps: { Orders: ['Order'], Inventory: ['Product'] },
  * });
  *
  * type App = InferApp<typeof config>; // 'Orders' | 'Inventory'
@@ -16,19 +15,37 @@ import type { AuditConfig } from "./config.js";
 export type InferApp<C extends AuditConfig> = C["_types"]["App"];
 
 /**
- * Extracts the ResourceType type from an AuditConfig.
+ * Extracts the resource types of app `A` from an AuditConfig, or of every app
+ * without `A`.
  *
  * @example
  * ```typescript
  * const config = defineAuditConfig({
- *   apps: ['Orders', 'Inventory'] as const,
- *   resourceTypes: ['Order', 'Product'] as const,
+ *   apps: { Orders: ['Order', 'Customer'], Inventory: ['Product'] },
  * });
  *
- * type ResourceType = InferResourceType<typeof config>; // 'Order' | 'Product'
+ * type OrderType = InferResourceType<typeof config, 'Orders'>; // 'Order' | 'Customer'
+ * type AnyType = InferResourceType<typeof config>; // 'Order' | 'Customer' | 'Product'
  * ```
  */
-export type InferResourceType<C extends AuditConfig> = C["_types"]["ResourceType"];
+export type InferResourceType<
+  C extends AuditConfig,
+  A extends InferApp<C> = InferApp<C>,
+> = C["_types"]["ResourceTypes"][A];
+
+/**
+ * Each app of an AuditConfig with one of its resource types, as a union keyed on
+ * `app`: naming the app narrows `type` to that app's types.
+ *
+ * @example
+ * ```typescript
+ * type Resource = InferResource<typeof config>;
+ * // { app: 'Orders'; type: 'Order' | 'Customer' } | { app: 'Inventory'; type: 'Product' }
+ * ```
+ */
+export type InferResource<C extends AuditConfig> = {
+  [A in InferApp<C>]: { app: A; type: InferResourceType<C, A> };
+}[InferApp<C>];
 
 /**
  * Generic App type - accepts any string.

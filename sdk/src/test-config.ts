@@ -2,11 +2,14 @@ import { defineAuditConfig } from "./config.js";
 
 /**
  * Test configuration for SDK tests.
- * Provides sample apps and resource types for testing.
+ * Provides sample apps and their resource types for testing; TestApp has no
+ * Unknown.
  */
 export const testConfig = defineAuditConfig({
-  apps: ["App1", "TestApp"] as const,
-  resourceTypes: ["Unknown", "User", "Order"] as const,
+  apps: {
+    App1: ["Unknown", "User", "Order"],
+    TestApp: ["User", "Order"],
+  },
 });
 
 /**

@@ -60,12 +60,16 @@ npm install @flipboxlabs/aws-audit-sdk @flipboxlabs/aws-audit-cdk
 import { defineAuditConfig } from "@flipboxlabs/aws-audit-sdk";
 
 export const auditConfig = defineAuditConfig({
-  apps: ["my-app", "my-other-app"],
-  resourceTypes: ["user", "order", "payment"],
+  apps: {
+    Orders: ["Order", "Customer"],
+    Payments: ["Payment", "Customer"],
+  },
 });
 
 export type AuditConfig = typeof auditConfig;
 ```
+
+Each app lists its own resource types: an audit's type must be one of its app's, and naming the app narrows the type in TypeScript. Two apps may share a type's name. App and type names are REST API path segments, so they may hold only letters, digits, `-` and `_`; `defineAuditConfig` and the CDK layer refuse anything else.
 
 ### 3. Deploy infrastructure with CDK
 
@@ -78,7 +82,6 @@ import { EventBridgeConstruct } from "@flipboxlabs/aws-audit-cdk/eventbridge";
 // In your CDK stack, with `config` your CDKConfig
 const { layer } = new ConfigLayerConstruct(this, "AuditConfigLayer", {
   apps: auditConfig.apps,
-  resourceTypes: auditConfig.resourceTypes,
 });
 const { table } = new DynamoDBConstruct(this, "DynamoDB", { config });
 const { eventBus } = new EventBridgeConstruct(this, "EventBridge", { config });
@@ -103,7 +106,7 @@ import { auditConfig } from "./audit-config";
 const audits = new Audits({ config: auditConfig });
 
 export const handler = middy(async (event: Event) => {
-  // Log an audit entry; the app and type are checked against the config
+  // Log an audit entry; the app, and the type against the app's, are checked against the config
   audits.addAudit({
     operation: "createOrder",
     target: { app: "Orders", type: "Order", id: "order-123" },
@@ -154,7 +157,7 @@ GET /trace/{traceId}
 
 Every listing returns audit summaries: `id`, `tenantId`, `status`, `tier`, `operation`, `message`, `target`, `source`, `rerunable`, `trace`, `createdAt` and `updatedAt`. Fetch the single audit for its `context`, `event`, `error` and `attempts`. Listings are newest first; `GET /trace/{trace}` lists by trace stage, then oldest first. An audit's `trace` is the trace it was written with, and is omitted when it has none.
 
-Every listing takes `filter[operation]` (an exact operation name) and `filter[tier]` (`1`, `2` or `3`). `GET /status/{status}` and `GET /trace/{trace}` also take `filter[app]` and `filter[resourceType]`, which match an audit's target or any of its additional `resources`; the audit is returned once, with its own target. Filters apply after a page is read, so a filtered page can hold fewer items than `pagination[pageSize]`, or none, while its `nextToken` continues the listing.
+Every listing takes `filter[operation]` (an exact operation name) and `filter[tier]` (`1`, `2` or `3`). `GET /status/{status}` and `GET /trace/{trace}` also take `filter[app]` and `filter[resourceType]`, which match an audit's target or any of its additional `resources`. With `filter[app]`, the type must be one of that app's; without it, the type matches under every app that has it; the audit is returned once, with its own target. Filters apply after a page is read, so a filtered page can hold fewer items than `pagination[pageSize]`, or none, while its `nextToken` continues the listing.
 
 Getting or rerunning a single audit answers `404` when `{auditId}` doesn't exist or belongs to a resource other than `{resourceId}`. An audit that lists a resource in `resources` also appears in that resource's listing, with the audit's `id` and its target as the `source`; fetch or rerun it under the source: `/apps/{source.app}/objects/{source.type}/{source.id}/{id}`.
 
@@ -162,10 +165,9 @@ Getting or rerunning a single audit answers `404` when `{auditId}` doesn't exist
 
 ```json
 {
-  "apps": ["Orders", "Inventory"],
-  "resourceTypes": ["Order", "Product"],
+  "apps": { "Orders": ["Order", "Customer"], "Payments": ["Payment", "Customer"] },
   "statuses": ["success", "warn", "fail", "skip"],
-  "version": "1.6.0"
+  "version": "2.0.0"
 }
 ```
 

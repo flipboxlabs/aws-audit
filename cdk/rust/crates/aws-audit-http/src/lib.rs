@@ -66,12 +66,27 @@ fn one_of<'a>(
 
 /// The app, if the config lists it.
 pub fn app(config: &AuditConfig, value: &str) -> Result<String, InvalidOption> {
-    one_of(value, config.apps.iter().map(String::as_str))
+    one_of(value, config.apps.keys().map(String::as_str))
 }
 
-/// The resource type, if the config lists it.
-pub fn resource_type(config: &AuditConfig, value: &str) -> Result<String, InvalidOption> {
-    one_of(value, config.resource_types.iter().map(String::as_str))
+/// The resource type, if it's one of `app`'s, or without an app, one of any
+/// app's.
+pub fn resource_type(
+    config: &AuditConfig,
+    app: Option<&str>,
+    value: &str,
+) -> Result<String, InvalidOption> {
+    match app {
+        Some(app) => one_of(
+            value,
+            config
+                .resource_types_of(app)
+                .unwrap_or_default()
+                .iter()
+                .map(String::as_str),
+        ),
+        None => one_of(value, config.resource_types()),
+    }
 }
 
 /// The status, if it is one.
@@ -121,24 +136,31 @@ pub fn list_filter(request: &HttpRequest, issues: &mut Issues) -> ListFilter {
     }
 }
 
-/// The status and trace listings' resource filters: `filter[app]` and
-/// `filter[resourceType]`, which must be configured. Invalid ones are recorded in
+/// The status and trace listings' resource filters: `filter[app]`, which must be
+/// configured, and `filter[resourceType]`, which must be one of that app's types,
+/// or without an app, one of any app's (matching it under every app that has it).
+/// A type isn't checked when the app isn't one. Invalid ones are recorded in
 /// `issues`.
 pub fn resource_filter(
     config: &AuditConfig,
     request: &HttpRequest,
     issues: &mut Issues,
 ) -> ResourceFilter {
-    ResourceFilter {
-        app: request
-            .query(FILTER_APP)
-            .and_then(|value| issues.check(["query", FILTER_APP], app(config, value))),
-        resource_type: request.query(FILTER_RESOURCE_TYPE).and_then(|value| {
+    let app_value = request.query(FILTER_APP);
+    let app = app_value.and_then(|value| issues.check(["query", FILTER_APP], app(config, value)));
+    let resource_type = request
+        .query(FILTER_RESOURCE_TYPE)
+        .filter(|_| app_value.is_none() || app.is_some())
+        .and_then(|value| {
             issues.check(
                 ["query", FILTER_RESOURCE_TYPE],
-                resource_type(config, value),
+                resource_type(config, app.as_deref(), value),
             )
-        }),
+        });
+
+    ResourceFilter {
+        app,
+        resource_type,
         resource_id: None,
     }
 }
@@ -173,10 +195,13 @@ impl ObjectPath {
         issues: &mut Issues,
     ) -> Option<Self> {
         let app = issues.check(["path", "app"], app(config, request.param("app")));
-        let resource_type = issues.check(
-            ["path", "object"],
-            resource_type(config, request.param("object")),
-        );
+        // One of the app's types; unchecked when the app isn't one
+        let resource_type = app.as_deref().and_then(|app| {
+            issues.check(
+                ["path", "object"],
+                resource_type(config, Some(app), request.param("object")),
+            )
+        });
 
         Some(ObjectPath {
             app: app?,
@@ -249,8 +274,32 @@ mod tests {
     #[test]
     fn accepts_configured_values() {
         assert_eq!(app(&config(), "App1"), Ok("App1".to_owned()));
-        assert_eq!(resource_type(&config(), "Order"), Ok("Order".to_owned()));
+        assert_eq!(
+            resource_type(&config(), Some("App1"), "Order"),
+            Ok("Order".to_owned())
+        );
         assert_eq!(status("fail"), Ok(Status::Fail));
+    }
+
+    #[test]
+    fn checks_a_resource_type_against_its_app_or_every_app() {
+        // TestApp has no Unknown; App1 does
+        assert_eq!(
+            resource_type(&config(), Some("TestApp"), "Unknown")
+                .unwrap_err()
+                .to_string(),
+            r#"Invalid option: expected one of "User"|"Order""#
+        );
+        assert_eq!(
+            resource_type(&config(), None, "Unknown"),
+            Ok("Unknown".to_owned())
+        );
+        assert_eq!(
+            resource_type(&config(), None, "Nope")
+                .unwrap_err()
+                .to_string(),
+            r#"Invalid option: expected one of "Unknown"|"User"|"Order""#
+        );
     }
 
     #[test]

@@ -22,8 +22,7 @@ const synth = () => {
   });
   const eventBus = new events.EventBus(stack, "Bus");
   const layer = new ConfigLayerConstruct(stack, "AuditConfigLayer", {
-    apps: ["App1"],
-    resourceTypes: ["Order"],
+    apps: { App1: ["Order"] },
   });
 
   new CloudWatchConstruct(stack, "CloudWatch", {

@@ -19,8 +19,8 @@ fn loads_the_config_the_layer_writes() {
     let config =
         AuditConfig::from_file(&contract_dir().join("fixtures/layer/audit-config.json")).unwrap();
 
-    assert_eq!(config.apps, ["App1", "TestApp"]);
-    assert_eq!(config.resource_types, ["Unknown", "User", "Order"]);
+    assert_eq!(config, aws_audit::testing::contract_config());
+    assert_eq!(config.apps.keys().collect::<Vec<_>>(), ["App1", "TestApp"]);
 }
 
 #[test]

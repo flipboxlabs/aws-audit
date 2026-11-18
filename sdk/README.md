@@ -125,6 +125,19 @@ tenant id is no tenant.
 
 ## Migrating from 1.x
 
+The config lists each app's resource types, replacing the separate `apps` and
+`resourceTypes` lists. An audit's type must be one of its app's, and naming the
+app narrows the type in the typed options (`InferResourceType<typeof config, "Orders">`).
+Names may hold only letters, digits, `-` and `_`, as they are REST API path
+segments; `defineAuditConfig` throws on any other.
+
+```typescript
+// 1.x
+defineAuditConfig({ apps: ["Orders", "Inventory"], resourceTypes: ["Order", "Product"] });
+// 2.0
+defineAuditConfig({ apps: { Orders: ["Order"], Inventory: ["Product"] } });
+```
+
 2.0 stores audits in a new table, `{ENV}-{service}-Audit-v2`. After deploying
 `@flipboxlabs/aws-audit-cdk` 2.0, copy the 1.x audits with the bundled CLI:
 

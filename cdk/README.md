@@ -30,10 +30,9 @@ export class AuditStack extends cdk.NestedStack {
   constructor(scope: Construct, id: string, props: Props) {
     super(scope, id, { description: "Audit" });
 
-    // Create audit config layer with your apps and resource types
+    // Create audit config layer with your apps, each with its resource types
     const auditConfigLayer = new ConfigLayerConstruct(this, "AuditConfigLayer", {
-      apps: ["Orders", "Inventory"],
-      resourceTypes: ["Order", "Product"],
+      apps: { Orders: ["Order", "Customer"], Inventory: ["Product"] },
     });
 
     // DynamoDB (storage)
@@ -67,24 +66,25 @@ export class AuditStack extends cdk.NestedStack {
 
 ### ConfigLayerConstruct
 
-Creates a Lambda layer containing your audit configuration (apps and resource types). This layer is required by all other constructs.
+Creates a Lambda layer containing your audit configuration: each app, with its resource types. This layer is required by all other constructs.
 
 ```typescript
 import { ConfigLayerConstruct } from "@flipboxlabs/aws-audit-cdk/lambda";
 
 const auditConfigLayer = new ConfigLayerConstruct(this, "AuditConfigLayer", {
-  apps: ["Orders", "Inventory"],
-  resourceTypes: ["Order", "Product"],
+  apps: { Orders: ["Order", "Customer"], Inventory: ["Product"] },
 });
 ```
 
-Your own Lambdas can attach `auditConfigLayer.layer` and import `apps` and `resourceTypes` from `AUDIT_CONFIG_LAYER_MODULE_PATH` (`/opt/nodejs/audit-config.mjs`); mark that path external when bundling. The earlier `AUDIT_CONFIG_LAYER_PATH` (`/opt/nodejs/audit-config.js`) still works, but relies on the layer's `nodejs/package.json`, which another layer shipping its own `nodejs/package.json` can replace.
+App and resource type names are REST API path segments, so they may hold only letters, digits, `-` and `_`; synth fails on any other name, or on an app without resource types.
+
+Your own Lambdas can attach `auditConfigLayer.layer` and import `apps` (pass it to `defineAuditConfig({ apps })`) from `AUDIT_CONFIG_LAYER_MODULE_PATH` (`/opt/nodejs/audit-config.mjs`); mark that path external when bundling. The earlier `AUDIT_CONFIG_LAYER_PATH` (`/opt/nodejs/audit-config.js`) still works, but relies on the layer's `nodejs/package.json`, which another layer shipping its own `nodejs/package.json` can replace.
 
 ### CloudWatchConstruct
 
 CloudWatch log subscription that captures audit logs and stores them in DynamoDB.
 
-The subscription Lambda is a Rust binary (`provided.al2023`, arm64) that ships prebuilt in this package, so deploying it needs no Rust toolchain. It reads the apps and resource types from the config layer. Each audit line is stored on its own: lines without an `_audit` are skipped, and an audit that's invalid or can't be stored is logged without failing the rest of the batch.
+The subscription Lambda is a Rust binary (`provided.al2023`, arm64) that ships prebuilt in this package, so deploying it needs no Rust toolchain. It reads the apps and their resource types from the config layer, and refuses an audit whose type isn't one of its app's. Each audit line is stored on its own: lines without an `_audit` are skipped, and an audit that's invalid or can't be stored is logged without failing the rest of the batch.
 
 ### DynamoDBConstruct
 
@@ -100,21 +100,21 @@ EventBridge bus for audit events, enabling event-driven architectures.
 
 REST API for querying audits by resource, status, or trace ID. Every route requires an API key.
 
-| Method | Path                                              | Description                                                     |
-| ------ | ------------------------------------------------- | --------------------------------------------------------------- |
-| `GET`  | `/config`                                         | The deployment's apps, resource types, statuses and CDK version |
-| `GET`  | `/apps/{app}/objects/{type}`                      | Summaries of a resource type's audits, newest first             |
-| `GET`  | `/apps/{app}/objects/{type}/{item}`               | Summaries of a resource's audits, newest first                  |
-| `GET`  | `/apps/{app}/objects/{type}/{item}/{audit}`       | A single audit                                                  |
-| `POST` | `/apps/{app}/objects/{type}/{item}/{audit}/rerun` | Rerun an audit's event                                          |
-| `GET`  | `/status/{status}`                                | Summaries of a status's audits, newest first                    |
-| `GET`  | `/trace/{trace}`                                  | Summaries of a trace's audits, by stage                         |
+| Method | Path                                              | Description                                                      |
+| ------ | ------------------------------------------------- | ---------------------------------------------------------------- |
+| `GET`  | `/config`                                         | The deployment's apps with their types, statuses and CDK version |
+| `GET`  | `/apps/{app}/objects/{type}`                      | Summaries of a resource type's audits, newest first              |
+| `GET`  | `/apps/{app}/objects/{type}/{item}`               | Summaries of a resource's audits, newest first                   |
+| `GET`  | `/apps/{app}/objects/{type}/{item}/{audit}`       | A single audit                                                   |
+| `POST` | `/apps/{app}/objects/{type}/{item}/{audit}/rerun` | Rerun an audit's event                                           |
+| `GET`  | `/status/{status}`                                | Summaries of a status's audits, newest first                     |
+| `GET`  | `/trace/{trace}`                                  | Summaries of a trace's audits, by stage                          |
 
 Every listing returns audit summaries: `id`, `tenantId`, `status`, `tier`, `operation`, `message`, `target`, `source`, `rerunable`, `trace`, `createdAt` and `updatedAt`. Fetch the single audit for its `context`, `event`, `error` and `attempts`. Listings are newest first; `GET /trace/{trace}` lists by trace stage, then oldest first. An audit's `trace` is the trace it was written with, and is omitted when it has none.
 
-Getting or rerunning a single audit answers `404` when `{audit}` doesn't exist or belongs to a resource other than `{item}`. A rerun sends the audit's recorded event once, with its `detail` exactly as stored, and answers `204`. It answers `400` when the audit isn't rerunable, and `500` when EventBridge doesn't accept the event; the caller can retry. An audit that lists a resource in `resources` also appears in that resource's listing, with the audit's `id` and its target as the `source`; fetch or rerun it under the source: `/apps/{source.app}/objects/{source.type}/{source.id}/{id}`.
+`{type}` must be one of `{app}`'s resource types; another is a `422`. Getting or rerunning a single audit answers `404` when `{audit}` doesn't exist or belongs to a resource other than `{item}`. A rerun sends the audit's recorded event once, with its `detail` exactly as stored, and answers `204`. It answers `400` when the audit isn't rerunable, and `500` when EventBridge doesn't accept the event; the caller can retry. An audit that lists a resource in `resources` also appears in that resource's listing, with the audit's `id` and its target as the `source`; fetch or rerun it under the source: `/apps/{source.app}/objects/{source.type}/{source.id}/{id}`.
 
-Every listing takes `filter[operation]` (an exact operation name) and `filter[tier]` (`1`, `2` or `3`). `GET /status/{status}` and `GET /trace/{trace}` also take `filter[app]` and `filter[resourceType]`, which match an audit's target or any of its additional `resources`; the audit is returned once, with its own target. Filters apply after a page is read, so a filtered page can hold fewer items than `pagination[pageSize]`, or none, while its `nextToken` continues the listing.
+Every listing takes `filter[operation]` (an exact operation name) and `filter[tier]` (`1`, `2` or `3`). `GET /status/{status}` and `GET /trace/{trace}` also take `filter[app]` and `filter[resourceType]`, which match an audit's target or any of its additional `resources`. With `filter[app]`, the type must be one of that app's; without it, the type matches under every app that has it; the audit is returned once, with its own target. Filters apply after a page is read, so a filtered page can hold fewer items than `pagination[pageSize]`, or none, while its `nextToken` continues the listing.
 
 Every route runs as a prebuilt Rust binary, like the subscription Lambda. Every route answers errors as `{statusCode, error, message}`, and a `422` lists each invalid input under `details.issues`, with its location as `path` (e.g. `["query", "filter[app]"]`).
 
@@ -145,6 +145,8 @@ type CDKConfig = {
 ## Upgrading from 1.x
 
 2.0 stores audits in a new table, `{ENV}-{service}-Audit-v2`: the 1.x table's local secondary indexes can't be removed, and its listings couldn't sort by creation time. Upgrade `@flipboxlabs/aws-audit-cdk` and `@flipboxlabs/aws-audit-sdk` together, in every app that uses the SDK, since 2.0 reads and writes only the new table.
+
+The config lists each app's resource types, replacing the separate `apps` and `resourceTypes` lists: `defineAuditConfig({ apps: { Orders: ["Order"] } })`, and the same `apps` for `ConfigLayerConstruct`. Names may hold only letters, digits, `-` and `_`. `GET /config` answers `apps` as that map, without `resourceTypes`.
 
 1. Deploy. The new table is created empty and the Lambdas switch to it; the 1.x table (`{ENV}-{service}-Audit`) is retained, not deleted.
 2. Copy the 1.x audits with the SDK's `aws-audit-migrate`, with credentials for the account and region:

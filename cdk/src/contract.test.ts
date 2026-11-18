@@ -80,7 +80,6 @@ describe("contract", () => {
       const app = new cdk.App();
       new ConfigLayerConstruct(new cdk.Stack(app, "Contract"), "AuditConfigLayer", {
         apps: testConfig.apps,
-        resourceTypes: testConfig.resourceTypes,
       });
 
       const { directory } = app.synth();

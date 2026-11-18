@@ -173,8 +173,7 @@ impl Recorder {
 /// The config the fixtures are recorded with.
 pub fn contract_config() -> AuditConfig {
     serde_json::from_value(json!({
-        "apps": ["App1", "TestApp"],
-        "resourceTypes": ["Unknown", "User", "Order"],
+        "apps": { "App1": ["Unknown", "User", "Order"], "TestApp": ["User", "Order"] },
     }))
     .unwrap()
 }

@@ -32,8 +32,8 @@ use serde_json::Value;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    // The apps and resource types your stack's config lists
-    let config = Arc::new(AuditConfig::new(["Orders"], ["Order"]));
+    // The apps, each with its resource types, your stack's config lists
+    let config = Arc::new(AuditConfig::new([("Orders", ["Order"])]));
 
     lambda_runtime::run(service_fn(|event: LambdaEvent<Value>| {
         let config = config.clone();
@@ -129,7 +129,7 @@ This writes each binary to `cdk/assets/lambda/<name>/bootstrap` (git-ignored), w
 
 Construct tests don't need a build: they point `AWS_AUDIT_RUST_LAMBDA_ASSETS` at stub binaries.
 
-The Lambdas read the apps and resource types from `/opt/audit-config.json`, which the config layer (`ConfigLayerConstruct`) writes. `AUDIT_CONFIG_PATH` points elsewhere for local runs.
+The Lambdas read the apps, each with its resource types, from `/opt/audit-config.json`, which the config layer (`ConfigLayerConstruct`) writes. `AUDIT_CONFIG_PATH` points elsewhere for local runs.
 
 ## Releasing
 

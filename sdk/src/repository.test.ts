@@ -420,11 +420,7 @@ describe("AuditRepository", () => {
       const { defineAuditConfig } = await import("./config.js");
       const customRepo = new AuditRepository(
         mockLogger as unknown as Logger,
-        defineAuditConfig({
-          apps: ["App1", "TestApp"] as const,
-          resourceTypes: ["Unknown", "User", "Order"] as const,
-          ttlSeconds: 60,
-        }),
+        defineAuditConfig({ ...testConfig, ttlSeconds: 60 }),
         mockClient as unknown as DynamoDBClient,
       );
 

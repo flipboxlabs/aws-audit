@@ -81,8 +81,7 @@ export type UpsertAudit = z.output<typeof UpsertAuditSchema>;
  * @example
  * ```typescript
  * const config = defineAuditConfig({
- *   apps: ['Orders', 'Inventory'] as const,
- *   resourceTypes: ['Order', 'Product'] as const,
+ *   apps: { Orders: ['Order'], Inventory: ['Product'] },
  * });
  *
  * const typedSchema = createTypedUpsertAuditSchema(config.schemas.resourceReference);

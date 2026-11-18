@@ -6,7 +6,7 @@ use aws_audit::testing::{Recorder, contract_config, contract_service};
 use aws_audit_http::testing::{replay, replay_fixtures};
 use lambda_kit::http::Router;
 use objects::{State, router};
-use serde_json::json;
+use serde_json::{Value, json};
 
 fn contract_router(recorder: &Arc<Recorder>) -> Router<State> {
     router(State {
@@ -20,32 +20,42 @@ async fn replays_every_objects_fixture() {
     replay_fixtures("http/objects", contract_router).await;
 }
 
-#[tokio::test(start_paused = true)]
-async fn reports_both_invalid_path_parameters() {
+/// The paths of the issues a 422 for `path`, with a bad page size, reports.
+async fn issue_paths(path: &str) -> Vec<Value> {
     let fixture = json!({
         "route": "GET /apps/{app}/objects/{object}/{item}",
         "request": {
             "method": "GET",
-            "path": "/apps/Nope/objects/Nope/order-1",
+            "path": path,
             "query": { "pagination[pageSize]": "0" },
         },
         "calls": [],
     });
-
     let replay = replay("invalid", &fixture, contract_router).await;
-
     assert_eq!(replay.answer["statusCode"], 422);
-    let paths: Vec<_> = replay.answer["body"]["details"]["issues"]
+    replay.answer["body"]["details"]["issues"]
         .as_array()
         .unwrap()
         .iter()
         .map(|issue| issue["path"].clone())
-        .collect();
+        .collect()
+}
+
+/// Every invalid input is reported, except an object of an app that isn't one, as
+/// the app's types are unknown.
+#[tokio::test(start_paused = true)]
+async fn reports_every_invalid_input() {
     assert_eq!(
-        paths,
+        issue_paths("/apps/App1/objects/Nope/order-1").await,
+        [
+            json!(["path", "object"]),
+            json!(["query", "pagination[pageSize]"]),
+        ]
+    );
+    assert_eq!(
+        issue_paths("/apps/Nope/objects/Nope/order-1").await,
         [
             json!(["path", "app"]),
-            json!(["path", "object"]),
             json!(["query", "pagination[pageSize]"]),
         ]
     );

@@ -126,20 +126,30 @@ export type Identifiers = {
 };
 
 /**
- * Generic identifiers with typed App and ResourceType from config.
+ * Each app of the config with one of its resource types, as `{ app, resourceType }`.
  * @typeParam C - The audit config type for type inference
  */
-export type TypedIdentifiers<C extends AuditConfig> = {
+type TypedAppResourceType<C extends AuditConfig> = {
+  [A in InferApp<C>]: {
+    /** Application that owns this audit record */
+    app: A;
+    /** Type of resource being audited, one of the app's */
+    resourceType: InferResourceType<C, A>;
+  };
+}[InferApp<C>];
+
+/**
+ * Generic identifiers with typed App and ResourceType from config: naming the app
+ * narrows the resource type to that app's.
+ * @typeParam C - The audit config type for type inference
+ */
+export type TypedIdentifiers<C extends AuditConfig> = TypedAppResourceType<C> & {
   /** Tenant/organization identifier for multi-tenancy support (optional) */
   tenantId?: string;
   /** Unique audit record identifier */
   id: string | number;
-  /** Application that owns this audit record */
-  app: InferApp<C>;
   /** Optional resource identifier within the application */
   resourceId?: string | number;
-  /** Type of resource being audited */
-  resourceType: InferResourceType<C>;
 };
 
 /**
@@ -156,53 +166,78 @@ export type ListFilters = {
 
 /**
  * Filters on the audit's resources, for the status and trace listings. They match
- * the audit's target or any of its related resources. A resource id is matched only
- * together with its app and type.
+ * the audit's target or any of its related resources. With an app, the type is one
+ * of that app's; without one, a type matches it under every app. A resource id is
+ * matched only together with its app and type.
  * @typeParam C - The audit config type for type inference
  */
-export type TypedResourceFilters<C extends AuditConfig> = {
-  /** Optional application filter */
-  app?: InferApp<C>;
-  /** Optional resource filter */
-  resource?: {
-    /** Filter by resource type */
-    type?: InferResourceType<C>;
-    /** Filter by resource ID; needs `app` and `resource.type` */
-    id?: string | number;
-  };
-};
+export type TypedResourceFilters<C extends AuditConfig> =
+  | {
+      /** No application filter */
+      app?: undefined;
+      /** Optional resource filter */
+      resource?: {
+        /** Filter by resource type, under any app that has it */
+        type?: InferResourceType<C>;
+        /** Filter by resource ID; needs `app` and `resource.type` */
+        id?: string | number;
+      };
+    }
+  | {
+      [A in InferApp<C>]: {
+        /** Application filter */
+        app: A;
+        /** Optional resource filter */
+        resource?: {
+          /** Filter by resource type, one of the app's */
+          type?: InferResourceType<C, A>;
+          /** Filter by resource ID; needs `app` and `resource.type` */
+          id?: string | number;
+        };
+      };
+    }[InferApp<C>];
 
 /**
- * Options for listing audit objects by resource with typed App and ResourceType.
+ * Options for listing audit objects by resource with typed App and ResourceType:
+ * naming the app narrows the resource type to that app's.
  * @typeParam C - The audit config type for type inference
  */
 export type TypedListObjectsOptions<C extends AuditConfig> = ListFilters & {
   /** Tenant/organization identifier for multi-tenancy support (optional) */
   tenantId?: string;
-  /** Resource identification */
-  resource: {
-    /** Type of the resource */
-    type: InferResourceType<C>;
-  };
-  /** Application owning the resource */
-  app: InferApp<C>;
-};
+} & {
+    [A in InferApp<C>]: {
+      /** Application owning the resource */
+      app: A;
+      /** Resource identification */
+      resource: {
+        /** Type of the resource, one of the app's */
+        type: InferResourceType<C, A>;
+      };
+    };
+  }[InferApp<C>];
 
 /**
- * Options for listing audit items by resource with typed App and ResourceType.
+ * Options for listing audit items by resource with typed App and ResourceType:
+ * naming the app narrows the resource type to that app's.
  * @typeParam C - The audit config type for type inference
  */
-export type TypedListItemsOptions<C extends AuditConfig> = Omit<
-  TypedListObjectsOptions<C>,
-  "resource"
-> & {
-  resource: {
-    /** Type of the resource */
-    type: InferResourceType<C>;
-    /** Unique identifier of the resource */
-    id: string | number;
-  };
-};
+export type TypedListItemsOptions<C extends AuditConfig> = ListFilters & {
+  /** Tenant/organization identifier for multi-tenancy support (optional) */
+  tenantId?: string;
+} & {
+    [A in InferApp<C>]: {
+      /** Application owning the resource */
+      app: A;
+      /** Resource identification */
+      resource: {
+        /** Type of the resource, one of the app's */
+        type: InferResourceType<C, A>;
+        /** Unique identifier of the resource */
+        id: string | number;
+      };
+    };
+  }[InferApp<C>];
 
 /**
  * Options for listing audit items by trace ID with typed App and ResourceType.
@@ -425,8 +460,7 @@ export function constructIndexAttributes(
  * @example
  * ```typescript
  * const config = defineAuditConfig({
- *   apps: ['Orders', 'Inventory'] as const,
- *   resourceTypes: ['Order', 'Product'] as const,
+ *   apps: { Orders: ['Order'], Inventory: ['Product'] },
  * });
  * const repository = new AuditRepository(logger, config);
  *

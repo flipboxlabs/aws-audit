@@ -5,8 +5,10 @@ import { defineAuditConfig } from "@flipboxlabs/aws-audit-sdk";
  * Provides sample apps and resource types for testing.
  */
 export const testConfig = defineAuditConfig({
-  apps: ["App1", "TestApp"] as const,
-  resourceTypes: ["Unknown", "User", "Order"] as const,
+  apps: {
+    App1: ["Unknown", "User", "Order"],
+    TestApp: ["User", "Order"],
+  },
 });
 
 /**

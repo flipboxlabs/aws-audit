@@ -41,6 +41,8 @@ async fn logs_a_storage_failure() {
     assert!(errors.contains(&"Unhandled error".to_owned()), "{errors:?}");
 }
 
+/// Every invalid input is reported at once. A type is checked against every app's
+/// here, as there's no filter[app]; with an app that isn't one, it isn't checked.
 #[tokio::test(start_paused = true)]
 async fn reports_every_invalid_input_at_once() {
     let fixture = json!({
@@ -50,7 +52,7 @@ async fn reports_every_invalid_input_at_once() {
             "path": "/status/unknown",
             "query": {
                 "pagination[pageSize]": "0",
-                "filter[app]": "Nope",
+                "filter[operation]": "",
                 "filter[resourceType]": "Nope",
             },
         },
@@ -70,7 +72,7 @@ async fn reports_every_invalid_input_at_once() {
         [
             json!(["path", "status"]),
             json!(["query", "pagination[pageSize]"]),
-            json!(["query", "filter[app]"]),
+            json!(["query", "filter[operation]"]),
             json!(["query", "filter[resourceType]"]),
         ]
     );

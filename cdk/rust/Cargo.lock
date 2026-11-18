@@ -114,6 +114,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "http 1.5.0",
+ "indexmap 2.14.2",
  "lambda-kit",
  "serde",
  "serde_json",
@@ -799,6 +800,7 @@ version = "0.1.0"
 dependencies = [
  "aws-audit",
  "aws-audit-http",
+ "indexmap 2.14.2",
  "lambda-kit",
  "serde",
  "serde_json",

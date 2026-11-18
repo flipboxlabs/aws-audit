@@ -102,8 +102,10 @@ impl UpsertAudit {
 }
 
 /// Checks an audit's tenant id isn't [`NO_TENANT`], and its target, source and
-/// related resources against the configured apps and resource types, reporting
-/// every problem at its path.
+/// related resources against the configured apps, then each type against its
+/// app's types, reporting every problem at its path. A type isn't checked when its
+/// app isn't one, as its types are unknown (`resourceReference` in the TypeScript
+/// SDK).
 pub(crate) fn check_audit<'a>(
     config: &AuditConfig,
     tenant_id: Option<&str>,
@@ -118,22 +120,21 @@ pub(crate) fn check_audit<'a>(
             path: vec!["tenantId".into()],
         });
     }
-    let mut check = |reference: &ResourceReference, path: Vec<Value>| {
-        if !config.is_app(&reference.app) {
-            issues.push(Issue {
-                message: format!("Invalid option: expected one of {}", options(&config.apps)),
-                path: [path.clone(), vec!["app".into()]].concat(),
-            });
-        }
-        if !config.is_resource_type(&reference.resource_type) {
-            issues.push(Issue {
-                message: format!(
-                    "Invalid option: expected one of {}",
-                    options(&config.resource_types)
-                ),
-                path: [path, vec!["type".into()]].concat(),
-            });
-        }
+    let mut check = |reference: &ResourceReference, path: Vec<Value>| match config
+        .resource_types_of(&reference.app)
+    {
+        None => issues.push(Issue {
+            message: format!(
+                "Invalid option: expected one of {}",
+                options(config.apps.keys())
+            ),
+            path: [path, vec!["app".into()]].concat(),
+        }),
+        Some(types) if !types.contains(&reference.resource_type) => issues.push(Issue {
+            message: format!("Invalid option: expected one of {}", options(types)),
+            path: [path, vec!["type".into()]].concat(),
+        }),
+        Some(_) => {}
     };
 
     check(target, vec!["target".into()]);
@@ -151,9 +152,9 @@ pub(crate) fn check_audit<'a>(
     }
 }
 
-fn options(values: &[String]) -> String {
+fn options<'a>(values: impl IntoIterator<Item = &'a String>) -> String {
     values
-        .iter()
+        .into_iter()
         .map(|value| format!("\"{value}\""))
         .collect::<Vec<_>>()
         .join("|")
@@ -240,7 +241,7 @@ mod tests {
 
     fn config() -> AuditConfig {
         serde_json::from_value(
-            json!({ "apps": ["App1", "TestApp"], "resourceTypes": ["Unknown", "User", "Order"] }),
+            json!({ "apps": { "App1": ["Unknown", "User", "Order"], "TestApp": ["User", "Order"] } }),
         )
         .unwrap()
     }
@@ -262,7 +263,12 @@ mod tests {
         let audit: UpsertAudit = serde_json::from_value(json!({
             "operation": "createOrder",
             "target": { "app": "Nope", "type": "Order" },
-            "resources": [{ "app": "App1", "type": "User" }, { "app": "App1", "type": "Nope" }],
+            "resources": [
+                { "app": "App1", "type": "User" },
+                { "app": "App1", "type": "Nope" },
+                // Another app's type
+                { "app": "TestApp", "type": "Unknown" },
+            ],
         }))
         .unwrap();
 
@@ -271,11 +277,20 @@ mod tests {
         let paths: Vec<_> = issues.iter().map(|issue| json!(issue.path)).collect();
         assert_eq!(
             paths,
-            [json!(["target", "app"]), json!(["resources", 1, "type"])]
+            [
+                json!(["target", "app"]),
+                json!(["resources", 1, "type"]),
+                json!(["resources", 2, "type"])
+            ]
         );
+        let messages: Vec<_> = issues.iter().map(|issue| issue.message.as_str()).collect();
         assert_eq!(
-            issues[0].message,
-            r#"Invalid option: expected one of "App1"|"TestApp""#
+            messages,
+            [
+                r#"Invalid option: expected one of "App1"|"TestApp""#,
+                r#"Invalid option: expected one of "Unknown"|"User"|"Order""#,
+                r#"Invalid option: expected one of "User"|"Order""#,
+            ]
         );
     }
 

@@ -1,5 +1,5 @@
 {
-  "description": "Configured apps and resource types, and the package version",
+  "description": "Configured apps, each with its resource types, the statuses, and the package version",
   "route": "GET /config",
   "request": {
     "method": "GET",
@@ -10,15 +10,17 @@
     "statusCode": 200,
     "contentType": "application/json",
     "body": {
-      "apps": [
-        "App1",
-        "TestApp"
-      ],
-      "resourceTypes": [
-        "Unknown",
-        "User",
-        "Order"
-      ],
+      "apps": {
+        "App1": [
+          "Unknown",
+          "User",
+          "Order"
+        ],
+        "TestApp": [
+          "User",
+          "Order"
+        ]
+      },
       "statuses": [
         "success",
         "warn",

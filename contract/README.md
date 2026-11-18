@@ -36,8 +36,7 @@ Every fixture is generated with the same environment, so the requests are determ
 
 | Input                    | Value                                                                                                |
 | ------------------------ | ---------------------------------------------------------------------------------------------------- |
-| Apps                     | `App1`, `TestApp`                                                                                    |
-| Resource types           | `Unknown`, `User`, `Order`                                                                           |
+| Apps and resource types  | `App1`: `Unknown`, `User`, `Order`; `TestApp`: `User`, `Order`                                       |
 | `ENVIRONMENT`, `SERVICE` | `test`, `Contract`, so the table is `TEST-Contract-Audit-v2` and the event bus `TEST-Contract-Audit` |
 | Clock                    | `2026-01-02T03:04:05.678Z`, for `createdAt`, `updatedAt`, attempt `at` and `ttl`                     |
 | Retry jitter             | `Math.random()` is `0.5`                                                                             |
