@@ -55,10 +55,11 @@
             "S": "audit"
           }
         },
-        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #trace = :trace, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #traceId = :traceId, #traceStage = :traceStage, #ttl = :ttl ADD #scopes :scopes",
+        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #previousTarget = if_not_exists(#target, :target), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #trace = :trace, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #traceId = :traceId, #traceStage = :traceStage, #ttl = :ttl ADD #scopes :scopes",
         "ExpressionAttributeNames": {
           "#attempts": "attempts",
           "#createdAt": "createdAt",
+          "#previousTarget": "previousTarget",
           "#id": "id",
           "#status": "status",
           "#tier": "tier",

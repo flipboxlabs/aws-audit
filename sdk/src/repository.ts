@@ -1,6 +1,5 @@
 import type { Logger } from "@aws-lambda-powertools/logger";
 import {
-  type AttributeValue,
   DeleteItemCommand,
   DynamoDBClient,
   GetItemCommand,
@@ -630,10 +629,10 @@ export class AuditRepository<C extends AuditConfig> {
    * so the audit no longer lists under its earlier resource. Likewise a `trace`
    * without an id, empty or such as `:2`, removes `traceId` and `traceStage`, so
    * the audit leaves its earlier trace's listing. A retry that changes the
-   * target's id removes the earlier target's resource from `scopes`, so the status
-   * and trace filters no longer match it, unless the retry lists it as related or
-   * a related resource's copy still lists the audit under it (see
-   * {@link removeStaleScopes}).
+   * target's id removes the target it replaces from `scopes`, so the status and
+   * trace filters no longer match it, unless the retry lists it as related or a
+   * related resource's copy still lists the audit under it (see
+   * {@link removePreviousTarget}).
    *
    * @param item - The audit record to upsert (its `attempts`, if any, are ignored)
    * @param currentAttempt - The current attempt to append
@@ -680,13 +679,16 @@ export class AuditRepository<C extends AuditConfig> {
     const setClauses: string[] = [
       "#attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt)",
       "#createdAt = if_not_exists(#createdAt, :createdAt)",
+      // Read before this write, so the target it replaces
+      "#previousTarget = if_not_exists(#target, :target)",
     ];
     expressionAttributeNames["#attempts"] = "attempts";
     expressionAttributeNames["#createdAt"] = "createdAt";
+    expressionAttributeNames["#previousTarget"] = Attributes.PREVIOUS_TARGET;
 
     // Added to, not replaced: a copy under a resource a retry no longer lists stays,
-    // so the status and trace filters keep matching that resource too; an earlier
-    // target's is removed below
+    // so the status and trace filters keep matching that resource too; the target
+    // this replaces is removed below
     expressionAttributeNames["#scopes"] = Attributes.SCOPES;
     expressionAttributeValues[":scopes"] = new Set(
       [payload.target, ...(item.resources ?? [])].flatMap(resourceScopes),
@@ -769,7 +771,7 @@ export class AuditRepository<C extends AuditConfig> {
     }
 
     if (attemptNumber > 1) {
-      await this.removeStaleScopes(primaryKey, updated, item.resources ?? [], attemptNumber);
+      await this.removePreviousTarget(primaryKey, updated, item.resources ?? [], attemptNumber);
     }
 
     const audit = AuditStorageSchema.parse(withoutNulls(updated));
@@ -780,74 +782,61 @@ export class AuditRepository<C extends AuditConfig> {
   }
 
   /**
-   * Removes the `scopes` a retry left behind: those of a resource under the
-   * target's app and type (as an earlier target is) that neither the audit's
-   * target, the retry's related resources, nor a related resource's copy in the
-   * audit's partition (read consistently) lists. Only when no upsert has appended
-   * an attempt since `revision`, as a later one's scopes and target are its own.
-   * Nothing is read or written when there is no such scope, as when a retry keeps
-   * its target.
+   * Removes from `scopes` the resource the audit targeted before a retry changed
+   * its target's id (`previousTarget`, which the retry's write set): unless the
+   * retry lists it as related, or a related resource's copy (read consistently)
+   * lists the audit under it, and only when no upsert has appended an attempt
+   * since `revision`, as a later one's target is its own. Only that resource's
+   * scope goes: a related resource's scope stays even before an overlapping upsert
+   * writes its copy. Nothing is read or written when the target is unchanged.
    *
    * @param key - The audit's key
-   * @param stored - The audit as the retry stored it, with its `scopes`
+   * @param stored - The audit as the retry stored it, with its `scopes` and
+   *   `previousTarget`
    * @param listed - The retry's related resources
    * @param revision - The audit's attempt count, as the retry stored it
    */
-  private async removeStaleScopes(
+  private async removePreviousTarget(
     key: DynamoDBPrimaryKey,
     stored: Record<string, unknown>,
     listed: Iterable<ResourceReference>,
     revision: number,
   ): Promise<void> {
-    const target = stored.target as ResourceReference;
-    const prefix = `${joinKey(target.app, target.type)}#`;
-    const kept = new Set([target, ...listed].flatMap(resourceScopes));
-    const stale = new Set(
-      [...((stored[Attributes.SCOPES] as Set<string> | undefined) ?? [])].filter(
-        (scope) => scope.startsWith(prefix) && !kept.has(scope),
-      ),
-    );
+    const previous = stored[Attributes.PREVIOUS_TARGET] as ResourceReference | undefined;
+    if (!previous || !hasResourceId(previous.id)) return;
+
+    const scope = joinKey(previous.app, previous.type, previous.id);
+    const scopes = stored[Attributes.SCOPES] as Set<string> | undefined;
+    const kept = new Set([stored.target as ResourceReference, ...listed].flatMap(resourceScopes));
+    if (!scopes?.has(scope) || kept.has(scope)) return;
 
     // Unless a related resource's copy still lists the audit under it
-    let startKey: Record<string, AttributeValue> | undefined;
-    while (stale.size > 0) {
-      const { Items: copies = [], LastEvaluatedKey: lastKey } = await this.client.send(
-        new QueryCommand({
+    const sortKey = relatedSortKey(previous);
+    if (fitsSortKey(sortKey)) {
+      const { Item: copy } = await this.client.send(
+        new GetItemCommand({
           TableName: DynamoDB.Table.Name(),
-          KeyConditionExpression: "#pk = :pk AND begins_with(#sk, :related)",
-          ExpressionAttributeNames: {
-            "#pk": DynamoDB.Keys.PARTITION_KEY,
-            "#sk": DynamoDB.Keys.SORT_KEY,
-            "#target": "target",
-          },
-          ExpressionAttributeValues: marshall({
-            ":pk": key[DynamoDB.Keys.PARTITION_KEY],
-            ":related": DynamoDB.SortKeys.RELATED_PREFIX,
-          }),
-          ProjectionExpression: "#target",
+          Key: marshall({ ...key, [DynamoDB.Keys.SORT_KEY]: sortKey }, MARSHALL_OPTIONS),
+          ProjectionExpression: "#pk",
+          ExpressionAttributeNames: { "#pk": DynamoDB.Keys.PARTITION_KEY },
           ConsistentRead: true,
-          ExclusiveStartKey: startKey,
         }),
       );
-      for (const copy of copies) {
-        resourceScopes(unmarshall(copy).target as ResourceReference).forEach((scope) =>
-          stale.delete(scope),
-        );
-      }
-      startKey = lastKey;
-      if (!startKey) break;
+      if (copy) return;
     }
-    if (stale.size === 0) return;
 
     try {
       await this.client.send(
         new UpdateItemCommand({
           TableName: DynamoDB.Table.Name(),
           Key: marshall(key, MARSHALL_OPTIONS),
-          UpdateExpression: "DELETE #scopes :stale",
+          UpdateExpression: "DELETE #scopes :scope",
           ConditionExpression: "size(#attempts) = :revision",
           ExpressionAttributeNames: { "#scopes": Attributes.SCOPES, "#attempts": "attempts" },
-          ExpressionAttributeValues: marshall({ ":stale": stale, ":revision": revision }),
+          ExpressionAttributeValues: marshall({
+            ":scope": new Set([scope]),
+            ":revision": revision,
+          }),
         }),
       );
     } catch (error) {

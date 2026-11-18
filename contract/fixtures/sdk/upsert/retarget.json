@@ -1,5 +1,5 @@
 {
-  "description": "A retry that changes the target's id removes the earlier target's resource from scopes, unless a related resource's copy (read consistently) still lists the audit under it, and only if no upsert appended an attempt since",
+  "description": "A retry that changes the target's id removes the target it replaces (previousTarget, set in the same write) from scopes, unless a related resource's copy (read consistently) still lists the audit under it, and only if no upsert appended an attempt since; a related resource's scope stays, even before its copy is written",
   "operation": "upsertItem",
   "args": [
     {
@@ -28,10 +28,11 @@
             "S": "audit"
           }
         },
-        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #ttl = :ttl ADD #scopes :scopes",
+        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #previousTarget = if_not_exists(#target, :target), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #ttl = :ttl ADD #scopes :scopes",
         "ExpressionAttributeNames": {
           "#attempts": "attempts",
           "#createdAt": "createdAt",
+          "#previousTarget": "previousTarget",
           "#scopes": "scopes",
           "#id": "id",
           "#status": "status",
@@ -135,6 +136,19 @@
           "tier": {
             "N": "2"
           },
+          "previousTarget": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "type": {
+                "S": "Order"
+              },
+              "id": {
+                "S": "order-1"
+              }
+            }
+          },
           "scopes": {
             "SS": [
               "App1",
@@ -231,45 +245,24 @@
     },
     {
       "service": "DynamoDB",
-      "command": "Query",
+      "command": "GetItem",
       "input": {
         "TableName": "TEST-Contract-Audit-v2",
-        "KeyConditionExpression": "#pk = :pk AND begins_with(#sk, :related)",
-        "ExpressionAttributeNames": {
-          "#pk": "PK",
-          "#sk": "SK",
-          "#target": "target"
-        },
-        "ExpressionAttributeValues": {
-          ":pk": {
+        "Key": {
+          "PK": {
             "S": "-#App1#Order#audit-1"
           },
-          ":related": {
-            "S": "related#"
+          "SK": {
+            "S": "related#App1#Order#order-1"
           }
         },
-        "ProjectionExpression": "#target",
+        "ProjectionExpression": "#pk",
+        "ExpressionAttributeNames": {
+          "#pk": "PK"
+        },
         "ConsistentRead": true
       },
-      "output": {
-        "Items": [
-          {
-            "target": {
-              "M": {
-                "app": {
-                  "S": "App1"
-                },
-                "type": {
-                  "S": "Order"
-                },
-                "id": {
-                  "S": "order-3"
-                }
-              }
-            }
-          }
-        ]
-      }
+      "output": {}
     },
     {
       "service": "DynamoDB",
@@ -284,14 +277,14 @@
             "S": "audit"
           }
         },
-        "UpdateExpression": "DELETE #scopes :stale",
+        "UpdateExpression": "DELETE #scopes :scope",
         "ConditionExpression": "size(#attempts) = :revision",
         "ExpressionAttributeNames": {
           "#scopes": "scopes",
           "#attempts": "attempts"
         },
         "ExpressionAttributeValues": {
-          ":stale": {
+          ":scope": {
             "SS": [
               "App1#Order#order-1"
             ]

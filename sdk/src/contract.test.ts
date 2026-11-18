@@ -397,11 +397,12 @@ const CASES: Case[] = [
   {
     name: "upsert/retarget",
     description:
-      "A retry that changes the target's id removes the earlier target's resource from scopes, unless a related resource's copy (read consistently) still lists the audit under it, and only if no upsert appended an attempt since",
+      "A retry that changes the target's id removes the target it replaces (previousTarget, set in the same write) from scopes, unless a related resource's copy (read consistently) still lists the audit under it, and only if no upsert appended an attempt since; a related resource's scope stays, even before its copy is written",
     operation: "upsertItem",
     args: [upsertInput({ status: "fail", target: { app: "App1", type: "Order", id: "order-2" } })],
     replies: [
       attempts(2, "2026-01-01T00:00:00.000Z", {
+        previousTarget: { app: "App1", type: "Order", id: "order-1" },
         scopes: new Set([
           "App1",
           "App1#Order",
@@ -412,7 +413,7 @@ const CASES: Case[] = [
         ]),
       }),
       { output: {} },
-      { output: { Items: [marshall({ target: { app: "App1", type: "Order", id: "order-3" } })] } },
+      { output: {} },
       { output: {} },
       { output: {} },
       accepted(),

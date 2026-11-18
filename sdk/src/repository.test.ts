@@ -437,74 +437,101 @@ describe("AuditRepository", () => {
       expect(command.input.UpdateExpression).toMatch(/ REMOVE #traceId, #traceStage$/);
     });
 
+    it("should keep the target it replaces, read before the write", async () => {
+      mockClient.send.mockResolvedValue(updated());
+
+      await repository.upsertItem(upsertInput(), attempt);
+
+      const command = mockClient.send.mock.calls[0][0] as UpdateItemCommand;
+      expect(command.input.UpdateExpression).toMatch(
+        /^SET #attempts = .+, #createdAt = .+, #previousTarget = if_not_exists\(#target, :target\), /,
+      );
+      expect(command.input.ExpressionAttributeNames).toMatchObject({
+        "#previousTarget": "previousTarget",
+        "#target": "target",
+      });
+    });
+
     describe("a retry that changes the target's id", () => {
       const moved = (id: string) => ({ app: App.App1, type: ResourceType.ORDER, id });
-      /** The retry's UpdateItem reply: its scopes still hold the earlier target's */
+      /**
+       * The retry's UpdateItem reply: its scopes hold the target it replaced, and a
+       * related resource of the same type whose copy an overlapping upsert hasn't
+       * written yet
+       */
       const retried = () =>
         updated([attempt, { ...attempt, number: 2 }], CREATED_AT, {
           target: moved("moved-new"),
+          previousTarget: moved("moved-old"),
           scopes: new Set([
             "App1",
             "App1#Order",
             "*#Order",
             "App1#Order#moved-old",
             "App1#Order#moved-new",
-            "TestApp#User#u",
-            "App1#Order#kept",
+            "App1#Order#pending",
           ]),
         });
-      const copy = (target: Record<string, unknown>) => ({ Items: [marshall({ target })] });
       const commands = () => mockClient.send.mock.calls.map(([command]) => command);
 
-      it("should remove the earlier target from scopes, so status and trace filters no longer match it", async () => {
+      it("should remove the target it replaced from scopes, so status and trace filters no longer match it", async () => {
         mockClient.send
           .mockResolvedValueOnce(retried())
           .mockResolvedValueOnce({})
-          // A related resource's copy, under a resource of the same type
-          .mockResolvedValueOnce(copy(moved("kept")))
+          .mockResolvedValueOnce({})
           .mockResolvedValueOnce({});
 
         await repository.upsertItem(upsertInput({ target: moved("moved-new") }), attempt);
 
-        const [, , query, removed] = commands() as [never, never, QueryCommand, UpdateItemCommand];
-        expect(query.input).toMatchObject({
-          KeyConditionExpression: "#pk = :pk AND begins_with(#sk, :related)",
-          ProjectionExpression: "#target",
+        const [, , read, removed] = commands() as [never, never, GetItemCommand, UpdateItemCommand];
+        // Whether a related resource's copy lists the audit under it
+        expect(read.input).toMatchObject({
+          Key: marshall({ PK: "-#App1#Order#audit-123", SK: "related#App1#Order#moved-old" }),
           ConsistentRead: true,
         });
         expect(removed.input).toMatchObject({
           Key: marshall({ PK: "-#App1#Order#audit-123", SK: "audit" }),
-          UpdateExpression: "DELETE #scopes :stale",
+          UpdateExpression: "DELETE #scopes :scope",
           // Unless an upsert since has its own target and scopes
           ConditionExpression: "size(#attempts) = :revision",
           ExpressionAttributeNames: { "#scopes": "scopes", "#attempts": "attempts" },
         });
+        // Only its scope: a related resource's stays, before its copy is written too
         expect(unmarshall(removed.input.ExpressionAttributeValues!)).toEqual({
-          ":stale": new Set(["App1#Order#moved-old"]),
+          ":scope": new Set(["App1#Order#moved-old"]),
           ":revision": 2,
         });
       });
 
-      it("should keep the earlier target's scope while a copy, or the retry, lists it as related", async () => {
+      it("should keep the scope while a copy, or the retry, lists that resource as related", async () => {
         mockClient.send
           .mockResolvedValueOnce(retried())
           .mockResolvedValueOnce({})
-          .mockResolvedValueOnce({
-            Items: [marshall({ target: moved("moved-old") }), marshall({ target: moved("kept") })],
-          });
+          .mockResolvedValueOnce({ Item: marshall({ PK: "-#App1#Order#audit-123" }) });
         await repository.upsertItem(upsertInput({ target: moved("moved-new") }), attempt);
         expect(commands()).toHaveLength(3);
 
         mockClient.send.mockClear();
         mockClient.send.mockResolvedValueOnce(retried()).mockResolvedValueOnce({});
         await repository.upsertItem(
-          upsertInput({
-            target: moved("moved-new"),
-            resources: [moved("moved-old"), moved("kept")],
-          }),
+          upsertInput({ target: moved("moved-new"), resources: [moved("moved-old")] }),
           attempt,
         );
         // Nothing to read
+        expect(commands()).toHaveLength(2);
+      });
+
+      it("should read and write nothing more when the target is unchanged", async () => {
+        mockClient.send
+          .mockResolvedValueOnce(
+            updated([attempt, { ...attempt, number: 2 }], CREATED_AT, {
+              previousTarget: { app: App.App1, type: ResourceType.ORDER, id: "order-1" },
+            }),
+          )
+          .mockResolvedValueOnce({});
+
+        await repository.upsertItem(upsertInput(), attempt);
+
         expect(commands()).toHaveLength(2);
       });
 
@@ -512,7 +539,7 @@ describe("AuditRepository", () => {
         mockClient.send
           .mockResolvedValueOnce(retried())
           .mockResolvedValueOnce({})
-          .mockResolvedValueOnce({ Items: [] })
+          .mockResolvedValueOnce({})
           .mockRejectedValueOnce(
             new ConditionalCheckFailedException({ message: "Condition failed", $metadata: {} }),
           );
