@@ -400,6 +400,28 @@ describe("AuditRepository", () => {
       expect(ExpressionAttributeNames).toMatchObject({ "#resourceId": "resourceId" });
     });
 
+    it("should remove the trace attributes when the trace is cleared, so it leaves its trace's listing", async () => {
+      mockClient.send.mockResolvedValue(updated());
+
+      await repository.upsertItem(upsertInput({ trace: "" }), attempt);
+      await repository.upsertItem(upsertInput({ trace: undefined }), attempt);
+
+      const [cleared, kept] = mockClient.send.mock.calls.map(
+        ([command]) => (command as UpdateItemCommand).input,
+      );
+      expect(cleared.UpdateExpression).toMatch(
+        / ADD #scopes :scopes REMOVE #traceId, #traceStage$/,
+      );
+      expect(cleared.ExpressionAttributeNames).toMatchObject({
+        "#trace": "trace",
+        "#traceId": "traceId",
+        "#traceStage": "traceStage",
+      });
+      expect(setValues({ input: cleared } as UpdateItemCommand).trace).toBe("");
+      // A retry without a trace keeps the audit's
+      expect(kept.UpdateExpression).not.toMatch(/REMOVE/);
+    });
+
     it("should store a numeric resource id as a string", async () => {
       mockClient.send.mockResolvedValue(updated());
 

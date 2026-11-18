@@ -568,7 +568,9 @@ export class AuditRepository<C extends AuditConfig> {
    *
    * A retry replaces the fields it gives and keeps those it leaves out, except the
    * target, which it replaces whole: a target without an id removes `resourceId`,
-   * so the audit no longer lists under its earlier resource.
+   * so the audit no longer lists under its earlier resource. Likewise an empty
+   * `trace` removes `traceId` and `traceStage`, so the audit leaves its earlier
+   * trace's listing.
    *
    * @param item - The audit record to upsert (its `attempts`, if any, are ignored)
    * @param currentAttempt - The current attempt to append
@@ -651,12 +653,21 @@ export class AuditRepository<C extends AuditConfig> {
       }
     }
 
-    // The target is replaced whole, so its resourceId goes with it
-    let removeClause = "";
+    // The target is replaced whole, so its resourceId goes with it; an empty trace
+    // clears the trace, so its index attributes go too and the audit leaves its listing
+    const removed: string[] = [];
     if (!hasResourceId(payload.target.id)) {
-      expressionAttributeNames["#resourceId"] = Attributes.RESOURCE_ID;
-      removeClause = " REMOVE #resourceId";
+      removed.push(Attributes.RESOURCE_ID);
     }
+    if (payload.trace === "") {
+      removed.push(Attributes.TRACE_ID, Attributes.TRACE_STAGE);
+    }
+    for (const name of removed) {
+      expressionAttributeNames[`#${name}`] = name;
+    }
+    const removeClause = removed.length
+      ? ` REMOVE ${removed.map((name) => `#${name}`).join(", ")}`
+      : "";
 
     const result = await this.client.send(
       new UpdateItemCommand({

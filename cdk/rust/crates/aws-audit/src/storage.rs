@@ -186,6 +186,8 @@ impl AuditRepository {
     /// A retry replaces the fields it gives and keeps those it leaves out, except
     /// the target, which it replaces whole: a target without an id removes
     /// `resourceId`, so the audit no longer lists under its earlier resource.
+    /// Likewise an empty `trace` removes `traceId` and `traceStage`, so the audit
+    /// leaves its earlier trace's listing.
     ///
     /// Returns the attempt's number (its position in the stored list, which differs
     /// from `attempt.number` on a retry) and the audit as stored, with the stored
@@ -253,12 +255,24 @@ impl AuditRepository {
         let mut values = marshall_map(&values);
         values.insert(":scopes".to_owned(), AttributeValue::Ss(scopes));
 
-        // The target is replaced whole, so its resourceId goes with it
-        let mut remove = "";
+        // The target is replaced whole, so its resourceId goes with it; an empty trace
+        // clears the trace, so its index attributes go too and the audit leaves its listing
+        let mut removed = Vec::new();
         if !has_resource_id(stored.target.id.as_ref()) {
-            names.insert("#resourceId".to_owned(), attributes::RESOURCE_ID.to_owned());
-            remove = " REMOVE #resourceId";
+            removed.push(attributes::RESOURCE_ID);
         }
+        if stored.trace.as_deref() == Some("") {
+            removed.extend([attributes::TRACE_ID, attributes::TRACE_STAGE]);
+        }
+        for name in &removed {
+            names.insert(format!("#{name}"), (*name).to_owned());
+        }
+        let remove = if removed.is_empty() {
+            String::new()
+        } else {
+            let names: Vec<String> = removed.iter().map(|name| format!("#{name}")).collect();
+            format!(" REMOVE {}", names.join(", "))
+        };
 
         let output = self
             .client

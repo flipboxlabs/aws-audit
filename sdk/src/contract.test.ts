@@ -531,6 +531,14 @@ const CASES: Case[] = [
     replies: [attempts(2, "2026-01-01T00:00:00.000Z"), { output: {} }, accepted()],
   },
   {
+    name: "upsert/retry-clearing-trace",
+    description:
+      "A retry with an empty trace removes traceId and traceStage, so the audit lists under its earlier trace no more",
+    operation: "upsertItem",
+    args: [upsertInput({ trace: "" })],
+    replies: [attempts(2, "2026-01-01T00:00:00.000Z", { trace: "" }), { output: {} }, accepted()],
+  },
+  {
     name: "upsert/edge-ids",
     description:
       'A numeric id of 0 is an id (as resourceId "0" and for a related copy); a trace id may contain colons',
