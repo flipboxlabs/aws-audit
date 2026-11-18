@@ -3,6 +3,8 @@ import {
   type DynamoDBClient,
   GetItemCommand,
   PutItemCommand,
+  QueryCommand,
+  type QueryCommandOutput,
   ScanCommand,
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
@@ -16,7 +18,7 @@ import {
   type UnmarshalledAttributes,
 } from "../repository.js";
 import { AuditSchema, AuditSummarySchema } from "../schema/audit.js";
-import type { ResourceReference } from "../schema/common.js";
+import { DateTimeStringSchema, type ResourceReference } from "../schema/common.js";
 import { hasResourceId } from "../utils.js";
 
 const { Attributes, Keys } = DynamoDB;
@@ -63,12 +65,14 @@ export type MigrationOptions = {
 
 /**
  * What a migration did. Items already in the v2 table (written there since the
- * deploy, or by an earlier run) are left alone and counted as `existing`.
+ * deploy, or by an earlier run) are left alone and counted as `existing`, except
+ * an audit retried since the deploy, which is `merged`.
  */
 export type MigrationReport = {
   /** Items read from the earlier table */
   scanned: number;
-  audits: { written: number; existing: number };
+  /** `merged`: audits retried since the deploy, given their earlier attempts and createdAt */
+  audits: { written: number; existing: number; merged: number };
   /** `ownTarget`: copies under their audit's own target, left out as the audit lists there */
   copies: { written: number; existing: number; ownTarget: number };
   /** Audits whose `scopes` gained their related resources, from their copies */
@@ -89,14 +93,21 @@ type Write = { kind: "audits" | "copies"; item: UnmarshalledAttributes; audit?: 
  *   attributes, keeping its fields, `createdAt` and `ttl`. A trace the earlier
  *   table kept only in its index keys is rebuilt from them.
  * - A related resource's copy (`SK` `{auditId}#{app}.{type}#{id}`, its target) is
- *   written as a summary copy in its audit's partition, with its audit's
- *   `createdAt` so it sorts with the audit (the earlier table gave a copy the time
- *   of the audit's latest upsert). Its resource is added to the audit's `scopes`,
- *   so status and trace filters match it. A copy under the audit's own target is
- *   left out, as the audit lists there already.
+ *   written as a summary copy in its audit's partition, marked `related`, with its
+ *   audit's `createdAt` so it sorts with the audit (the earlier table gave a copy
+ *   the time of the audit's latest upsert). Its resource is added to the audit's
+ *   `scopes`, so status and trace filters match it. A copy under the audit's own
+ *   target is left out, as the audit lists there already.
+ *
+ * `createdAt` and `updatedAt` are written with milliseconds, as the SDK writes
+ * them: the earlier table kept a caller's text, and listings compare them as text.
+ * Attributes stored as NULL (empty strings) are left out.
  *
  * Writes are conditional, so a run can be repeated and never replaces what the
- * new version has written since the deploy. Deploy first, then migrate.
+ * new version has written since the deploy. Deploy first, then migrate. An audit
+ * retried since the deploy has a v2 audit of its own: the earlier attempts are
+ * put before its attempts, renumbered, and it and its copies take the earlier
+ * `createdAt`.
  *
  * @returns What was copied, skipped and refused
  */
@@ -104,7 +115,7 @@ export async function migrate(options: MigrationOptions): Promise<MigrationRepor
   const { client, from, to, dryRun = false, concurrency = 10, onProgress } = options;
   const report: MigrationReport = {
     scanned: 0,
-    audits: { written: 0, existing: 0 },
+    audits: { written: 0, existing: 0, merged: 0 },
     copies: { written: 0, existing: 0, ownTarget: 0 },
     scopes: { updated: 0, missingAudit: 0 },
     invalid: [],
@@ -134,7 +145,11 @@ export async function migrate(options: MigrationOptions): Promise<MigrationRepor
       report[kind].written++;
     } catch (error) {
       if (!(error instanceof ConditionalCheckFailedException)) throw error;
-      report[kind].existing++;
+      if (kind === "audits" && (await mergeAudit(client, to, item))) {
+        report.audits.merged++;
+      } else {
+        report[kind].existing++;
+      }
     }
   };
 
@@ -229,10 +244,9 @@ function auditCreatedAt(client: DynamoDBClient, table: string): CreatedAt {
             ExpressionAttributeNames: { "#createdAt": "createdAt" },
           }),
         )
-        .then(({ Item }) => {
-          const value = Item && unmarshall(Item).createdAt;
-          return typeof value === "string" ? value : undefined;
-        });
+        .then(
+          ({ Item }) => DateTimeStringSchema.safeParse(Item && unmarshall(Item).createdAt).data,
+        );
       read.set(name, createdAt);
     }
     return createdAt;
@@ -284,7 +298,8 @@ function toAudit(item: UnmarshalledAttributes): Transformed {
       item: {
         ...fields,
         id: String(id),
-        createdAt,
+        createdAt: parsed.data.createdAt.toISOString(),
+        updatedAt: parsed.data.updatedAt.toISOString(),
         // Index key attributes: defaulted when the earlier item left them out
         status: parsed.data.status,
         tier: parsed.data.tier,
@@ -347,10 +362,12 @@ function toCopy(item: UnmarshalledAttributes, auditId: string): Transformed {
       item: {
         ...copy,
         id: auditId,
-        createdAt,
+        createdAt: summary.data.createdAt,
+        updatedAt: summary.data.updatedAt,
         status: summary.data.status,
         tier: summary.data.tier,
         rerunable: fields.rerunable ?? false,
+        related: true,
         [Keys.PARTITION_KEY]: partition,
         [Keys.SORT_KEY]: relatedSortKey(target),
         ...constructIndexAttributes({ tenantId, target }, DynamoDB.Kinds.RELATED),
@@ -362,17 +379,16 @@ function toCopy(item: UnmarshalledAttributes, auditId: string): Transformed {
 }
 
 /**
- * An earlier item's fields without its keys, with its trace as a string: an empty
- * trace (stored as NULL) is dropped, and one the item kept only in its trace index
+ * An earlier item's fields without its keys or the attributes stored as NULL (empty
+ * strings), with its trace as a string: one the item kept only in its trace index
  * keys is rebuilt from them (`{id}` at stage 0, else `{id}:{stage}`).
  */
 function withTrace(item: UnmarshalledAttributes): UnmarshalledAttributes {
   const fields = Object.fromEntries(
-    Object.entries(item).filter(([name]) => !V1_KEYS.includes(name)),
+    Object.entries(item).filter(([name, value]) => !V1_KEYS.includes(name) && value !== null),
   );
   if (typeof fields.trace === "string") return fields;
 
-  delete fields.trace;
   if (typeof item.GSI1_SN_PK !== "string" || item.GSI1_SN_SK === undefined) return fields;
 
   const prefix = item.tenantId ? `${item.tenantId}#` : undefined;
@@ -383,6 +399,127 @@ function withTrace(item: UnmarshalledAttributes): UnmarshalledAttributes {
   const stage = Number(item.GSI1_SN_SK);
 
   return { ...fields, trace: stage === 0 ? id : `${id}:${stage}` };
+}
+
+/** Reads of an audit a merge makes when an upsert changes it meanwhile */
+const MERGE_ATTEMPTS = 5;
+
+/**
+ * Merges an earlier audit into the v2 audit an upsert wrote since the deploy: its
+ * attempts go first, every attempt is renumbered by its position, and the audit
+ * and its copies take its `createdAt`.
+ *
+ * @returns False when the earlier audit isn't older, so there's nothing to merge,
+ *   as after an earlier run
+ * @throws Error when upserts kept changing the audit while merging
+ */
+async function mergeAudit(
+  client: DynamoDBClient,
+  table: string,
+  audit: UnmarshalledAttributes,
+): Promise<boolean> {
+  const key = marshall({ [Keys.PARTITION_KEY]: audit.PK, [Keys.SORT_KEY]: audit.SK });
+  const names = { "#attempts": "attempts", "#createdAt": "createdAt" };
+
+  for (let attempt = 0; attempt < MERGE_ATTEMPTS; attempt++) {
+    const { Item } = await client.send(
+      new GetItemCommand({
+        TableName: table,
+        Key: key,
+        ConsistentRead: true,
+        ProjectionExpression: "#attempts, #createdAt",
+        ExpressionAttributeNames: names,
+      }),
+    );
+    const current = Item ? unmarshall(Item) : undefined;
+    if (!current || !(Date.parse(audit.createdAt) < Date.parse(current.createdAt))) {
+      return false;
+    }
+
+    const attempts: UnmarshalledAttributes[] = [...(audit.attempts ?? []), ...current.attempts];
+    // First too: an interrupted run merges again, finding the audit unmerged
+    await moveCopies(client, table, audit.PK, audit.createdAt);
+    try {
+      await client.send(
+        new UpdateItemCommand({
+          TableName: table,
+          Key: key,
+          UpdateExpression: "SET #attempts = :attempts, #createdAt = :createdAt",
+          // Unchanged since the read: an upsert in between appended an attempt
+          ConditionExpression: "#createdAt = :current AND size(#attempts) = :count",
+          ExpressionAttributeNames: names,
+          ExpressionAttributeValues: marshall(
+            {
+              ":attempts": attempts.map((item, i) => ({ ...item, number: i + 1 })),
+              ":createdAt": audit.createdAt,
+              ":current": current.createdAt,
+              ":count": current.attempts.length,
+            },
+            MARSHALL_OPTIONS,
+          ),
+        }),
+      );
+    } catch (error) {
+      if (!(error instanceof ConditionalCheckFailedException)) throw error;
+      continue;
+    }
+
+    // Again, as an upsert in between rewrote its copies with the audit's createdAt
+    await moveCopies(client, table, audit.PK, audit.createdAt);
+    return true;
+  }
+
+  throw new Error(`Audit ${audit.PK} changed on each of ${MERGE_ATTEMPTS} merges; run again`);
+}
+
+/** Gives the copies in an audit's partition the audit's `createdAt`. */
+async function moveCopies(
+  client: DynamoDBClient,
+  table: string,
+  partition: string,
+  createdAt: string,
+) {
+  const names = { "#pk": Keys.PARTITION_KEY, "#sk": Keys.SORT_KEY, "#createdAt": "createdAt" };
+  let startKey: QueryCommandOutput["LastEvaluatedKey"];
+
+  do {
+    const { Items: copies = [], LastEvaluatedKey: lastKey } = await client.send(
+      new QueryCommand({
+        TableName: table,
+        KeyConditionExpression: "#pk = :pk AND begins_with(#sk, :related)",
+        FilterExpression: "#createdAt <> :createdAt",
+        ProjectionExpression: "#pk, #sk",
+        ExpressionAttributeNames: names,
+        ExpressionAttributeValues: marshall({
+          ":pk": partition,
+          ":related": DynamoDB.SortKeys.RELATED_PREFIX,
+          ":createdAt": createdAt,
+        }),
+        ExclusiveStartKey: startKey,
+      }),
+    );
+
+    await Promise.all(
+      copies.map(async (copy) => {
+        try {
+          await client.send(
+            new UpdateItemCommand({
+              TableName: table,
+              Key: copy,
+              UpdateExpression: "SET #createdAt = :createdAt",
+              // Not recreated when it expired meanwhile
+              ConditionExpression: "attribute_exists(#pk)",
+              ExpressionAttributeNames: { "#pk": Keys.PARTITION_KEY, "#createdAt": "createdAt" },
+              ExpressionAttributeValues: marshall({ ":createdAt": createdAt }),
+            }),
+          );
+        } catch (error) {
+          if (!(error instanceof ConditionalCheckFailedException)) throw error;
+        }
+      }),
+    );
+    startKey = lastKey;
+  } while (startKey);
 }
 
 /** Runs `fn` over `items`, `size` at a time. */

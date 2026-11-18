@@ -3,6 +3,7 @@ import {
   type DynamoDBClient,
   GetItemCommand,
   PutItemCommand,
+  QueryCommand,
   ScanCommand,
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
@@ -62,12 +63,14 @@ const conditionFailed = () =>
   new ConditionalCheckFailedException({ message: "The conditional request failed", $metadata: {} });
 
 /**
- * A client whose scan returns `pages`, whose reads find the items on them, and
- * whose writes `reject` can refuse with a failed condition.
+ * A client whose scan returns `pages`, whose reads find the items on them (or in
+ * `v2`, for the v2 table), and whose writes `reject` can refuse with a failed
+ * condition.
  */
 const stubClient = (
   pages: Record<string, unknown>[][],
   reject: (command: PutItemCommand | UpdateItemCommand) => boolean = () => false,
+  v2: Record<string, unknown>[] = [],
 ) => {
   const send = vi.fn(async (command: unknown) => {
     if (command instanceof ScanCommand) {
@@ -81,8 +84,14 @@ const stubClient = (
     }
     if (command instanceof GetItemCommand) {
       const { PK, SK } = unmarshall(command.input.Key!);
-      const item = pages.flat().find((item) => item.PK === PK && item.SK === SK);
+      const items = command.input.TableName === TO ? v2 : pages.flat();
+      const item = items.find((item) => item.PK === PK && item.SK === SK);
       return { Item: item && marshall(item, { removeUndefinedValues: true }) };
+    }
+    if (command instanceof QueryCommand) {
+      const { ":pk": PK } = unmarshall(command.input.ExpressionAttributeValues!);
+      const copies = v2.filter((item) => item.PK === PK && String(item.SK).startsWith("related#"));
+      return { Items: copies.map(({ PK, SK }) => marshall({ PK, SK })) };
     }
     if (reject(command as PutItemCommand | UpdateItemCommand)) {
       throw conditionFailed();
@@ -138,7 +147,7 @@ describe("migrate", () => {
     });
     expect(report).toEqual({
       scanned: 1,
-      audits: { written: 1, existing: 0 },
+      audits: { written: 1, existing: 0, merged: 0 },
       copies: { written: 0, existing: 0, ownTarget: 0 },
       scopes: { updated: 0, missingAudit: 0 },
       invalid: [],
@@ -189,6 +198,7 @@ describe("migrate", () => {
       target: { app: "TestApp", type: "User", id: "user-1" },
       source: { app: "App1", type: "Order", id: "order-1" },
       rerunable: true,
+      related: true,
       trace: "trace-1:2",
       createdAt: NOW,
       updatedAt: NOW,
@@ -260,6 +270,121 @@ describe("migrate", () => {
       [FROM, { PK: "tenant-a#App1.Order", SK: "audit-1" }],
       [FROM, { PK: "App1.Order", SK: "audit-2" }],
     ]);
+  });
+
+  it("writes createdAt and updatedAt with milliseconds, and leaves out NULLs", async () => {
+    const { client, send } = stubClient([
+      [
+        v1Copy({ createdAt: "2026-01-01T00:00:00Z" }),
+        v1Audit({
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-02T03:04:05.6Z",
+          tenantId: null,
+          message: null,
+        }),
+      ],
+    ]);
+
+    await migrate({ client, from: FROM, to: TO });
+
+    const copy = putItems(send).find(({ SK }) => SK !== "audit");
+    const audit = putItems(send).find(({ SK }) => SK === "audit");
+    expect(copy).toMatchObject({ createdAt: "2026-01-01T00:00:00.000Z", updatedAt: NOW });
+    expect(audit).toMatchObject({
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-02T03:04:05.600Z",
+    });
+    expect(audit).not.toHaveProperty("tenantId");
+    expect(audit).not.toHaveProperty("message");
+  });
+
+  describe("an audit retried since the deploy", () => {
+    const EARLIER = "2026-01-01T00:00:00.000Z";
+    const v2Audit = (overrides: Record<string, unknown> = {}) => ({
+      PK: "App1.Order#audit-1",
+      SK: "audit",
+      attempts: [{ number: 1, status: "success", at: NOW }],
+      createdAt: NOW,
+      ...overrides,
+    });
+    const v2Copy = { PK: "App1.Order#audit-1", SK: "related#TestApp.User#user-1" };
+    const isAuditPut = (command: PutItemCommand | UpdateItemCommand) =>
+      command instanceof PutItemCommand && unmarshall(command.input.Item!).SK === "audit";
+
+    it("gets the earlier attempts first and the earlier createdAt, as do its copies", async () => {
+      const { client, send } = stubClient([[v1Audit({ createdAt: EARLIER })]], isAuditPut, [
+        v2Audit(),
+        v2Copy,
+      ]);
+
+      const report = await migrate({ client, from: FROM, to: TO });
+
+      const updates = commands(send, UpdateItemCommand).map(({ input }) => ({
+        key: unmarshall(input.Key!),
+        expression: input.UpdateExpression,
+        condition: input.ConditionExpression,
+        values: unmarshall(input.ExpressionAttributeValues!),
+      }));
+      const moved = {
+        key: v2Copy,
+        expression: "SET #createdAt = :createdAt",
+        condition: "attribute_exists(#pk)",
+        values: { ":createdAt": EARLIER },
+      };
+      expect(updates).toEqual([
+        moved,
+        {
+          key: { PK: "App1.Order#audit-1", SK: "audit" },
+          expression: "SET #attempts = :attempts, #createdAt = :createdAt",
+          condition: "#createdAt = :current AND size(#attempts) = :count",
+          values: {
+            ":attempts": [
+              { number: 1, status: "fail", error: "Boom", at: NOW },
+              { number: 2, status: "success", at: NOW },
+            ],
+            ":createdAt": EARLIER,
+            ":current": NOW,
+            ":count": 1,
+          },
+        },
+        moved,
+      ]);
+      expect(report.audits).toEqual({ written: 0, existing: 0, merged: 1 });
+    });
+
+    it("merges again when an upsert changed it meanwhile", async () => {
+      let refused = 0;
+      const { client, send } = stubClient(
+        [[v1Audit({ createdAt: EARLIER })]],
+        (command) =>
+          isAuditPut(command) ||
+          (command instanceof UpdateItemCommand &&
+            command.input.ConditionExpression?.startsWith("#createdAt") === true &&
+            refused++ === 0),
+        [v2Audit()],
+      );
+
+      const report = await migrate({ client, from: FROM, to: TO });
+
+      expect(
+        commands(send, UpdateItemCommand).filter(({ input }) =>
+          input.UpdateExpression?.startsWith("SET #attempts"),
+        ),
+      ).toHaveLength(2);
+      expect(report.audits).toMatchObject({ merged: 1 });
+    });
+
+    it("is left alone once it has the earlier createdAt", async () => {
+      const { client, send } = stubClient([[v1Audit({ createdAt: EARLIER })]], isAuditPut, [
+        v2Audit({ createdAt: EARLIER }),
+        v2Copy,
+      ]);
+
+      const report = await migrate({ client, from: FROM, to: TO });
+
+      expect(commands(send, UpdateItemCommand)).toEqual([]);
+      expect(report.audits).toEqual({ written: 0, existing: 1, merged: 0 });
+    });
   });
 
   it("leaves out a copy under its audit's own target", async () => {

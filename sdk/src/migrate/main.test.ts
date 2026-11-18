@@ -30,7 +30,7 @@ describe("aws-audit-migrate", () => {
     expect(JSON.parse(stdout)).toEqual({
       dryRun: false,
       scanned: 0,
-      audits: { written: 0, existing: 0 },
+      audits: { written: 0, existing: 0, merged: 0 },
       copies: { written: 0, existing: 0, ownTarget: 0 },
       scopes: { updated: 0, missingAudit: 0 },
       invalid: [],
