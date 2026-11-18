@@ -149,7 +149,7 @@ type CDKConfig = {
 The config lists each app's resource types, replacing the separate `apps` and `resourceTypes` lists: `defineAuditConfig({ apps: { Orders: ["Order"] } })`, and the same `apps` for `ConfigLayerConstruct`. Names may hold only letters, digits, `-` and `_`. `GET /config` answers `apps` as that map, without `resourceTypes`.
 
 1. Deploy. The new table is created empty and the Lambdas switch to it; the 1.x table (`{ENV}-{service}-Audit`) is retained, not deleted.
-2. Copy the 1.x audits with the SDK's `aws-audit-migrate`, with credentials for the account and region:
+2. Copy the 1.x audits with the SDK's `aws-audit-migrate`, with credentials for the account and region. Name both tables by name, not ARN; the two must differ:
 
    ```bash
    npx -p @flipboxlabs/aws-audit-sdk aws-audit-migrate \

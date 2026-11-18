@@ -54,9 +54,9 @@ const V1_KEYS = [
 export type MigrationOptions = {
   /** DynamoDB client for both tables */
   client: DynamoDBClient;
-  /** The earlier table, `{ENV}-{service}-Audit` */
+  /** The earlier table's name (not its ARN), `{ENV}-{service}-Audit` */
   from: string;
-  /** The v2 table, `{ENV}-{service}-Audit-v2` (`DynamoDB.Table.Name()`) */
+  /** The v2 table's name (not its ARN), `{ENV}-{service}-Audit-v2` (`DynamoDB.Table.Name()`) */
   to: string;
   /** Read and transform only; write nothing */
   dryRun?: boolean;
@@ -124,14 +124,14 @@ type Write = { kind: "audits" | "copies"; item: UnmarshalledAttributes };
  * (`DynamoDB.Attributes.MIGRATED`), which is how a later run knows to leave it.
  *
  * @returns What was copied, skipped and refused
- * @throws {RangeError} When `from` and `to` aren't two different tables, as merging
- * a table into itself would add each audit's attempts to it again, or when
- * `concurrency` isn't a positive integer
+ * @throws {RangeError} When `from` and `to` aren't the names of two different
+ * tables ({@link tablesProblem}), or when `concurrency` isn't a positive integer
  */
 export async function migrate(options: MigrationOptions): Promise<MigrationReport> {
   const { from, to, dryRun = false, concurrency = 10, onProgress } = options;
-  if (!from || !to || from === to) {
-    throw new RangeError("from and to must name two different tables");
+  const problem = tablesProblem(from, to);
+  if (problem) {
+    throw new RangeError(problem);
   }
   if (!Number.isInteger(concurrency) || concurrency < 1) {
     throw new RangeError(`concurrency must be a positive integer, not ${concurrency}`);
@@ -805,6 +805,23 @@ async function putCopies(
 }
 
 /** Runs `fn` over `items`, `size` at a time. */
+/** A DynamoDB table name: 3 to 255 letters, digits, `_`, `-` and `.` */
+const TABLE_NAME = /^[A-Za-z0-9_.-]{3,255}$/;
+
+/**
+ * Why a migration can't run from `from` to `to`: each must be a table's name, and
+ * not the same one, as merging a table into itself would add each audit's attempts
+ * to it again. An ARN is refused, as one table could be named both ways.
+ *
+ * @internal
+ */
+export function tablesProblem(from: string | undefined, to: string | undefined) {
+  if (!from || !to || !TABLE_NAME.test(from) || !TABLE_NAME.test(to)) {
+    return "from and to must be table names, not ARNs";
+  }
+  return from === to ? "from and to must name two different tables" : undefined;
+}
+
 /**
  * A client whose writes (`PutItem`, `UpdateItem` and `DeleteItem`) wait for one of
  * `limit` slots, so a run never has more in flight, however many partitions or

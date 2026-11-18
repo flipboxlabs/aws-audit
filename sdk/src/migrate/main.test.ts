@@ -38,17 +38,19 @@ describe("aws-audit-migrate", () => {
   });
 
   it("passes --dry-run through", async () => {
-    const { stdout } = await run(["--from", "A", "--to", "B", "--dry-run"]);
+    const { stdout } = await run(["--from", "PROD-Audit", "--to", "PROD-Audit-v2", "--dry-run"]);
 
     expect(JSON.parse(stdout)).toMatchObject({ dryRun: true });
   });
 
   it.each([
     [[]],
-    [["--from", "A"]],
-    [["--from", "A", "--to", "A"]],
-    [["--from", "A", "--to", "B", "--concurrency", "0"]],
-    [["--from", "A", "--to", "B", "--unknown"]],
+    [["--from", "PROD-Audit"]],
+    [["--from", "PROD-Audit", "--to", "PROD-Audit"]],
+    // One table could be named both ways
+    [["--from", "arn:aws:dynamodb:us-east-1:123456789012:table/PROD-Audit", "--to", "PROD-Audit"]],
+    [["--from", "PROD-Audit", "--to", "PROD-Audit-v2", "--concurrency", "0"]],
+    [["--from", "PROD-Audit", "--to", "PROD-Audit-v2", "--unknown"]],
   ])("refuses %j with the usage", async (argv) => {
     const { code, stderr, send } = await run(argv);
 
@@ -66,7 +68,7 @@ describe("aws-audit-migrate", () => {
 
   it("fails with the error when the migration does", async () => {
     const { code, stderr } = await run(
-      ["--from", "A", "--to", "B"],
+      ["--from", "PROD-Audit", "--to", "PROD-Audit-v2"],
       vi.fn(async (_command: unknown): Promise<unknown> => {
         throw new Error("ResourceNotFoundException");
       }),

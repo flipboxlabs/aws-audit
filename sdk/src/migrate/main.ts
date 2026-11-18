@@ -1,6 +1,6 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { parseArgs } from "node:util";
-import { migrate, type MigrationReport } from "./index.js";
+import { migrate, tablesProblem, type MigrationReport } from "./index.js";
 
 const USAGE = `Usage: aws-audit-migrate --from <table> --to <table> [options]
 
@@ -8,8 +8,8 @@ Copies the audits of an aws-audit 1.x table into the v2 table. Deploy the new
 version first; writes are conditional, so a run can be repeated.
 
 Options:
-  --from <table>         The earlier table, e.g. PROD-Orders-Audit
-  --to <table>           The v2 table, e.g. PROD-Orders-Audit-v2
+  --from <table>         The earlier table's name, e.g. PROD-Orders-Audit
+  --to <table>           The v2 table's name, e.g. PROD-Orders-Audit-v2
   --region <region>      AWS region (default: AWS_REGION, then the SDK's default)
   --concurrency <n>      Writes in flight at once, across the run (default: 10)
   --dry-run              Read and transform only; write nothing
@@ -56,8 +56,9 @@ export async function main(
   }
 
   const concurrency = values.concurrency === undefined ? 10 : Number(values.concurrency);
-  if (!values.from || !values.to || values.from === values.to) {
-    io.stderr.write(`--from and --to must name two different tables\n\n${USAGE}`);
+  const tables = tablesProblem(values.from, values.to);
+  if (tables || !values.from || !values.to) {
+    io.stderr.write(`--from and --to: ${tables}\n\n${USAGE}`);
     return 2;
   }
   if (!Number.isInteger(concurrency) || concurrency < 1) {

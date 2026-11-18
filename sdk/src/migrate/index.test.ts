@@ -957,19 +957,24 @@ describe("migrate", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  const ARN = `arn:aws:dynamodb:us-east-1:123456789012:table/${FROM}`;
   it.each([
-    { from: FROM, to: FROM },
-    { from: "", to: TO },
-    { from: FROM, to: "" },
-  ])("refuses to migrate from $from to $to, before it reads either", async ({ from, to }) => {
-    const { client, send } = stubClient([[v1Audit()]]);
-
     // Merging a table into itself would add each audit's attempts to it again
-    await expect(migrate({ client, from, to })).rejects.toThrow(
-      new RangeError("from and to must name two different tables"),
-    );
-    expect(send).not.toHaveBeenCalled();
-  });
+    { from: FROM, to: FROM, error: "from and to must name two different tables" },
+    // As would naming it by its name and its ARN
+    { from: FROM, to: ARN, error: "from and to must be table names, not ARNs" },
+    { from: ARN, to: TO, error: "from and to must be table names, not ARNs" },
+    { from: "", to: TO, error: "from and to must be table names, not ARNs" },
+    { from: FROM, to: "", error: "from and to must be table names, not ARNs" },
+  ])(
+    "refuses to migrate from $from to $to, before it reads either",
+    async ({ from, to, error }) => {
+      const { client, send } = stubClient([[v1Audit()]]);
+
+      await expect(migrate({ client, from, to })).rejects.toThrow(new RangeError(error));
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps every write, copies' included, within the concurrency", async () => {
     const resources = Array.from({ length: 12 }, (_, n) => `user-${n}`);
