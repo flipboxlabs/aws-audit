@@ -389,6 +389,74 @@
       "output": {}
     },
     {
+      "service": "DynamoDB",
+      "command": "GetItem",
+      "input": {
+        "TableName": "TEST-Contract-Audit-v2",
+        "Key": {
+          "PK": {
+            "S": "-#App1#Order#audit-1"
+          },
+          "SK": {
+            "S": "audit"
+          }
+        },
+        "ConsistentRead": true
+      },
+      "output": {
+        "Item": {
+          "status": {
+            "S": "success"
+          },
+          "tier": {
+            "N": "2"
+          },
+          "id": {
+            "S": "audit-1"
+          },
+          "operation": {
+            "S": "createOrder"
+          },
+          "target": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "type": {
+                "S": "Order"
+              },
+              "id": {
+                "S": "order-1"
+              }
+            }
+          },
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "attempts": {
+            "L": [
+              {
+                "M": {
+                  "number": {
+                    "N": "1"
+                  },
+                  "status": {
+                    "S": "success"
+                  },
+                  "at": {
+                    "S": "2026-01-02T03:04:05.678Z"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
       "service": "EventBridge",
       "command": "PutEvents",
       "input": {

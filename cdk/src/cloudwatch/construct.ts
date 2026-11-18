@@ -42,8 +42,8 @@ export class CloudWatchConstruct extends Construct {
       retryAttempts: 2,
     });
 
-    // Allow writes to DynamoDB
-    props.table.grantWriteData(lambdaFn);
+    // Writes, and reads an audit back once its related copies are put
+    props.table.grantReadWriteData(lambdaFn);
 
     // Allow puts to EventBridge
     props.eventBus.grantPutEventsTo(lambdaFn);

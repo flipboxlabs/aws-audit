@@ -104,12 +104,18 @@ type StoredReply = {
   stored: { count: number; createdAt?: string; kept?: Record<string, unknown> };
 };
 
+/**
+ * The GetItem reply that reads an upsert's audit back once its copies are put: the
+ * audit as stored, `migrated` when a migration merged a 1.x audit into it meanwhile
+ */
+type ReadBackReply = { readBack: StoredReply["stored"] & { migrated?: true } };
+
 type Case = {
   name: string;
   description: string;
   operation: Operation;
   args: unknown[];
-  replies?: (Reply | StoredReply)[];
+  replies?: (Reply | StoredReply | ReadBackReply)[];
 };
 
 /**
@@ -143,10 +149,26 @@ const storedReply = (
   };
 };
 
+/** What GetItem returns for the audit of an upsert of `input` (see {@link ReadBackReply}) */
+const readBackReply = (
+  input: Record<string, unknown>,
+  { migrated, ...stored }: ReadBackReply["readBack"],
+): Reply => {
+  const { output } = storedReply(input, stored) as { output: { Attributes: object } };
+  return {
+    output: { Item: { ...output.Attributes, ...(migrated ? marshall({ migrated }) : {}) } },
+  };
+};
+
 const record = async ({ name, description, operation, args, replies = [] }: Case) => {
+  const input = args[0] as Record<string, unknown>;
   const { calls, service } = recordingService(
     replies.map((reply) =>
-      "stored" in reply ? storedReply(args[0] as Record<string, unknown>, reply.stored) : reply,
+      "stored" in reply
+        ? storedReply(input, reply.stored)
+        : "readBack" in reply
+          ? readBackReply(input, reply.readBack)
+          : reply,
     ),
   );
 
@@ -405,7 +427,7 @@ const CASES: Case[] = [
         resources: [{ app: "TestApp", type: "User", id: "user#1" }],
       }),
     ],
-    replies: [attempts(1), { output: {} }, accepted()],
+    replies: [attempts(1), { output: {} }, { readBack: { count: 1 } }, accepted()],
   },
   {
     name: "upsert/related-resources",
@@ -424,7 +446,7 @@ const CASES: Case[] = [
         event: { source: "orders", "detail-type": "OrderCreated", detail: "{}" },
       }),
     ],
-    replies: [attempts(1), { output: {} }, { output: {} }, accepted()],
+    replies: [attempts(1), { output: {} }, { output: {} }, { readBack: { count: 1 } }, accepted()],
   },
   {
     name: "upsert/repeated-related",
@@ -439,7 +461,7 @@ const CASES: Case[] = [
         ],
       }),
     ],
-    replies: [attempts(1), { output: {} }, { output: {} }, accepted()],
+    replies: [attempts(1), { output: {} }, { output: {} }, { readBack: { count: 1 } }, accepted()],
   },
   {
     name: "upsert/own-target-related",
@@ -471,7 +493,13 @@ const CASES: Case[] = [
         resources: [{ app: "TestApp", type: "User", id: "user-1" }],
       }),
     ],
-    replies: [attempts(2, "2026-01-01T00:00:00.000Z"), { output: {} }, { output: {} }, accepted()],
+    replies: [
+      attempts(2, "2026-01-01T00:00:00.000Z"),
+      { output: {} },
+      { output: {} },
+      { readBack: { count: 2, createdAt: "2026-01-01T00:00:00.000Z" } },
+      accepted(),
+    ],
   },
   {
     name: "upsert/stale-related",
@@ -497,6 +525,7 @@ const CASES: Case[] = [
         },
       },
       { output: {} },
+      { readBack: { count: 2, createdAt: "2026-01-01T00:00:00.000Z" } },
       accepted(),
     ],
   },
@@ -518,6 +547,40 @@ const CASES: Case[] = [
         rerunable: true,
       }),
       { output: {} },
+      { output: {} },
+      {
+        readBack: {
+          count: 2,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          kept: { message: "Order created", trace: "trace-1:2", rerunable: true },
+        },
+      },
+      accepted(),
+    ],
+  },
+  {
+    name: "upsert/merged-meanwhile",
+    description:
+      "When a migration merged a 1.x audit into the audit since its upsert (read back migrated, with more attempts), its copies are put again from the merged audit, at its revision",
+    operation: "upsertItem",
+    args: [
+      upsertInput({
+        status: "fail",
+        resources: [{ app: "TestApp", type: "User", id: "user-1" }],
+      }),
+    ],
+    replies: [
+      attempts(2, "2026-01-01T00:00:00.000Z"),
+      { output: {} },
+      { output: {} },
+      {
+        readBack: {
+          count: 3,
+          createdAt: "2025-10-01T00:00:00.000Z",
+          kept: { message: "From 1.x" },
+          migrated: true,
+        },
+      },
       { output: {} },
       accepted(),
     ],
@@ -554,7 +617,7 @@ const CASES: Case[] = [
         ],
       }),
     ],
-    replies: [attempts(1), { output: {} }, accepted()],
+    replies: [attempts(1), { output: {} }, { readBack: { count: 1 } }, accepted()],
   },
   {
     name: "upsert/event-throttled",

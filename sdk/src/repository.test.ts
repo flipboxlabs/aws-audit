@@ -3,7 +3,7 @@ import {
   ConditionalCheckFailedException,
   type DynamoDBClient,
   GetItemCommand,
-  type PutItemCommand,
+  PutItemCommand,
   QueryCommand,
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
@@ -587,7 +587,10 @@ describe("AuditRepository", () => {
 
   describe("upsertRelated", () => {
     const puts = () =>
-      mockClient.send.mock.calls.map(([command]) => (command as PutItemCommand).input);
+      mockClient.send.mock.calls
+        .map(([command]) => command)
+        .filter((command) => command instanceof PutItemCommand)
+        .map((command) => command.input);
     const putItems = () => puts().map(({ Item }) => unmarshall(Item ?? {}));
     const STORED = { createdAt: CREATED_AT, updatedAt: CREATED_AT };
 
@@ -619,7 +622,6 @@ describe("AuditRepository", () => {
         { createdAt: "2025-12-31T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
       );
 
-      expect(mockClient.send).toHaveBeenCalledTimes(1);
       const [copy, ...rest] = putItems() ?? [];
       expect(rest).toEqual([]);
       expect(copy).toEqual({
@@ -740,7 +742,6 @@ describe("AuditRepository", () => {
         STORED,
       );
 
-      expect(mockClient.send).toHaveBeenCalledTimes(1);
       expect(putItems()?.map(({ SK }) => SK)).toEqual(["related#TestApp#User#u"]);
     });
 
@@ -782,7 +783,7 @@ describe("AuditRepository", () => {
           .mockRejectedValueOnce(
             new ConditionalCheckFailedException({ message: "Condition failed", $metadata: {} }),
           )
-          .mockResolvedValueOnce({});
+          .mockResolvedValue({});
 
         await expect(retried()).resolves.toBeUndefined();
 
@@ -797,6 +798,79 @@ describe("AuditRepository", () => {
 
         await expect(retried()).rejects.toThrow("Throttled");
         expect(mockClient.send).toHaveBeenCalledTimes(1);
+      });
+
+      /** Reads back the audit as `stored`, and accepts every other request */
+      const readBack = (stored: Record<string, unknown> | undefined) =>
+        mockClient.send.mockImplementation(async (command: unknown) =>
+          command instanceof GetItemCommand
+            ? { Item: stored && marshall(stored, { removeUndefinedValues: true }) }
+            : {},
+        );
+      const threeAttempts = [1, 2, 3].map((number) => ({ ...attempt, number }));
+
+      it("should read the audit back once its copies are put", async () => {
+        readBack(storedAudit({ attempts: threeAttempts }));
+
+        await retried();
+
+        const [, , read] = mockClient.send.mock.calls.map(([command]) => command);
+        expect(read).toBeInstanceOf(GetItemCommand);
+        expect((read as GetItemCommand).input).toEqual({
+          TableName: TABLE,
+          Key: marshall({ PK: "-#App1#Order#audit-123", SK: "audit" }),
+          ConsistentRead: true,
+        });
+        // A later upsert, which writes its own copies
+        expect(puts()).toHaveLength(2);
+      });
+
+      it("should put the copies again from the audit a migration merged meanwhile", async () => {
+        // The 1.x audit's attempt first, and its createdAt and message
+        readBack(
+          storedAudit({
+            attempts: threeAttempts,
+            createdAt: "2025-10-01T00:00:00.000Z",
+            message: "From 1.x",
+            migrated: true,
+          }),
+        );
+
+        await retried();
+
+        expect(
+          putItems().map(({ SK, revision, createdAt, message }) => ({
+            SK,
+            revision,
+            createdAt,
+            message,
+          })),
+        ).toEqual([
+          { SK: "related#TestApp#User#u", revision: 2, createdAt: CREATED_AT, message: undefined },
+          { SK: "related#TestApp#Order#o", revision: 2, createdAt: CREATED_AT, message: undefined },
+          {
+            SK: "related#TestApp#User#u",
+            revision: 3,
+            createdAt: "2025-10-01T00:00:00.000Z",
+            message: "From 1.x",
+          },
+          {
+            SK: "related#TestApp#Order#o",
+            revision: 3,
+            createdAt: "2025-10-01T00:00:00.000Z",
+            message: "From 1.x",
+          },
+        ]);
+        expect(unmarshall(puts()[2].ExpressionAttributeValues ?? {})).toEqual({ ":revision": 3 });
+      });
+
+      it("should leave the copies when the audit was merged before its upsert, or is gone", async () => {
+        readBack(storedAudit({ attempts: threeAttempts.slice(0, 2), migrated: true }));
+        await retried();
+        readBack(undefined);
+        await retried();
+
+        expect(puts()).toHaveLength(4);
       });
     });
   });

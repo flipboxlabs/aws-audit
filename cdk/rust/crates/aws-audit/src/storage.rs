@@ -348,6 +348,11 @@ impl AuditRepository {
     /// Each copy is put in turn, as its `revision`, the audit's attempt count, and
     /// only over a copy of the same or an earlier revision: when upserts of the
     /// audit overlap, the copy is the latest one's, whichever writes its copies last.
+    ///
+    /// Then the audit is read again: when a migration (`aws-audit-migrate`) merged
+    /// a 1.x audit into it since it was upserted, its copies are put again from the
+    /// merged audit, at its revision. A merge rewrites the copies it finds, so a
+    /// copy written after it, from the audit before it, would stay otherwise.
     pub async fn upsert_related<'a>(
         &self,
         audit: &Audit,
@@ -375,14 +380,53 @@ impl AuditRepository {
             return Ok(());
         }
 
-        let now = self.clock.now();
         let key = primary_key(
             audit.tenant_id.as_deref(),
             &audit.target.app,
             &audit.target.resource_type,
             &audit.id,
         )?;
+        let revision = audit.attempts.as_ref().map_or(0, Vec::len);
+        self.put_related(audit, &key, &resources, revision).await?;
 
+        let output = self
+            .client
+            .get_item()
+            .table_name(&self.table)
+            .set_key(Some(marshall_map(&key)))
+            .consistent_read(true)
+            .send()
+            .await?;
+        let Some(item) = output.item() else {
+            return Ok(());
+        };
+        let migrated = item
+            .get(attributes::MIGRATED)
+            .and_then(|migrated| migrated.as_bool().ok())
+            .is_some_and(|migrated| *migrated);
+        let attempts = item
+            .get("attempts")
+            .and_then(|attempts| attempts.as_l().ok())
+            .map_or(0, Vec::len);
+        if migrated && attempts != revision {
+            let merged = parse_item(unmarshall_map(item))?;
+            self.put_related(&merged, &key, &resources, attempts)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Puts the copies of `audit`, keyed `key`, under `resources` (each with its
+    /// sort key), in turn, as `revision`.
+    async fn put_related(
+        &self,
+        audit: &Audit,
+        key: &Map<String, Value>,
+        resources: &[(String, &ResourceReference)],
+        revision: usize,
+    ) -> Result<(), StorageError> {
+        let now = self.clock.now();
         let Value::Object(payload) = serde_json::to_value(audit)? else {
             unreachable!("an audit serializes to an object");
         };
@@ -392,7 +436,6 @@ impl AuditRepository {
             .collect();
         let source = serde_json::to_value(&audit.target)?;
         let rerunable = audit.rerunable.unwrap_or(audit.event.is_some());
-        let revision = audit.attempts.as_ref().map_or(0, Vec::len);
 
         // In turn, so a throttled table isn't hit harder
         for (sort_key, resource) in resources {
@@ -401,7 +444,7 @@ impl AuditRepository {
                     keys::PARTITION_KEY.to_owned(),
                     key[keys::PARTITION_KEY].clone(),
                 ),
-                (keys::SORT_KEY.to_owned(), Value::String(sort_key)),
+                (keys::SORT_KEY.to_owned(), Value::String(sort_key.clone())),
             ]);
             item.extend(summary.clone());
             item.insert("target".to_owned(), serde_json::to_value(resource)?);

@@ -14,12 +14,14 @@ import { DynamoDB } from "../constants.js";
 import {
   constructIndexAttributes,
   constructPrimaryKey,
+  relatedCopy,
   relatedSortKey,
   resourceScopes,
   type UnmarshalledAttributes,
 } from "../repository.js";
 import { AuditSchema, AuditSummarySchema } from "../schema/audit.js";
 import { DateTimeStringSchema, type ResourceReference } from "../schema/common.js";
+import { type AuditStorage, AuditStorageSchema } from "../schema/storage.js";
 import { hasResourceId } from "../utils.js";
 
 const { Attributes, Keys } = DynamoDB;
@@ -595,11 +597,16 @@ const NOT_FILLED = new Set<string>([
 
 /**
  * Merges an earlier audit into the v2 audit an upsert wrote since the deploy: its
- * attempts go first, every attempt is renumbered by its position, the audit and
- * its copies take the earlier of the two `createdAt`s, and the audit is marked
- * `migrated`. The audit also gets the earlier audit's fields its upserts left out,
- * as an upsert keeps the fields it doesn't give (a rerun needs the `event`), with
- * the index attributes they add (a trace's).
+ * attempts go first, every attempt is renumbered by its position, the audit takes
+ * the earlier of the two `createdAt`s, and the audit is marked `migrated`. The
+ * audit also gets the earlier audit's fields its upserts left out, as an upsert
+ * keeps the fields it doesn't give (a rerun needs the `event`), with the index
+ * attributes they add (a trace's).
+ *
+ * Its copies are put again from the merged audit, as its revision, the merged
+ * attempt count. An upsert that wrote the audit before the merge and puts its
+ * copies after it can't replace those, and reads the audit back to put a copy
+ * the merge didn't find from the merged audit (see `upsertRelated`).
  *
  * @returns False when the v2 audit is marked `migrated` already, by an earlier run
  * @throws Error when upserts kept changing the audit while merging
@@ -643,9 +650,14 @@ async function mergeAudit(
         ([name]) => current[name] === undefined,
       ),
     ];
+    const renumbered = attempts.map((item, i) => ({ ...item, number: i + 1 }));
+    // The audit as the merge leaves it, which its copies are put from
+    const result = AuditStorageSchema.parse({ ...merged, attempts: renumbered, createdAt });
+    const count = current.attempts?.length ?? 0;
 
-    // First too: an interrupted run merges again, finding the audit unmerged
-    await moveCopies(client, table, audit.PK, createdAt);
+    // First too, at the audit's revision: an interrupted run merges again, finding
+    // the audit unmerged
+    await putCopies(client, table, audit.PK, result, { revision: count, ttl: current.ttl });
     try {
       await client.send(
         new UpdateItemCommand({
@@ -666,11 +678,11 @@ async function mergeAudit(
           },
           ExpressionAttributeValues: marshall(
             {
-              ":attempts": attempts.map((item, i) => ({ ...item, number: i + 1 })),
+              ":attempts": renumbered,
               ":createdAt": createdAt,
               ":migrated": true,
               ":current": current.createdAt,
-              ":count": current.attempts?.length ?? 0,
+              ":count": count,
               ...Object.fromEntries(filled.map(([, value], i) => [`:f${i}`, value])),
             },
             MARSHALL_OPTIONS,
@@ -682,22 +694,30 @@ async function mergeAudit(
       continue;
     }
 
-    // Again, as an upsert in between rewrote its copies with the audit's createdAt
-    await moveCopies(client, table, audit.PK, createdAt);
+    // Again, at the merged revision, which a copy put from the audit before the
+    // merge can't replace: an upsert in between rewrote its copies
+    await putCopies(client, table, audit.PK, result, {
+      revision: renumbered.length,
+      ttl: current.ttl,
+    });
     return true;
   }
 
   throw new Error(`Audit ${audit.PK} changed on each of ${MERGE_ATTEMPTS} merges; run again`);
 }
 
-/** Gives the copies in an audit's partition the audit's `createdAt`. */
-async function moveCopies(
+/**
+ * Puts each copy in an audit's partition again from the audit, as `revision`
+ * ({@link relatedCopy}), so it holds the audit's `createdAt` and fields; only over
+ * a copy of the same or an earlier revision, and not one that expired meanwhile.
+ */
+async function putCopies(
   client: DynamoDBClient,
   table: string,
   partition: string,
-  createdAt: string,
+  audit: AuditStorage,
+  { revision, ttl }: { revision: number; ttl?: number },
 ) {
-  const names = { "#pk": Keys.PARTITION_KEY, "#sk": Keys.SORT_KEY, "#createdAt": "createdAt" };
   let startKey: QueryCommandOutput["LastEvaluatedKey"];
 
   do {
@@ -705,13 +725,15 @@ async function moveCopies(
       new QueryCommand({
         TableName: table,
         KeyConditionExpression: "#pk = :pk AND begins_with(#sk, :related)",
-        FilterExpression: "#createdAt <> :createdAt",
-        ProjectionExpression: "#pk, #sk",
-        ExpressionAttributeNames: names,
+        ProjectionExpression: "#target",
+        ExpressionAttributeNames: {
+          "#pk": Keys.PARTITION_KEY,
+          "#sk": Keys.SORT_KEY,
+          "#target": "target",
+        },
         ExpressionAttributeValues: marshall({
           ":pk": partition,
           ":related": DynamoDB.SortKeys.RELATED_PREFIX,
-          ":createdAt": createdAt,
         }),
         ExclusiveStartKey: startKey,
       }),
@@ -719,16 +741,19 @@ async function moveCopies(
 
     await Promise.all(
       copies.map(async (copy) => {
+        const { target } = unmarshall(copy) as { target: ResourceReference };
         try {
           await client.send(
-            new UpdateItemCommand({
+            new PutItemCommand({
               TableName: table,
-              Key: copy,
-              UpdateExpression: "SET #createdAt = :createdAt",
-              // Not recreated when it expired meanwhile
-              ConditionExpression: "attribute_exists(#pk)",
-              ExpressionAttributeNames: { "#pk": Keys.PARTITION_KEY, "#createdAt": "createdAt" },
-              ExpressionAttributeValues: marshall({ ":createdAt": createdAt }),
+              Item: marshall(relatedCopy(audit, target, { revision, ttl }), MARSHALL_OPTIONS),
+              ConditionExpression:
+                "attribute_exists(#pk) AND (attribute_not_exists(#revision) OR #revision <= :revision)",
+              ExpressionAttributeNames: {
+                "#pk": Keys.PARTITION_KEY,
+                "#revision": Attributes.REVISION,
+              },
+              ExpressionAttributeValues: marshall({ ":revision": revision }),
             }),
           );
         } catch (error) {

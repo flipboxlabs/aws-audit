@@ -55,6 +55,22 @@ describe("CloudWatchConstruct", () => {
     });
   });
 
+  it("should let the subscription read an audit back, as well as write it", () => {
+    synth().hasResourceProperties("AWS::IAM::Policy", {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: Match.arrayWith([
+              "dynamodb:GetItem",
+              "dynamodb:PutItem",
+              "dynamodb:UpdateItem",
+            ]),
+          }),
+        ]),
+      },
+    });
+  });
+
   it("should send audit lines from every other log group to the subscription", () => {
     const template = synth();
 

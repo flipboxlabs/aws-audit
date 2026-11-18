@@ -455,6 +455,48 @@ export function constructIndexAttributes(
 }
 
 /**
+ * The copy of an audit, as stored, that lists it under a related resource: the
+ * audit's summary, with the resource as `target`, the audit's target as `source`
+ * and `related: true`, in the audit's partition (`SK`
+ * `related#{app}#{type}#{resourceId}`), as `revision`, the audit's attempt count.
+ *
+ * @param audit - The audit as stored
+ * @param resource - The related resource, with an id
+ * @param options - The copy's `revision` and `ttl`
+ * @returns The copy's attributes
+ * @internal
+ */
+export function relatedCopy(
+  audit: AuditStorage,
+  resource: ResourceReference,
+  { revision, ttl }: { revision: number; ttl?: number },
+): UnmarshalledAttributes {
+  const target = { app: resource.app, type: resource.type, id: resource.id };
+  const copy = {
+    ...AuditSummarySchema.parse(audit),
+    target,
+    source: audit.target,
+    rerunable: audit.rerunable ?? !!audit.event,
+    related: true,
+  };
+  const { PK } = constructPrimaryKey({
+    tenantId: audit.tenantId,
+    id: audit.id,
+    resourceType: audit.target.type,
+    app: audit.target.app,
+  });
+
+  return {
+    [Keys.PARTITION_KEY]: PK,
+    [Keys.SORT_KEY]: relatedSortKey(target),
+    ...copy,
+    ...constructIndexAttributes(copy, DynamoDB.Kinds.RELATED),
+    ...(ttl === undefined ? {} : { [Attributes.TTL]: ttl }),
+    [Attributes.REVISION]: revision,
+  };
+}
+
+/**
  * Repository for managing audit records in DynamoDB.
  *
  * Provides CRUD operations for audit records with support for:
@@ -715,16 +757,21 @@ export class AuditRepository<C extends AuditConfig> {
    *
    * A copy holds the audit's summary, with the resource as `target`, the audit's
    * target as `source` and `related: true`, in the audit's partition (`SK`
-   * `related#{app}#{type}#{resourceId}`). It is built from the audit as stored, so
-   * it holds the fields a retry kept and sorts with the audit by its stored
-   * `createdAt`. Each upsert rewrites the copies of the resources it
-   * lists, once per resource, except its own target, under which the audit lists
-   * already; a copy under a resource a retry no longer lists stays,
+   * `related#{app}#{type}#{resourceId}`; see {@link relatedCopy}). It is built
+   * from the audit as stored, so it holds the fields a retry kept and sorts with
+   * the audit by its stored `createdAt`. Each upsert rewrites the copies of the
+   * resources it lists, once per resource, except its own target, under which the
+   * audit lists already; a copy under a resource a retry no longer lists stays,
    * as do that resource's `scopes` on the audit.
    *
    * Each copy is put in turn, as its `revision`, the audit's attempt count, and
    * only over a copy of the same or an earlier revision: when upserts of the audit
    * overlap, the copy is the latest one's, whichever writes its copies last.
+   *
+   * Then the audit is read again: when a migration (`aws-audit-migrate`) merged a
+   * 1.x audit into it since it was upserted, its copies are put again from the
+   * merged audit, at its revision. A merge rewrites the copies it finds, so a copy
+   * written after it, from the audit before it, would stay otherwise.
    *
    * @param audit - The audit as stored, from {@link upsertItem}
    * @param related - The resources the upsert listed in `resources`
@@ -751,43 +798,50 @@ export class AuditRepository<C extends AuditConfig> {
     }
     if (resources.size === 0) return;
 
-    const primaryKey = constructPrimaryKey({
-      tenantId: audit.tenantId,
-      id: audit.id,
-      resourceType: audit.target.type,
-      app: audit.target.app,
-    });
-    const summary = AuditSummarySchema.parse(audit);
-    const ttl = this.constructTTLAttribute(this.config.ttlSeconds);
     const revision = audit.attempts?.length ?? 0;
+    await this.putRelated(audit, resources.values(), revision);
 
-    const items = Array.from(resources, ([sortKey, resource]) => {
-      const target = { app: resource.app, type: resource.type, id: resource.id };
-      const copy = {
-        ...summary,
-        target,
-        source: audit.target,
-        rerunable: audit.rerunable ?? !!audit.event,
-        related: true,
-      };
+    const { Item: item } = await this.client.send(
+      new GetItemCommand({
+        TableName: DynamoDB.Table.Name(),
+        Key: marshall(
+          constructPrimaryKey({
+            tenantId: audit.tenantId,
+            id: audit.id,
+            resourceType: audit.target.type,
+            app: audit.target.app,
+          }),
+          MARSHALL_OPTIONS,
+        ),
+        ConsistentRead: true,
+      }),
+    );
+    const current = item && unmarshall(item);
+    const attempts = (current?.attempts as unknown[] | undefined)?.length ?? 0;
+    if (current?.[Attributes.MIGRATED] && attempts !== revision) {
+      await this.putRelated(
+        AuditStorageSchema.parse(withoutNulls(current)),
+        resources.values(),
+        attempts,
+      );
+    }
+  }
 
-      return {
-        [Keys.PARTITION_KEY]: primaryKey.PK,
-        [Keys.SORT_KEY]: sortKey,
-        ...copy,
-        ...constructIndexAttributes(copy, DynamoDB.Kinds.RELATED),
-        ...ttl,
-        [Attributes.REVISION]: revision,
-      };
-    });
+  /** Puts the copies of `audit` under `resources`, in turn, as `revision`. */
+  private async putRelated(
+    audit: AuditStorage,
+    resources: Iterable<ResourceReference>,
+    revision: number,
+  ): Promise<void> {
+    const { ttl } = this.constructTTLAttribute(this.config.ttlSeconds);
 
     // In turn, so a throttled table isn't hit harder
-    for (const item of items) {
+    for (const resource of resources) {
       try {
         await this.client.send(
           new PutItemCommand({
             TableName: DynamoDB.Table.Name(),
-            Item: marshall(item, MARSHALL_OPTIONS),
+            Item: marshall(relatedCopy(audit, resource, { revision, ttl }), MARSHALL_OPTIONS),
             ConditionExpression: "attribute_not_exists(#revision) OR #revision <= :revision",
             ExpressionAttributeNames: { "#revision": Attributes.REVISION },
             ExpressionAttributeValues: marshall({ ":revision": revision }),

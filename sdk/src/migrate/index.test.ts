@@ -102,7 +102,7 @@ const stubClient = (
     if (command instanceof QueryCommand) {
       const { ":pk": PK } = unmarshall(command.input.ExpressionAttributeValues!);
       const copies = v2.filter((item) => item.PK === PK && String(item.SK).startsWith("related#"));
-      return { Items: copies.map(({ PK, SK }) => marshall({ PK, SK })) };
+      return { Items: copies.map(({ target }) => marshall({ target })) };
     }
     if (reject(command as PutItemCommand | UpdateItemCommand)) {
       throw conditionFailed();
@@ -570,7 +570,11 @@ describe("migrate", () => {
       traceId: "trace-1",
       traceStage: 2,
     };
-    const v2Copy = { PK: "-#App1#Order#audit-1", SK: "related#TestApp#User#user-1" };
+    const v2Copy = {
+      PK: "-#App1#Order#audit-1",
+      SK: "related#TestApp#User#user-1",
+      target: { app: "TestApp", type: "User", id: "user-1" },
+    };
     const isAuditPut = (command: PutItemCommand | UpdateItemCommand) =>
       command instanceof PutItemCommand && unmarshall(command.input.Item!).SK === "audit";
 
@@ -588,14 +592,7 @@ describe("migrate", () => {
         condition: input.ConditionExpression,
         values: unmarshall(input.ExpressionAttributeValues!),
       }));
-      const moved = {
-        key: v2Copy,
-        expression: "SET #createdAt = :createdAt",
-        condition: "attribute_exists(#pk)",
-        values: { ":createdAt": EARLIER },
-      };
       expect(updates).toEqual([
-        moved,
         {
           key: { PK: "-#App1#Order#audit-1", SK: "audit" },
           expression: "SET #attempts = :attempts, #createdAt = :createdAt, #migrated = :migrated",
@@ -612,9 +609,66 @@ describe("migrate", () => {
             ":count": 1,
           },
         },
-        moved,
       ]);
       expect(report.audits).toEqual({ written: 0, existing: 0, merged: 1 });
+
+      // Before the merge, as the audit's revision, and after it, as the merged one
+      const copies = commands(send, PutItemCommand).filter(
+        ({ input }) => unmarshall(input.Item!).related,
+      );
+      expect(send.mock.calls.map(([command]) => command).indexOf(copies[1])).toBeGreaterThan(
+        send.mock.calls.findIndex(([command]) => command instanceof UpdateItemCommand),
+      );
+      expect(
+        copies.map(({ input }) => ({
+          condition: input.ConditionExpression,
+          values: unmarshall(input.ExpressionAttributeValues!),
+        })),
+      ).toEqual(
+        [1, 2].map((revision) => ({
+          condition:
+            "attribute_exists(#pk) AND (attribute_not_exists(#revision) OR #revision <= :revision)",
+          values: { ":revision": revision },
+        })),
+      );
+      expect(unmarshall(copies[1].input.Item!)).toEqual({
+        PK: "-#App1#Order#audit-1",
+        SK: "related#TestApp#User#user-1",
+        id: "audit-1",
+        operation: "createOrder",
+        status: "success",
+        tier: 2,
+        trace: "trace-1:2",
+        target: { app: "TestApp", type: "User", id: "user-1" },
+        source: { app: "App1", type: "Order", id: "order-1" },
+        rerunable: true,
+        related: true,
+        createdAt: EARLIER,
+        updatedAt: NOW,
+        tenantKey: "-",
+        app: "TestApp",
+        resourceType: "User",
+        resourceId: "user-1",
+        ttl: 1775999999,
+        revision: 2,
+      });
+    });
+
+    it("gives its copies the earlier fields the retries left out", async () => {
+      const { client, send } = stubClient(
+        [[v1Audit({ createdAt: EARLIER, message: "Order failed" })]],
+        isAuditPut,
+        [v2Audit(), v2Copy],
+      );
+
+      await migrate({ client, from: FROM, to: TO });
+
+      const copies = putItems(send).filter(({ related }) => related);
+      expect(
+        copies.map(({ message, trace, createdAt }) => ({ message, trace, createdAt })),
+      ).toEqual(
+        [1, 2].map(() => ({ message: "Order failed", trace: "trace-1:2", createdAt: EARLIER })),
+      );
     });
 
     it("gets the earlier fields the retries left out, with the index attributes they add", async () => {
@@ -689,7 +743,7 @@ describe("migrate", () => {
     it("merges a retry that kept the earlier createdAt", async () => {
       const { client, send } = stubClient([[v1Audit({ createdAt: EARLIER })]], isAuditPut, [
         v2Audit({ createdAt: EARLIER }),
-        { ...v2Copy, createdAt: EARLIER },
+        v2Copy,
       ]);
 
       const report = await migrate({ client, from: FROM, to: TO });
@@ -729,6 +783,7 @@ describe("migrate", () => {
       const report = await migrate({ client, from: FROM, to: TO });
 
       expect(commands(send, UpdateItemCommand)).toEqual([]);
+      expect(putItems(send).filter(({ related }) => related)).toEqual([]);
       expect(report.audits).toEqual({ written: 0, existing: 1, merged: 0 });
     });
   });

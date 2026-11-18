@@ -144,7 +144,7 @@ type CDKConfig = {
 
 ## Upgrading from 1.x
 
-2.0 stores audits in a new table, `{ENV}-{service}-Audit-v2`: the 1.x table's local secondary indexes can't be removed, and its listings couldn't sort by creation time. Upgrade `@flipboxlabs/aws-audit-cdk` and `@flipboxlabs/aws-audit-sdk` together, in every app that uses the SDK, since 2.0 reads and writes only the new table.
+2.0 stores audits in a new table, `{ENV}-{service}-Audit-v2`: the 1.x table's local secondary indexes can't be removed, and its listings couldn't sort by creation time. Upgrade `@flipboxlabs/aws-audit-cdk` and `@flipboxlabs/aws-audit-sdk` together, in every app that uses the SDK, since 2.0 reads and writes only the new table. An app that upserts audits with related resources also needs `dynamodb:GetItem` on the new table, as 2.0 reads an audit back once its copies are written (`table.grantReadWriteData` covers it).
 
 The config lists each app's resource types, replacing the separate `apps` and `resourceTypes` lists: `defineAuditConfig({ apps: { Orders: ["Order"] } })`, and the same `apps` for `ConfigLayerConstruct`. Names may hold only letters, digits, `-` and `_`. `GET /config` answers `apps` as that map, without `resourceTypes`.
 
@@ -162,7 +162,7 @@ The config lists each app's resource types, replacing the separate `apps` and `r
 
 3. Once the listings look right, delete the 1.x table yourself.
 
-Run the migration soon after deploying: until it finishes, listings hold only the audits written since. A retry of a 1.x audit in that window starts a new audit in the new table; the migration merges the 1.x audit into it, putting the 1.x attempts first, restoring the earlier `createdAt` on the audit and its copies, and filling in the 1.x fields the retries left out, such as the `event` a rerun sends.
+Run the migration soon after deploying: until it finishes, listings hold only the audits written since. A retry of a 1.x audit in that window starts a new audit in the new table; the migration merges the 1.x audit into it, putting the 1.x attempts first, restoring the earlier `createdAt`, and filling in the 1.x fields the retries left out, such as the `event` a rerun sends. It then rewrites the audit's copies from the merged audit. A retry still writing its copies during the merge reads the audit back afterwards and rewrites them from the merged audit too, so the subscription Lambda and the SDK must both be on 2.0 before you migrate.
 
 ## License
 
