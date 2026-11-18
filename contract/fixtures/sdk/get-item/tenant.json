@@ -1,5 +1,5 @@
 {
-  "description": "A tenant prefixes the partition key",
+  "description": "A tenant is the first part of the partition key",
   "operation": "getItem",
   "args": [
     {
@@ -17,7 +17,7 @@
         "TableName": "TEST-Contract-Audit-v2",
         "Key": {
           "PK": {
-            "S": "tenant-1#App1.Order#audit-1"
+            "S": "tenant-1#App1#Order#audit-1"
           },
           "SK": {
             "S": "audit"
@@ -27,7 +27,7 @@
       "output": {
         "Item": {
           "PK": {
-            "S": "tenant-1#App1.Order#audit-1"
+            "S": "tenant-1#App1#Order#audit-1"
           },
           "SK": {
             "S": "audit"
@@ -81,9 +81,9 @@
           "scopes": {
             "SS": [
               "App1",
-              "App1.Order",
-              "*.Order",
-              "App1.Order#order-1"
+              "App1#Order",
+              "*#Order",
+              "App1#Order#order-1"
             ]
           },
           "ttl": {

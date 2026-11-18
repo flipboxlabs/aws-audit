@@ -40,10 +40,10 @@
         "Items": [
           {
             "PK": {
-              "S": "App1.Order#audit-1"
+              "S": "-#App1#Order#audit-1"
             },
             "SK": {
-              "S": "related#TestApp.User#user-1"
+              "S": "related#TestApp#User#user-1"
             },
             "tenantKey": {
               "S": "-"
@@ -105,10 +105,10 @@
         ],
         "LastEvaluatedKey": {
           "PK": {
-            "S": "App1.Order#audit-1"
+            "S": "-#App1#Order#audit-1"
           },
           "SK": {
-            "S": "related#TestApp.User#user-1"
+            "S": "related#TestApp#User#user-1"
           },
           "tenantKey": {
             "S": "-"
@@ -152,7 +152,7 @@
       }
     ],
     "pagination": {
-      "nextToken": "eyJQSyI6IkFwcDEuT3JkZXIjYXVkaXQtMSIsIlNLIjoicmVsYXRlZCNUZXN0QXBwLlVzZXIjdXNlci0xIiwidGVuYW50S2V5IjoiLSIsImFwcCI6IlRlc3RBcHAiLCJyZXNvdXJjZVR5cGUiOiJVc2VyIiwiY3JlYXRlZEF0IjoiMjAyNi0wMS0wMlQwMzowNDowNS42NzhaIiwiaWQiOiJhdWRpdC0xIn0"
+      "nextToken": "eyJQSyI6Ii0jQXBwMSNPcmRlciNhdWRpdC0xIiwiU0siOiJyZWxhdGVkI1Rlc3RBcHAjVXNlciN1c2VyLTEiLCJ0ZW5hbnRLZXkiOiItIiwiYXBwIjoiVGVzdEFwcCIsInJlc291cmNlVHlwZSI6IlVzZXIiLCJjcmVhdGVkQXQiOiIyMDI2LTAxLTAyVDAzOjA0OjA1LjY3OFoiLCJpZCI6ImF1ZGl0LTEifQ"
     }
   }
 }

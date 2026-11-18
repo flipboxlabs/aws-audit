@@ -136,7 +136,7 @@ const record = async ({ name, description, operation, args, replies = [] }: Case
 
 /** An audit's stored item, unmarshalled */
 const auditRow = (overrides: Record<string, unknown> = {}) => ({
-  PK: "App1.Order#audit-1",
+  PK: "-#App1#Order#audit-1",
   SK: "audit",
   id: "audit-1",
   operation: "createOrder",
@@ -150,7 +150,7 @@ const auditRow = (overrides: Record<string, unknown> = {}) => ({
   resourceType: "Order",
   resourceId: "order-1",
   kind: "audit",
-  scopes: new Set(["App1", "App1.Order", "*.Order", "App1.Order#order-1"]),
+  scopes: new Set(["App1", "App1#Order", "*#Order", "App1#Order#order-1"]),
   ttl: 1775099045,
   ...overrides,
 });
@@ -161,7 +161,7 @@ const storedAudit = (overrides: Record<string, unknown> = {}) =>
 
 /** A related-resource copy of `audit-1` under `TestApp.User` `user-1` */
 const copyOverrides = {
-  SK: "related#TestApp.User#user-1",
+  SK: "related#TestApp#User#user-1",
   target: { app: "TestApp", type: "User", id: "user-1" },
   source: { app: "App1", type: "Order", id: "order-1" },
   app: "TestApp",
@@ -268,14 +268,14 @@ const CASES: Case[] = [
   },
   {
     name: "get-item/tenant",
-    description: "A tenant prefixes the partition key",
+    description: "A tenant is the first part of the partition key",
     operation: "getItem",
     args: [{ tenantId: "tenant-1", app: "App1", resourceType: "Order", id: "audit-1" }],
     replies: [
       {
         output: {
           Item: storedAudit({
-            PK: "tenant-1#App1.Order#audit-1",
+            PK: "tenant-1#App1#Order#audit-1",
             tenantId: "tenant-1",
             tenantKey: "tenant-1",
           }),
@@ -330,17 +330,33 @@ const CASES: Case[] = [
   },
   {
     name: "upsert/tenant",
-    description: "A tenant prefixes the partition key and is the index attributes' tenantKey",
+    description:
+      "A tenant is the first part of the partition key and the index attributes' tenantKey",
     operation: "upsertItem",
     args: [upsertInput({ tenantId: "tenant-1", trace: "trace-1" })],
     replies: [attempts(1), accepted()],
   },
   {
     name: "upsert/empty-tenant",
-    description: "An empty tenant id is none: it's neither stored nor in the keys",
+    description: "An empty tenant id is none: it isn't stored, and the keys have the tenant key -",
     operation: "upsertItem",
     args: [upsertInput({ tenantId: "" })],
     replies: [attempts(1), accepted()],
+  },
+  {
+    name: "upsert/escaped-keys",
+    description:
+      "%, # and * in each part of a key or scope are escaped as %25, %23 and %2A, so distinct audits never share a key",
+    operation: "upsertItem",
+    args: [
+      upsertInput({
+        tenantId: "tenant#1",
+        id: "audit#1%*",
+        target: { app: "App1", type: "Order", id: "order#1" },
+        resources: [{ app: "TestApp", type: "User", id: "user#1" }],
+      }),
+    ],
+    replies: [attempts(1), { output: {} }, accepted()],
   },
   {
     name: "upsert/related-resources",
@@ -513,8 +529,8 @@ const CASES: Case[] = [
           Items: [
             indexRow(BY_RESOURCE, traced),
             indexRow(BY_RESOURCE, {
-              PK: "App1.User#audit-2#user-1",
-              SK: "related#App1.Order#order-1",
+              PK: "-#App1#User#audit-2",
+              SK: "related#App1#Order#order-1",
               id: "audit-2",
               source: { app: "App1", type: "User", id: "user-1" },
               rerunable: false,
@@ -575,7 +591,7 @@ const CASES: Case[] = [
         output: {
           Items: [
             indexRow(BY_STATUS, {
-              PK: "tenant-1#App1.Order#audit-1",
+              PK: "tenant-1#App1#Order#audit-1",
               status: "fail",
               tenantId: "tenant-1",
               tenantKey: "tenant-1",
@@ -586,6 +602,13 @@ const CASES: Case[] = [
     ],
   },
 
+  {
+    name: "get-item/reserved-tenant",
+    description: "The tenant id of audits without a tenant is refused before any read",
+    operation: "getItem",
+    args: [{ tenantId: "-", app: "App1", resourceType: "Order", id: "audit-1" }],
+    replies: [],
+  },
   {
     name: "list-status/reserved-tenant",
     description: "The tenant id of audits without a tenant is refused before any query",
@@ -628,7 +651,7 @@ const CASES: Case[] = [
       {
         nextToken: encodeNextPageToken(
           lastKey(BY_STATUS, {
-            PK: "tenant-1#App1.Order#audit-1",
+            PK: "tenant-1#App1#Order#audit-1",
             tenantKey: "tenant-1",
             status: "warn",
           }),
@@ -661,7 +684,7 @@ describe("contract fixtures", () => {
   it("pagination tokens", async () => {
     // One LastEvaluatedKey per listing index
     const keys: PageKey[] = [
-      lastKey(BY_TYPE, { PK: "tenant-1#App1.Order#audit-1", tenantKey: "tenant-1" }),
+      lastKey(BY_TYPE, { PK: "tenant-1#App1#Order#audit-1", tenantKey: "tenant-1" }),
       lastKey(BY_RESOURCE),
       lastKey(BY_STATUS, { status: "fail" }),
       lastKey(BY_TRACE, traced),

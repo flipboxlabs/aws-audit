@@ -186,7 +186,7 @@ impl AuditRepository {
             &identifiers.app,
             &identifiers.resource_type,
             &identifiers.id,
-        );
+        )?;
 
         let output = self
             .client
@@ -232,7 +232,7 @@ impl AuditRepository {
             &stored.target.app,
             &stored.target.resource_type,
             &stored.id,
-        );
+        )?;
 
         let mut names = HashMap::from([
             ("#attempts".to_owned(), "attempts".to_owned()),
@@ -337,7 +337,7 @@ impl AuditRepository {
     ///
     /// A copy holds the audit's summary, with the resource as `target` and the
     /// audit's target as `source`, in the audit's partition (`SK`
-    /// `related#{app}.{type}#{resourceId}`), marked `related`. It takes the audit's
+    /// `related#{app}#{type}#{resourceId}`), marked `related`. It takes the audit's
     /// stored `createdAt` and `updatedAt` (from [`upsert_item`](Self::upsert_item)),
     /// so it sorts with the audit. Each upsert rewrites the copies of the resources it lists, once per
     /// resource, except its own target, under which the audit lists already; a copy
@@ -382,7 +382,7 @@ impl AuditRepository {
             &stored.target.app,
             &stored.target.resource_type,
             &stored.id,
-        );
+        )?;
 
         let Value::Object(payload) = serde_json::to_value(&stored)? else {
             unreachable!("an audit serializes to an object");

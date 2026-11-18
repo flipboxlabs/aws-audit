@@ -1,7 +1,7 @@
 //! Listing pages and their `nextToken`s.
 //!
 //! A token is the unpadded base64url of a listing's `LastEvaluatedKey` as JSON,
-//! e.g. `{"PK":"App1.Order#audit-1","SK":"audit","tenantKey":"-",…}`. Decoding
+//! e.g. `{"PK":"-#App1#Order#audit-1","SK":"audit","tenantKey":"-",…}`. Decoding
 //! checks it against the queried index's key schema and partition, so a token a
 //! listing didn't issue is refused before querying (`InvalidNextTokenError` in the
 //! TypeScript SDK).
@@ -166,7 +166,7 @@ mod tests {
     /// A `ByTrace` key, with `overrides`.
     fn trace_key(overrides: Value) -> PageKey {
         let mut base = key(json!({
-            "PK": "App1.Order#audit-1",
+            "PK": "-#App1#Order#audit-1",
             "SK": "audit",
             "tenantKey": "-",
             "traceId": "trace-1",

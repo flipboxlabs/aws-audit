@@ -19,7 +19,7 @@
         "TableName": "TEST-Contract-Audit-v2",
         "Key": {
           "PK": {
-            "S": "App1.Order#audit-1"
+            "S": "-#App1#Order#audit-1"
           },
           "SK": {
             "S": "audit"
@@ -66,8 +66,8 @@
           ":scopes": {
             "SS": [
               "App1",
-              "App1.Order",
-              "*.Order"
+              "App1#Order",
+              "*#Order"
             ]
           },
           ":id": {

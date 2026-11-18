@@ -1,0 +1,286 @@
+{
+  "description": "%, # and * in each part of a key or scope are escaped as %25, %23 and %2A, so distinct audits never share a key",
+  "operation": "upsertItem",
+  "args": [
+    {
+      "id": "audit#1%*",
+      "operation": "createOrder",
+      "status": "success",
+      "tier": 2,
+      "target": {
+        "app": "App1",
+        "type": "Order",
+        "id": "order#1"
+      },
+      "tenantId": "tenant#1",
+      "resources": [
+        {
+          "app": "TestApp",
+          "type": "User",
+          "id": "user#1"
+        }
+      ]
+    }
+  ],
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "UpdateItem",
+      "input": {
+        "TableName": "TEST-Contract-Audit-v2",
+        "Key": {
+          "PK": {
+            "S": "tenant%231#App1#Order#audit%231%25%2A"
+          },
+          "SK": {
+            "S": "audit"
+          }
+        },
+        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #tenantId = :tenantId, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #ttl = :ttl ADD #scopes :scopes",
+        "ExpressionAttributeNames": {
+          "#attempts": "attempts",
+          "#createdAt": "createdAt",
+          "#scopes": "scopes",
+          "#id": "id",
+          "#tenantId": "tenantId",
+          "#status": "status",
+          "#tier": "tier",
+          "#target": "target",
+          "#operation": "operation",
+          "#updatedAt": "updatedAt",
+          "#tenantKey": "tenantKey",
+          "#app": "app",
+          "#resourceType": "resourceType",
+          "#resourceId": "resourceId",
+          "#kind": "kind",
+          "#ttl": "ttl"
+        },
+        "ExpressionAttributeValues": {
+          ":emptyList": {
+            "L": []
+          },
+          ":newAttempt": {
+            "L": [
+              {
+                "M": {
+                  "number": {
+                    "N": "1"
+                  },
+                  "status": {
+                    "S": "success"
+                  },
+                  "at": {
+                    "S": "2026-01-02T03:04:05.678Z"
+                  }
+                }
+              }
+            ]
+          },
+          ":scopes": {
+            "SS": [
+              "App1",
+              "App1#Order",
+              "*#Order",
+              "App1#Order#order%231",
+              "TestApp",
+              "TestApp#User",
+              "*#User",
+              "TestApp#User#user%231"
+            ]
+          },
+          ":id": {
+            "S": "audit#1%*"
+          },
+          ":tenantId": {
+            "S": "tenant#1"
+          },
+          ":status": {
+            "S": "success"
+          },
+          ":tier": {
+            "N": "2"
+          },
+          ":target": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "id": {
+                "S": "order#1"
+              },
+              "type": {
+                "S": "Order"
+              }
+            }
+          },
+          ":operation": {
+            "S": "createOrder"
+          },
+          ":updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          ":createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          ":tenantKey": {
+            "S": "tenant#1"
+          },
+          ":app": {
+            "S": "App1"
+          },
+          ":resourceType": {
+            "S": "Order"
+          },
+          ":resourceId": {
+            "S": "order#1"
+          },
+          ":kind": {
+            "S": "audit"
+          },
+          ":ttl": {
+            "N": "1775099045"
+          }
+        },
+        "ReturnValues": "ALL_NEW"
+      },
+      "output": {
+        "Attributes": {
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "attempts": {
+            "L": [
+              {
+                "M": {
+                  "number": {
+                    "N": "1"
+                  },
+                  "status": {
+                    "S": "success"
+                  },
+                  "at": {
+                    "S": "2026-01-02T03:04:05.678Z"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "service": "DynamoDB",
+      "command": "BatchWriteItem",
+      "input": {
+        "RequestItems": {
+          "TEST-Contract-Audit-v2": [
+            {
+              "PutRequest": {
+                "Item": {
+                  "PK": {
+                    "S": "tenant%231#App1#Order#audit%231%25%2A"
+                  },
+                  "SK": {
+                    "S": "related#TestApp#User#user%231"
+                  },
+                  "id": {
+                    "S": "audit#1%*"
+                  },
+                  "tenantId": {
+                    "S": "tenant#1"
+                  },
+                  "status": {
+                    "S": "success"
+                  },
+                  "tier": {
+                    "N": "2"
+                  },
+                  "operation": {
+                    "S": "createOrder"
+                  },
+                  "target": {
+                    "M": {
+                      "app": {
+                        "S": "TestApp"
+                      },
+                      "type": {
+                        "S": "User"
+                      },
+                      "id": {
+                        "S": "user#1"
+                      }
+                    }
+                  },
+                  "createdAt": {
+                    "S": "2026-01-02T03:04:05.678Z"
+                  },
+                  "updatedAt": {
+                    "S": "2026-01-02T03:04:05.678Z"
+                  },
+                  "source": {
+                    "M": {
+                      "app": {
+                        "S": "App1"
+                      },
+                      "id": {
+                        "S": "order#1"
+                      },
+                      "type": {
+                        "S": "Order"
+                      }
+                    }
+                  },
+                  "rerunable": {
+                    "BOOL": false
+                  },
+                  "related": {
+                    "BOOL": true
+                  },
+                  "tenantKey": {
+                    "S": "tenant#1"
+                  },
+                  "app": {
+                    "S": "TestApp"
+                  },
+                  "resourceType": {
+                    "S": "User"
+                  },
+                  "resourceId": {
+                    "S": "user#1"
+                  },
+                  "ttl": {
+                    "N": "1775099045"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "output": {}
+    },
+    {
+      "service": "EventBridge",
+      "command": "PutEvents",
+      "input": {
+        "Entries": [
+          {
+            "EventBusName": "TEST-Contract-Audit",
+            "Detail": "{\"audit\":{\"id\":\"audit#1%*\",\"operation\":\"createOrder\",\"tenantId\":\"tenant#1\",\"tier\":2,\"status\":\"success\",\"target\":{\"app\":\"App1\",\"type\":\"Order\",\"id\":\"order#1\"},\"resources\":[{\"app\":\"TestApp\",\"type\":\"User\",\"id\":\"user#1\"}]}}",
+            "DetailType": "Upserted",
+            "Source": "Audit"
+          }
+        ]
+      },
+      "output": {
+        "FailedEntryCount": 0,
+        "Entries": [
+          {
+            "EventId": "event-1"
+          }
+        ]
+      }
+    }
+  ],
+  "result": null
+}

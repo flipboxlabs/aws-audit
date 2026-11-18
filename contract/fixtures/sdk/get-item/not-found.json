@@ -16,7 +16,7 @@
         "TableName": "TEST-Contract-Audit-v2",
         "Key": {
           "PK": {
-            "S": "App1.Order#missing"
+            "S": "-#App1#Order#missing"
           },
           "SK": {
             "S": "audit"

@@ -88,7 +88,7 @@ The subscription Lambda is a Rust binary (`provided.al2023`, arm64) that ships p
 
 ### DynamoDBConstruct
 
-The audit table, `{ENV}-{service}-Audit-v2`, retained when removed. Each audit is one item, keyed by its target and id; a copy of its summary, marked `related: true`, sits in the same partition for each related resource with an id, so it lists under that resource too. Four global secondary indexes on multi-attribute keys serve the listings, each projecting the audit summary: by resource type, by resource, by status and by trace. The status and trace indexes hold audits only, and also project the `scopes` their resource filters match.
+The audit table, `{ENV}-{service}-Audit-v2`, retained when removed. Each audit is one item, keyed by its tenant, target and id, each escaped so that no two audits share a key whatever their ids hold; a copy of its summary, marked `related: true`, sits in the same partition for each related resource with an id, so it lists under that resource too. Four global secondary indexes on multi-attribute keys serve the listings, each projecting the audit summary: by resource type, by resource, by status and by trace. The status and trace indexes hold audits only, and also project the `scopes` their resource filters match.
 
 `table` grants cover the indexes. Upgrading from 1.x replaces the table; see [Upgrading from 1.x](#upgrading-from-1x).
 

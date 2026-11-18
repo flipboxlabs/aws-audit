@@ -33,7 +33,7 @@
             "S": "createOrder"
           },
           ":scope": {
-            "S": "App1.Order"
+            "S": "App1#Order"
           },
           ":tier": {
             "N": "1"

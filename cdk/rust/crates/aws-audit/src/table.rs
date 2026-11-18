@@ -1,10 +1,15 @@
 //! The audit table's layout: items, index attributes, indexes and projections
 //! (`DynamoDB` in `sdk/src/constants.ts`, and the CDK `AuditTable`).
 //!
-//! - An audit: `PK` `[{tenantId}#]{app}.{type}#{id}`, `SK` `audit`
+//! - An audit: `PK` `{tenantKey}#{app}#{type}#{id}`, `SK` `audit`, with
+//!   [`NO_TENANT`] as the `tenantKey` of an audit without a tenant
 //! - A copy of it per related resource, in the same partition: `SK`
-//!   `related#{app}.{type}#{resourceId}`, with the resource as `target` and the
+//!   `related#{app}#{type}#{resourceId}`, with the resource as `target` and the
 //!   audit's target as `source`
+//!
+//! Each part of a key is escaped: `%`, `#` and `*` as `%25`, `%23` and `%2A`
+//! ([`join_key`](crate::keys::join_key)), so distinct parts never join to the same
+//! key.
 //!
 //! The indexes use multi-attribute keys built from top-level attributes
 //! ([`attributes`]), and each projects [`SUMMARY_PROJECTION`].
@@ -13,7 +18,7 @@ use crate::pagination::KeyType;
 
 /// Table key attribute names.
 pub mod keys {
-    /// Table partition key: `[{tenantId}#]{app}.{type}#{id}`.
+    /// Table partition key: `{tenantKey}#{app}#{type}#{id}`.
     pub const PARTITION_KEY: &str = "PK";
     /// Table sort key: [`AUDIT`](super::sort_keys::AUDIT), or a related
     /// resource's copy.
@@ -24,7 +29,7 @@ pub mod keys {
 pub mod sort_keys {
     /// The audit itself.
     pub const AUDIT: &str = "audit";
-    /// Prefix of a related-resource copy: `related#{app}.{type}#{resourceId}`.
+    /// Prefix of a related-resource copy: `related#{app}#{type}#{resourceId}`.
     pub const RELATED_PREFIX: &str = "related#";
 }
 
@@ -57,8 +62,8 @@ pub mod attributes {
     /// The trace stage from `trace`, a number.
     pub const TRACE_STAGE: &str = "traceStage";
     /// String set of what the status and trace filters match on, for the target
-    /// and each related resource: `{app}`, `{app}.{type}`, `*.{type}` and, with an
-    /// id, `{app}.{type}#{id}`.
+    /// and each related resource: `{app}`, `{app}#{type}`, `*#{type}` and, with an
+    /// id, `{app}#{type}#{id}`, each part escaped as in the table's keys.
     pub const SCOPES: &str = "scopes";
     /// The latest outcome.
     pub const STATUS: &str = "status";

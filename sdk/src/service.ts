@@ -100,6 +100,7 @@ export class AuditService<C extends AuditConfig> {
    * @param identifiers - The audit identifiers (id, app, resourceType)
    * @returns The audit record
    * @throws {AuditNotFoundError} if the audit record is not found
+   * @throws {ReservedTenantError} if the tenant id is `-`
    * @throws The underlying storage error if the lookup fails
    *
    * @example

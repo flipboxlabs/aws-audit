@@ -75,8 +75,9 @@ const Attributes = {
   TRACE_STAGE: "traceStage",
   /**
    * String set of what the status and trace filters match on, for the target and
-   * each related resource: `{app}`, `{app}.{type}`, `*.{type}` and, with an id,
-   * `{app}.{type}#{id}`
+   * each related resource: `{app}`, `{app}#{type}`, `*#{type}` and, with an id,
+   * `{app}#{type}#{id}`; `%`, `#` and `*` in each part are escaped as `%25`, `%23`
+   * and `%2A`
    */
   SCOPES: "scopes",
   STATUS: "status",
@@ -96,10 +97,14 @@ const BY_CREATION = [key(Attributes.CREATED_AT), key(Attributes.ID)];
  * used throughout the audit SDK for DynamoDB operations.
  *
  * Items:
- * - An audit: `PK` `[{tenantId}#]{app}.{type}#{id}`, `SK` `audit`
+ * - An audit: `PK` `{tenantKey}#{app}#{type}#{id}`, `SK` `audit`, with
+ *   {@link DynamoDB.NO_TENANT} as the `tenantKey` of an audit without a tenant
  * - A copy of it per related resource, in the same partition: `SK`
- *   `related#{app}.{type}#{resourceId}`, with the resource as `target` and the
+ *   `related#{app}#{type}#{resourceId}`, with the resource as `target` and the
  *   audit's target as `source`
+ *
+ * Each part of a key is escaped: `%`, `#` and `*` as `%25`, `%23` and `%2A`, so
+ * distinct parts never join to the same key.
  *
  * The indexes use multi-attribute keys built from top-level attributes
  * ({@link DynamoDB.Attributes}), and each projects {@link DynamoDB.Projections.SUMMARY}
@@ -135,7 +140,7 @@ export const DynamoDB = {
   SortKeys: {
     /** The audit itself */
     AUDIT: "audit",
-    /** Prefix of a related-resource copy: `related#{app}.{type}#{resourceId}` */
+    /** Prefix of a related-resource copy: `related#{app}#{type}#{resourceId}` */
     RELATED_PREFIX: "related#",
   },
   /** What an item is: an audit, which gets the `kind` attribute, or a related resource's copy */
@@ -143,7 +148,7 @@ export const DynamoDB = {
     AUDIT: "audit",
     RELATED: "related",
   },
-  /** `tenantKey` of an audit without a tenant: index key attributes must be present */
+  /** `tenantKey` of an audit without a tenant, in its `PK` too: index key attributes must be present */
   NO_TENANT: "-",
   Attributes,
   /** Global secondary indexes */

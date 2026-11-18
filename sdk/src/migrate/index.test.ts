@@ -121,7 +121,7 @@ describe("migrate", () => {
       ExpressionAttributeNames: { "#pk": "PK" },
     });
     expect(unmarshall(put.input.Item!)).toEqual({
-      PK: "App1.Order#audit-1",
+      PK: "-#App1#Order#audit-1",
       SK: "audit",
       id: "audit-1",
       operation: "createOrder",
@@ -143,7 +143,7 @@ describe("migrate", () => {
       kind: "audit",
       traceId: "trace-1",
       traceStage: 2,
-      scopes: new Set(["App1", "App1.Order", "*.Order", "App1.Order#order-1"]),
+      scopes: new Set(["App1", "App1#Order", "*#Order", "App1#Order#order-1"]),
     });
     expect(report).toEqual({
       scanned: 1,
@@ -172,7 +172,7 @@ describe("migrate", () => {
 
     const [tenant, nullTrace] = putItems(send);
     expect(tenant).toMatchObject({
-      PK: "tenant-1#App1.Order#audit-1",
+      PK: "tenant-1#App1#Order#audit-1",
       trace: "trace-1",
       tenantKey: "tenant-1",
       traceId: "trace-1",
@@ -189,8 +189,8 @@ describe("migrate", () => {
 
     const [copy] = putItems(send);
     expect(copy).toEqual({
-      PK: "App1.Order#audit-1",
-      SK: "related#TestApp.User#user-1",
+      PK: "-#App1#Order#audit-1",
+      SK: "related#TestApp#User#user-1",
       id: "audit-1",
       status: "fail",
       tier: 2,
@@ -214,13 +214,13 @@ describe("migrate", () => {
     expect(send.mock.calls.at(-1)?.[0]).toBe(update);
     expect(update.input).toMatchObject({
       TableName: TO,
-      Key: marshall({ PK: "App1.Order#audit-1", SK: "audit" }),
+      Key: marshall({ PK: "-#App1#Order#audit-1", SK: "audit" }),
       UpdateExpression: "ADD #scopes :scopes",
       ConditionExpression: "attribute_exists(#pk)",
       ExpressionAttributeNames: { "#scopes": "scopes", "#pk": "PK" },
     });
     expect(unmarshall(update.input.ExpressionAttributeValues!)).toEqual({
-      ":scopes": new Set(["TestApp", "TestApp.User", "*.User", "TestApp.User#user-1"]),
+      ":scopes": new Set(["TestApp", "TestApp#User", "*#User", "TestApp#User#user-1"]),
     });
     expect(report).toMatchObject({
       scanned: 2,
@@ -256,11 +256,11 @@ describe("migrate", () => {
 
     const copies = putItems(send).filter(({ SK }) => SK !== "audit");
     expect(copies.map(({ PK, createdAt }) => [PK, createdAt])).toEqual([
-      ["App1.Order#audit-1", EARLIER],
-      ["App1.Order#audit-1", EARLIER],
-      ["tenant-a#App1.Order#audit-1", "2025-06-01T00:00:00.000Z"],
+      ["-#App1#Order#audit-1", EARLIER],
+      ["-#App1#Order#audit-1", EARLIER],
+      ["tenant-a#App1#Order#audit-1", "2025-06-01T00:00:00.000Z"],
       // Without its audit, a copy keeps its own
-      ["App1.Order#audit-2", NOW],
+      ["-#App1#Order#audit-2", NOW],
     ]);
     // Read from the earlier table, once per audit
     expect(
@@ -301,13 +301,13 @@ describe("migrate", () => {
   describe("an audit retried since the deploy", () => {
     const EARLIER = "2026-01-01T00:00:00.000Z";
     const v2Audit = (overrides: Record<string, unknown> = {}) => ({
-      PK: "App1.Order#audit-1",
+      PK: "-#App1#Order#audit-1",
       SK: "audit",
       attempts: [{ number: 1, status: "success", at: NOW }],
       createdAt: NOW,
       ...overrides,
     });
-    const v2Copy = { PK: "App1.Order#audit-1", SK: "related#TestApp.User#user-1" };
+    const v2Copy = { PK: "-#App1#Order#audit-1", SK: "related#TestApp#User#user-1" };
     const isAuditPut = (command: PutItemCommand | UpdateItemCommand) =>
       command instanceof PutItemCommand && unmarshall(command.input.Item!).SK === "audit";
 
@@ -334,7 +334,7 @@ describe("migrate", () => {
       expect(updates).toEqual([
         moved,
         {
-          key: { PK: "App1.Order#audit-1", SK: "audit" },
+          key: { PK: "-#App1#Order#audit-1", SK: "audit" },
           expression: "SET #attempts = :attempts, #createdAt = :createdAt",
           condition: "#createdAt = :current AND size(#attempts) = :count",
           values: {
@@ -422,8 +422,8 @@ describe("migrate", () => {
 
     expect(report).toMatchObject({ audits: { written: 2 }, copies: { written: 0 }, invalid: [] });
     expect(putItems(send).map(({ PK, SK }) => [PK, SK])).toEqual([
-      ["App1.Order#batch#7", "audit"],
-      ["App1.Order#a#App1.Order#order-1#x", "audit"],
+      ["-#App1#Order#batch%237", "audit"],
+      ["-#App1#Order#a%23App1.Order%23order-1%23x", "audit"],
     ]);
   });
 
@@ -472,7 +472,7 @@ describe("migrate", () => {
         reason: "A related resource's copy needs a source",
       },
     ]);
-    expect(putItems(send).map(({ PK }) => PK)).toEqual(["App1.Order#audit-1"]);
+    expect(putItems(send).map(({ PK }) => PK)).toEqual(["-#App1#Order#audit-1"]);
   });
 
   it("defaults the tier, and takes createdAt from updatedAt, when an earlier audit left them out", async () => {

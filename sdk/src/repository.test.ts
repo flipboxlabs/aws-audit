@@ -16,7 +16,9 @@ import {
 } from "./errors.js";
 import {
   AuditRepository,
+  constructPrimaryKey,
   filterScope,
+  joinKey,
   resourceScopes,
   type TypedListByStatusOptions,
   type TypedListItemsOptions,
@@ -59,7 +61,7 @@ describe("AuditRepository", () => {
 
   /** An audit as the table stores it */
   const storedAudit = (overrides: Record<string, unknown> = {}) => ({
-    PK: `${App.App1}.${ResourceType.ORDER}#audit-123`,
+    PK: `-#${App.App1}#${ResourceType.ORDER}#audit-123`,
     SK: "audit",
     id: "audit-123",
     operation: "createOrder",
@@ -78,7 +80,7 @@ describe("AuditRepository", () => {
     kind: "audit",
     traceId: "trace-1",
     traceStage: 2,
-    scopes: new Set(["App1", "App1.Order", "*.Order", "App1.Order#order-1"]),
+    scopes: new Set(["App1", "App1#Order", "*#Order", "App1#Order#order-1"]),
     ttl: 1775099045,
     ...overrides,
   });
@@ -160,7 +162,7 @@ describe("AuditRepository", () => {
       expect(command).toBeInstanceOf(GetItemCommand);
       expect(command.input).toEqual({
         TableName: TABLE,
-        Key: marshall({ PK: "App1.Order#audit-123", SK: "audit" }),
+        Key: marshall({ PK: "-#App1#Order#audit-123", SK: "audit" }),
       });
     });
 
@@ -171,7 +173,7 @@ describe("AuditRepository", () => {
 
       const command = mockClient.send.mock.calls[0][0] as GetItemCommand;
       expect(command.input.Key).toEqual(
-        marshall({ PK: "tenant-a#App1.Order#audit-123", SK: "audit" }),
+        marshall({ PK: "tenant-a#App1#Order#audit-123", SK: "audit" }),
       );
     });
 
@@ -249,7 +251,7 @@ describe("AuditRepository", () => {
       const command = mockClient.send.mock.calls[0][0] as UpdateItemCommand;
       expect(command).toBeInstanceOf(UpdateItemCommand);
       expect(command.input.TableName).toBe(TABLE);
-      expect(command.input.Key).toEqual(marshall({ PK: "App1.Order#audit-123", SK: "audit" }));
+      expect(command.input.Key).toEqual(marshall({ PK: "-#App1#Order#audit-123", SK: "audit" }));
       expect(command.input.ReturnValues).toBe("ALL_NEW");
     });
 
@@ -300,14 +302,14 @@ describe("AuditRepository", () => {
         traceStage: 2,
         scopes: new Set([
           "App1",
-          "App1.Order",
-          "*.Order",
-          "App1.Order#order-1",
+          "App1#Order",
+          "*#Order",
+          "App1#Order#order-1",
           "TestApp",
-          "TestApp.User",
-          "*.User",
-          "TestApp.User#7",
-          "App1.User",
+          "TestApp#User",
+          "*#User",
+          "TestApp#User#7",
+          "App1#User",
         ]),
       });
     });
@@ -318,7 +320,7 @@ describe("AuditRepository", () => {
       await repository.upsertItem(upsertInput({ tenantId: "" }), attempt);
 
       const command = mockClient.send.mock.calls[0][0] as UpdateItemCommand;
-      expect(command.input.Key).toEqual(marshall({ PK: "App1.Order#audit-123", SK: "audit" }));
+      expect(command.input.Key).toEqual(marshall({ PK: "-#App1#Order#audit-123", SK: "audit" }));
       expect(setValues(command)).not.toHaveProperty("tenantId");
       expect(setValues(command)).toMatchObject({ tenantKey: "-" });
     });
@@ -330,7 +332,7 @@ describe("AuditRepository", () => {
 
       const command = mockClient.send.mock.calls[0][0] as UpdateItemCommand;
       expect(command.input.Key).toEqual(
-        marshall({ PK: "tenant-a#App1.Order#audit-123", SK: "audit" }),
+        marshall({ PK: "tenant-a#App1#Order#audit-123", SK: "audit" }),
       );
       expect(setValues(command)).toMatchObject({ tenantKey: "tenant-a", tenantId: "tenant-a" });
     });
@@ -360,7 +362,7 @@ describe("AuditRepository", () => {
       expect(values).not.toHaveProperty("resourceId");
       expect(values).not.toHaveProperty("traceId");
       expect(values).not.toHaveProperty("traceStage");
-      expect(values.scopes).toEqual(new Set(["App1", "App1.Order", "*.Order"]));
+      expect(values.scopes).toEqual(new Set(["App1", "App1#Order", "*#Order"]));
     });
 
     it("should use stage 0 for a trace without a stage", async () => {
@@ -528,8 +530,8 @@ describe("AuditRepository", () => {
       const [copy, ...rest] = putItems() ?? [];
       expect(rest).toEqual([]);
       expect(copy).toEqual({
-        PK: "App1.Order#audit-123",
-        SK: "related#TestApp.User#7",
+        PK: "-#App1#Order#audit-123",
+        SK: "related#TestApp#User#7",
         id: "audit-123",
         operation: "createOrder",
         status: "fail",
@@ -562,7 +564,7 @@ describe("AuditRepository", () => {
       );
 
       expect(putItems()?.[0]).toMatchObject({
-        PK: "tenant-a#App1.Order#audit-123",
+        PK: "tenant-a#App1#Order#audit-123",
         tenantId: "tenant-a",
         tenantKey: "tenant-a",
       });
@@ -609,8 +611,8 @@ describe("AuditRepository", () => {
 
       expect(mockClient.send).toHaveBeenCalledTimes(1);
       expect(putItems()?.map(({ SK, target }) => ({ SK, target }))).toEqual([
-        { SK: "related#TestApp.User#1", target: { app: "TestApp", type: "User", id: "1" } },
-        { SK: "related#TestApp.Order#o", target: { app: "TestApp", type: "Order", id: "o" } },
+        { SK: "related#TestApp#User#1", target: { app: "TestApp", type: "User", id: "1" } },
+        { SK: "related#TestApp#Order#o", target: { app: "TestApp", type: "Order", id: "o" } },
       ]);
     });
 
@@ -632,7 +634,7 @@ describe("AuditRepository", () => {
       );
 
       expect(mockClient.send).toHaveBeenCalledTimes(1);
-      expect(putItems()?.map(({ SK }) => SK)).toEqual(["related#TestApp.User#u"]);
+      expect(putItems()?.map(({ SK }) => SK)).toEqual(["related#TestApp#User#u"]);
     });
 
     it("should write 25 copies at a time", async () => {
@@ -914,16 +916,16 @@ describe("AuditRepository", () => {
       (listing) => {
         it.each<[string, Record<string, unknown>, string]>([
           ["an app", { app: App.App1 }, "App1"],
-          ["a resource type", { resource: { type: ResourceType.USER } }, "*.User"],
+          ["a resource type", { resource: { type: ResourceType.USER } }, "*#User"],
           [
             "an app and type",
             { app: App.App1, resource: { type: ResourceType.USER } },
-            "App1.User",
+            "App1#User",
           ],
           [
             "a resource",
             { app: App.App1, resource: { type: ResourceType.USER, id: 7 } },
-            "App1.User#7",
+            "App1#User#7",
           ],
         ])("should match %s in the audit's scopes", async (_label, filters, scope) => {
           mockClient.send.mockResolvedValue({ Items: [] });
@@ -947,21 +949,44 @@ describe("AuditRepository", () => {
   });
 });
 
+describe("joinKey", () => {
+  it("should escape %, # and * in each part", () => {
+    expect(joinKey("100%", "a#b", "*", 0)).toBe("100%25#a%23b#%2A#0");
+  });
+
+  it("should never give audits of distinct tenants the same key", () => {
+    const key = (tenantId: string, id: string) =>
+      constructPrimaryKey({ tenantId, app: "App1", resourceType: "Order", id }).PK;
+
+    expect(key("t1", "a#App1#Order#b")).toBe("t1#App1#Order#a%23App1%23Order%23b");
+    expect(key("t1", "a#App1#Order#b")).not.toBe(key("t1#App1#Order#a", "b"));
+  });
+
+  it("should key an audit without a tenant under -, and refuse the tenant -", () => {
+    expect(constructPrimaryKey({ app: "App1", resourceType: "Order", id: "a" }).PK).toBe(
+      "-#App1#Order#a",
+    );
+    expect(() =>
+      constructPrimaryKey({ tenantId: "-", app: "App1", resourceType: "Order", id: "a" }),
+    ).toThrow(ReservedTenantError);
+  });
+});
+
 describe("resourceScopes", () => {
   it("should name a resource by its app, app and type, type, and id", () => {
     expect(resourceScopes({ app: "App1", type: "Order", id: "o" })).toEqual([
       "App1",
-      "App1.Order",
-      "*.Order",
-      "App1.Order#o",
+      "App1#Order",
+      "*#Order",
+      "App1#Order#o",
     ]);
   });
 
   it("should leave out the id scope without an id", () => {
     expect(resourceScopes({ app: "App1", type: "Order" })).toEqual([
       "App1",
-      "App1.Order",
-      "*.Order",
+      "App1#Order",
+      "*#Order",
     ]);
   });
 });
@@ -973,6 +998,6 @@ describe("filterScope", () => {
   });
 
   it("should treat a resource id of 0 as an id", () => {
-    expect(filterScope({ app: "App1", resource: { type: "Order", id: 0 } })).toBe("App1.Order#0");
+    expect(filterScope({ app: "App1", resource: { type: "Order", id: 0 } })).toBe("App1#Order#0");
   });
 });

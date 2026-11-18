@@ -8,12 +8,26 @@ use crate::model::{ResourceId, ResourceReference};
 use crate::table::{NO_TENANT, attributes, keys, sort_keys};
 use crate::trace::trace_parts;
 
-/// `{tenantId}#{base}`, or `base` without a tenant.
-pub fn partition(tenant_id: Option<&str>, base: &str) -> String {
-    match tenant_id {
-        Some(tenant) if !tenant.is_empty() => format!("{tenant}#{base}"),
-        _ => base.to_owned(),
+/// Joins the parts of a key or `scopes` value with `#`, escaping `%`, `#` and `*`
+/// in each (as `%25`, `%23` and `%2A`), so distinct parts never join to the same
+/// value: a tenant and an audit id holding a `#` would otherwise share a partition
+/// with another tenant's audit (`joinKey` in the TypeScript repository).
+pub fn join_key<'a>(parts: impl IntoIterator<Item = &'a str>) -> String {
+    let mut key = String::new();
+    for (i, part) in parts.into_iter().enumerate() {
+        if i > 0 {
+            key.push('#');
+        }
+        for char in part.chars() {
+            match char {
+                '%' => key.push_str("%25"),
+                '#' => key.push_str("%23"),
+                '*' => key.push_str("%2A"),
+                char => key.push(char),
+            }
+        }
     }
+    key
 }
 
 /// The tenant id [`NO_TENANT`], the key of audits without a tenant, which a listing
@@ -31,38 +45,39 @@ pub fn tenant_key(tenant_id: Option<&str>) -> Result<&str, ReservedTenant> {
     }
 }
 
-/// An audit's table key: `PK` `[{tenantId}#]{app}.{type}#{id}`, `SK` `audit`.
+/// An audit's table key: `PK` `{tenantKey}#{app}#{type}#{id}`, each part escaped
+/// by [`join_key`], with [`NO_TENANT`] as the tenant of an audit without one; `SK`
+/// `audit`.
 pub fn primary_key(
     tenant_id: Option<&str>,
     app: &str,
     resource_type: &str,
     id: &str,
-) -> Map<String, Value> {
-    Map::from_iter([
+) -> Result<Map<String, Value>, ReservedTenant> {
+    Ok(Map::from_iter([
         (
             keys::PARTITION_KEY.to_owned(),
-            Value::String(partition(tenant_id, &format!("{app}.{resource_type}#{id}"))),
+            Value::String(join_key([tenant_key(tenant_id)?, app, resource_type, id])),
         ),
         (
             keys::SORT_KEY.to_owned(),
             Value::String(sort_keys::AUDIT.to_owned()),
         ),
-    ])
+    ]))
 }
 
 /// The sort key of an audit's copy under a related resource:
-/// `related#{app}.{type}#{id}`.
+/// `related#{app}#{type}#{id}`, each part escaped by [`join_key`].
 pub fn related_sort_key(resource: &ResourceReference) -> String {
+    let id = resource
+        .id
+        .as_ref()
+        .map(ResourceId::to_key)
+        .unwrap_or_default();
     format!(
-        "{}{}.{}#{}",
+        "{}{}",
         sort_keys::RELATED_PREFIX,
-        resource.app,
-        resource.resource_type,
-        resource
-            .id
-            .as_ref()
-            .map(ResourceId::to_key)
-            .unwrap_or_default()
+        join_key([resource.app.as_str(), &resource.resource_type, &id])
     )
 }
 
@@ -129,17 +144,18 @@ pub fn index_attributes(
 }
 
 /// What an audit's `scopes` attribute holds for one of its resources: everything a
-/// resource filter can name it by.
+/// resource filter can name it by (`{app}`, `{app}#{type}`, `*#{type}` and
+/// `{app}#{type}#{id}`, each part escaped by [`join_key`]).
 pub fn resource_scopes(resource: &ResourceReference) -> Vec<String> {
-    let app = &resource.app;
-    let resource_type = &resource.resource_type;
+    let app = resource.app.as_str();
+    let resource_type = resource.resource_type.as_str();
     let mut scopes = vec![
-        app.clone(),
-        format!("{app}.{resource_type}"),
-        format!("*.{resource_type}"),
+        join_key([app]),
+        join_key([app, resource_type]),
+        format!("*#{}", join_key([resource_type])),
     ];
     if let Some(id) = resource.id.as_ref().filter(|id| has_resource_id(Some(id))) {
-        scopes.push(format!("{app}.{resource_type}#{}", id.to_key()));
+        scopes.push(join_key([app, resource_type, &id.to_key()]));
     }
     scopes
 }
@@ -178,13 +194,11 @@ pub fn filter_scope(
 
     Ok(
         match (app, resource_type, resource_id.filter(|id| !id.is_empty())) {
-            (Some(app), Some(resource_type), Some(id)) => {
-                Some(format!("{app}.{resource_type}#{id}"))
-            }
+            (Some(app), Some(resource_type), Some(id)) => Some(join_key([app, resource_type, id])),
             (_, _, Some(_)) => return Err(IncompleteResourceFilter),
-            (Some(app), Some(resource_type), None) => Some(format!("{app}.{resource_type}")),
-            (Some(app), None, None) => Some(app.to_owned()),
-            (None, Some(resource_type), None) => Some(format!("*.{resource_type}")),
+            (Some(app), Some(resource_type), None) => Some(join_key([app, resource_type])),
+            (Some(app), None, None) => Some(join_key([app])),
+            (None, Some(resource_type), None) => Some(format!("*#{}", join_key([resource_type]))),
             (None, None, None) => None,
         },
     )
@@ -210,8 +224,35 @@ mod tests {
     #[test]
     fn keys_audits_by_their_id() {
         assert_eq!(
-            Value::Object(primary_key(Some("tenant-1"), "App1", "Order", "audit-1")),
-            json!({ "PK": "tenant-1#App1.Order#audit-1", "SK": "audit" })
+            primary_key(Some("tenant-1"), "App1", "Order", "audit-1").map(Value::Object),
+            Ok(json!({ "PK": "tenant-1#App1#Order#audit-1", "SK": "audit" }))
+        );
+        assert_eq!(
+            primary_key(None, "App1", "Order", "audit-1").map(Value::Object),
+            Ok(json!({ "PK": "-#App1#Order#audit-1", "SK": "audit" }))
+        );
+        assert_eq!(
+            primary_key(Some("-"), "App1", "Order", "audit-1"),
+            Err(ReservedTenant)
+        );
+    }
+
+    #[test]
+    fn escapes_each_part_so_distinct_audits_never_share_a_key() {
+        let key =
+            |tenant, id| primary_key(Some(tenant), "App1", "Order", id).unwrap()["PK"].clone();
+
+        assert_eq!(
+            key("t1", "a#App1#Order#b"),
+            json!("t1#App1#Order#a%23App1%23Order%23b")
+        );
+        assert_ne!(key("t1", "a#App1#Order#b"), key("t1#App1#Order#a", "b"));
+        assert_eq!(join_key(["100%", "*"]), "100%25#%2A");
+        assert_eq!(
+            related_sort_key(&resource(
+                json!({ "app": "App1", "type": "Order", "id": "a#b" })
+            )),
+            "related#App1#Order#a%23b"
         );
     }
 
@@ -259,11 +300,11 @@ mod tests {
             audit_scopes(&target, &resources),
             [
                 "App1",
-                "App1.Order",
-                "*.Order",
-                "App1.Order#order-1",
-                "App1.User",
-                "*.User"
+                "App1#Order",
+                "*#Order",
+                "App1#Order#order-1",
+                "App1#User",
+                "*#User"
             ]
         );
     }
@@ -274,14 +315,15 @@ mod tests {
 
         assert_eq!(scope(None, None, None), Ok(None));
         assert_eq!(scope(Some("App1"), None, None), Ok(Some("App1".into())));
-        assert_eq!(scope(None, Some("Order"), None), Ok(Some("*.Order".into())));
+        assert_eq!(scope(None, Some("Order"), None), Ok(Some("*#Order".into())));
+        assert_eq!(scope(Some("*"), None, None), Ok(Some("%2A".into())));
         assert_eq!(
             scope(Some("App1"), Some("Order"), None),
-            Ok(Some("App1.Order".into()))
+            Ok(Some("App1#Order".into()))
         );
         assert_eq!(
             scope(Some("App1"), Some("Order"), Some("order-1")),
-            Ok(Some("App1.Order#order-1".into()))
+            Ok(Some("App1#Order#order-1".into()))
         );
         assert_eq!(
             scope(Some("App1"), None, Some("order-1")),

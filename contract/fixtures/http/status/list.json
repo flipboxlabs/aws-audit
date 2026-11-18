@@ -36,7 +36,7 @@
         "Items": [
           {
             "PK": {
-              "S": "App1.Order#audit-1"
+              "S": "-#App1#Order#audit-1"
             },
             "SK": {
               "S": "audit"
@@ -82,7 +82,7 @@
         ],
         "LastEvaluatedKey": {
           "PK": {
-            "S": "App1.Order#audit-1"
+            "S": "-#App1#Order#audit-1"
           },
           "SK": {
             "S": "audit"
@@ -126,7 +126,7 @@
         }
       ],
       "pagination": {
-        "nextToken": "eyJQSyI6IkFwcDEuT3JkZXIjYXVkaXQtMSIsIlNLIjoiYXVkaXQiLCJ0ZW5hbnRLZXkiOiItIiwic3RhdHVzIjoiZmFpbCIsImtpbmQiOiJhdWRpdCIsImNyZWF0ZWRBdCI6IjIwMjYtMDEtMDJUMDM6MDQ6MDUuNjc4WiIsImlkIjoiYXVkaXQtMSJ9"
+        "nextToken": "eyJQSyI6Ii0jQXBwMSNPcmRlciNhdWRpdC0xIiwiU0siOiJhdWRpdCIsInRlbmFudEtleSI6Ii0iLCJzdGF0dXMiOiJmYWlsIiwia2luZCI6ImF1ZGl0IiwiY3JlYXRlZEF0IjoiMjAyNi0wMS0wMlQwMzowNDowNS42NzhaIiwiaWQiOiJhdWRpdC0xIn0"
       }
     }
   }

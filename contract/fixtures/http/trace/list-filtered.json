@@ -24,7 +24,7 @@
             "S": "trace-1"
           },
           ":scope": {
-            "S": "*.Order"
+            "S": "*#Order"
           }
         },
         "ExpressionAttributeNames": {

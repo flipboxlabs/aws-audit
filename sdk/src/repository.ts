@@ -229,15 +229,40 @@ export type TypedListByStatusOptions<C extends AuditConfig> = ListFilters &
   };
 
 /**
+ * Joins the parts of a key or `scopes` value with `#`, escaping `%`, `#` and `*` in
+ * each (as `%25`, `%23` and `%2A`), so distinct parts never join to the same value:
+ * a tenant and an audit id holding a `#` would otherwise share a partition with
+ * another tenant's audit.
+ *
+ * @example
+ * ```typescript
+ * joinKey("tenant-1", "App1", "Order", "a#1"); // "tenant-1#App1#Order#a%231"
+ * ```
+ * @internal
+ */
+export function joinKey(...parts: (string | number)[]): string {
+  return parts
+    .map((part) =>
+      String(part).replace(/[%#*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`),
+    )
+    .join("#");
+}
+
+/**
  * What an audit's `scopes` attribute holds for one of its resources: everything a
- * resource filter can name it by.
+ * resource filter can name it by (`{app}`, `{app}#{type}`, `*#{type}` and
+ * `{app}#{type}#{id}`, each part escaped by {@link joinKey}).
  *
  * @internal
  */
 export function resourceScopes(resource: ResourceReference): string[] {
-  const scopes = [resource.app, `${resource.app}.${resource.type}`, `*.${resource.type}`];
+  const scopes = [
+    joinKey(resource.app),
+    joinKey(resource.app, resource.type),
+    `*#${joinKey(resource.type)}`,
+  ];
   if (hasResourceId(resource.id)) {
-    scopes.push(`${resource.app}.${resource.type}#${resource.id}`);
+    scopes.push(joinKey(resource.app, resource.type, resource.id));
   }
   return scopes;
 }
@@ -258,12 +283,12 @@ export function filterScope(filters: {
     if (!app || !resource.type) {
       throw new InvalidResourceFilterError();
     }
-    return `${app}.${resource.type}#${resource.id}`;
+    return joinKey(app, resource.type, resource.id);
   }
 
-  if (app && resource?.type) return `${app}.${resource.type}`;
-  if (app) return app;
-  if (resource?.type) return `*.${resource.type}`;
+  if (app && resource?.type) return joinKey(app, resource.type);
+  if (app) return joinKey(app);
+  if (resource?.type) return `*#${joinKey(resource.type)}`;
   return undefined;
 }
 
@@ -322,12 +347,14 @@ function tenantKey(tenantId?: string): string {
 }
 
 /**
- * Constructs the DynamoDB primary key of an audit.
- *
- * When tenantId is provided, it prefixes the partition key for multi-tenant isolation.
+ * Constructs the DynamoDB primary key of an audit: `PK`
+ * `{tenantKey}#{app}#{type}#{id}`, each part escaped by {@link joinKey}, with `-`
+ * as the tenant of an audit without one.
  *
  * @param identifiers - Object containing tenantId (optional), app, id, and resourceType
  * @returns Primary key object with PK and SK attributes
+ * @throws {ReservedTenantError} For the tenant id `-`, which would read an audit
+ *   without a tenant
  * @internal
  */
 export function constructPrimaryKey({
@@ -336,20 +363,20 @@ export function constructPrimaryKey({
   id,
   resourceType,
 }: Omit<Identifiers, "resourceId">): DynamoDBPrimaryKey {
-  const pkBase = `${app}.${resourceType}#${id}`;
   return {
-    [Keys.PARTITION_KEY]: tenantId ? `${tenantId}#${pkBase}` : pkBase,
+    [Keys.PARTITION_KEY]: joinKey(tenantKey(tenantId), app, resourceType, id),
     [Keys.SORT_KEY]: DynamoDB.SortKeys.AUDIT,
   };
 }
 
 /**
- * The sort key of an audit's copy under a related resource.
+ * The sort key of an audit's copy under a related resource:
+ * `related#{app}#{type}#{id}`, each part escaped by {@link joinKey}.
  *
  * @internal
  */
 export function relatedSortKey(resource: ResourceReference): string {
-  return `${DynamoDB.SortKeys.RELATED_PREFIX}${resource.app}.${resource.type}#${resource.id}`;
+  return `${DynamoDB.SortKeys.RELATED_PREFIX}${joinKey(resource.app, resource.type, resource.id ?? "")}`;
 }
 
 /**
@@ -443,6 +470,7 @@ export class AuditRepository<C extends AuditConfig> {
    *
    * @param identifiers - Object containing id, app, and resourceType to locate the record
    * @returns The audit record if found, undefined otherwise
+   * @throws {ReservedTenantError} If the tenant id is `-`
    * @throws The underlying error if the DynamoDB request or schema parsing fails
    *
    * @example
@@ -461,11 +489,13 @@ export class AuditRepository<C extends AuditConfig> {
   public async getItem(
     identifiers: Omit<TypedIdentifiers<C>, "resourceId">,
   ): Promise<Audit | undefined> {
+    // The caller's mistake, so not logged
+    const key = constructPrimaryKey(identifiers);
     try {
       const { Item: item } = await this.client.send(
         new GetItemCommand({
           TableName: DynamoDB.Table.Name(),
-          Key: marshall(constructPrimaryKey(identifiers), MARSHALL_OPTIONS),
+          Key: marshall(key, MARSHALL_OPTIONS),
         }),
       );
 
@@ -617,7 +647,7 @@ export class AuditRepository<C extends AuditConfig> {
    *
    * A copy holds the audit's summary, with the resource as `target`, the audit's
    * target as `source` and `related: true`, in the audit's partition (`SK`
-   * `related#{app}.{type}#{resourceId}`). It takes the audit's stored `createdAt` and
+   * `related#{app}#{type}#{resourceId}`). It takes the audit's stored `createdAt` and
    * `updatedAt`, so it sorts with the audit. Each upsert rewrites the copies of the resources it
    * lists, once per resource, except its own target, under which the audit lists
    * already; a copy under a resource a retry no longer lists stays,

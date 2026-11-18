@@ -41,7 +41,7 @@
         "Items": [
           {
             "PK": {
-              "S": "tenant-1#App1.Order#audit-1"
+              "S": "tenant-1#App1#Order#audit-1"
             },
             "SK": {
               "S": "audit"

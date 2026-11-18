@@ -38,7 +38,7 @@
             "N": "2"
           },
           ":scope": {
-            "S": "App1.Order#order-1"
+            "S": "App1#Order#order-1"
           }
         },
         "FilterExpression": "#tier = :tier AND contains(#scopes, :scope)",
@@ -48,7 +48,7 @@
         "Items": [
           {
             "PK": {
-              "S": "App1.Order#audit-1"
+              "S": "-#App1#Order#audit-1"
             },
             "SK": {
               "S": "audit"

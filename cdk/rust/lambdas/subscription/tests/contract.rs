@@ -141,7 +141,7 @@ async fn stores_each_audit_independently() {
     let recorder = Recorder::answering(|call| {
         let key = call.input["Key"]["PK"]["S"].as_str().unwrap_or_default();
         match (call.command.as_str(), key) {
-            ("UpdateItem", "App1.Order#audit-2") => json!({
+            ("UpdateItem", "-#App1#Order#audit-2") => json!({
                 "error": { "name": "ProvisionedThroughputExceededException", "message": "Slow down" }
             }),
             ("UpdateItem", _) => json!({

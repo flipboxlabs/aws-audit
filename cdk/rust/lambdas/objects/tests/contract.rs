@@ -54,7 +54,7 @@ async fn reports_both_invalid_path_parameters() {
 #[tokio::test(start_paused = true)]
 async fn finds_a_numeric_target_id_by_its_string_form() {
     let item = json!({
-        "PK": { "S": "App1.Order#audit-1" },
+        "PK": { "S": "-#App1#Order#audit-1" },
         "SK": { "S": "audit" },
         "id": { "S": "audit-1" },
         "status": { "S": "success" },
@@ -75,7 +75,7 @@ async fn finds_a_numeric_target_id_by_its_string_form() {
             "calls": [{
                 "service": "DynamoDB",
                 "command": "GetItem",
-                "input": { "TableName": "TEST-Contract-Audit-v2", "Key": { "PK": { "S": "App1.Order#audit-1" }, "SK": { "S": "audit" } } },
+                "input": { "TableName": "TEST-Contract-Audit-v2", "Key": { "PK": { "S": "-#App1#Order#audit-1" }, "SK": { "S": "audit" } } },
                 "output": { "Item": item },
             }],
         })

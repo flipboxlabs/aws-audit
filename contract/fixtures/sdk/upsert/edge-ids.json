@@ -39,7 +39,7 @@
         "TableName": "TEST-Contract-Audit-v2",
         "Key": {
           "PK": {
-            "S": "App1.Order#audit-1"
+            "S": "-#App1#Order#audit-1"
           },
           "SK": {
             "S": "audit"
@@ -90,13 +90,13 @@
           ":scopes": {
             "SS": [
               "App1",
-              "App1.Order",
-              "*.Order",
-              "App1.Order#0",
+              "App1#Order",
+              "*#Order",
+              "App1#Order#0",
               "TestApp",
-              "TestApp.User",
-              "*.User",
-              "TestApp.User#0"
+              "TestApp#User",
+              "*#User",
+              "TestApp#User#0"
             ]
           },
           ":id": {
@@ -195,10 +195,10 @@
               "PutRequest": {
                 "Item": {
                   "PK": {
-                    "S": "App1.Order#audit-1"
+                    "S": "-#App1#Order#audit-1"
                   },
                   "SK": {
-                    "S": "related#TestApp.User#0"
+                    "S": "related#TestApp#User#0"
                   },
                   "id": {
                     "S": "audit-1"

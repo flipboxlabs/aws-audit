@@ -3,7 +3,7 @@
   "tokens": [
     {
       "key": {
-        "PK": "tenant-1#App1.Order#audit-1",
+        "PK": "tenant-1#App1#Order#audit-1",
         "SK": "audit",
         "tenantKey": "tenant-1",
         "app": "App1",
@@ -11,9 +11,9 @@
         "createdAt": "2026-01-02T03:04:05.678Z",
         "id": "audit-1"
       },
-      "token": "eyJQSyI6InRlbmFudC0xI0FwcDEuT3JkZXIjYXVkaXQtMSIsIlNLIjoiYXVkaXQiLCJ0ZW5hbnRLZXkiOiJ0ZW5hbnQtMSIsImFwcCI6IkFwcDEiLCJyZXNvdXJjZVR5cGUiOiJPcmRlciIsImNyZWF0ZWRBdCI6IjIwMjYtMDEtMDJUMDM6MDQ6MDUuNjc4WiIsImlkIjoiYXVkaXQtMSJ9",
+      "token": "eyJQSyI6InRlbmFudC0xI0FwcDEjT3JkZXIjYXVkaXQtMSIsIlNLIjoiYXVkaXQiLCJ0ZW5hbnRLZXkiOiJ0ZW5hbnQtMSIsImFwcCI6IkFwcDEiLCJyZXNvdXJjZVR5cGUiOiJPcmRlciIsImNyZWF0ZWRBdCI6IjIwMjYtMDEtMDJUMDM6MDQ6MDUuNjc4WiIsImlkIjoiYXVkaXQtMSJ9",
       "decoded": {
-        "PK": "tenant-1#App1.Order#audit-1",
+        "PK": "tenant-1#App1#Order#audit-1",
         "SK": "audit",
         "tenantKey": "tenant-1",
         "app": "App1",
@@ -24,7 +24,7 @@
     },
     {
       "key": {
-        "PK": "App1.Order#audit-1",
+        "PK": "-#App1#Order#audit-1",
         "SK": "audit",
         "tenantKey": "-",
         "app": "App1",
@@ -33,9 +33,9 @@
         "createdAt": "2026-01-02T03:04:05.678Z",
         "id": "audit-1"
       },
-      "token": "eyJQSyI6IkFwcDEuT3JkZXIjYXVkaXQtMSIsIlNLIjoiYXVkaXQiLCJ0ZW5hbnRLZXkiOiItIiwiYXBwIjoiQXBwMSIsInJlc291cmNlVHlwZSI6Ik9yZGVyIiwicmVzb3VyY2VJZCI6Im9yZGVyLTEiLCJjcmVhdGVkQXQiOiIyMDI2LTAxLTAyVDAzOjA0OjA1LjY3OFoiLCJpZCI6ImF1ZGl0LTEifQ",
+      "token": "eyJQSyI6Ii0jQXBwMSNPcmRlciNhdWRpdC0xIiwiU0siOiJhdWRpdCIsInRlbmFudEtleSI6Ii0iLCJhcHAiOiJBcHAxIiwicmVzb3VyY2VUeXBlIjoiT3JkZXIiLCJyZXNvdXJjZUlkIjoib3JkZXItMSIsImNyZWF0ZWRBdCI6IjIwMjYtMDEtMDJUMDM6MDQ6MDUuNjc4WiIsImlkIjoiYXVkaXQtMSJ9",
       "decoded": {
-        "PK": "App1.Order#audit-1",
+        "PK": "-#App1#Order#audit-1",
         "SK": "audit",
         "tenantKey": "-",
         "app": "App1",
@@ -47,7 +47,7 @@
     },
     {
       "key": {
-        "PK": "App1.Order#audit-1",
+        "PK": "-#App1#Order#audit-1",
         "SK": "audit",
         "tenantKey": "-",
         "status": "fail",
@@ -55,9 +55,9 @@
         "createdAt": "2026-01-02T03:04:05.678Z",
         "id": "audit-1"
       },
-      "token": "eyJQSyI6IkFwcDEuT3JkZXIjYXVkaXQtMSIsIlNLIjoiYXVkaXQiLCJ0ZW5hbnRLZXkiOiItIiwic3RhdHVzIjoiZmFpbCIsImtpbmQiOiJhdWRpdCIsImNyZWF0ZWRBdCI6IjIwMjYtMDEtMDJUMDM6MDQ6MDUuNjc4WiIsImlkIjoiYXVkaXQtMSJ9",
+      "token": "eyJQSyI6Ii0jQXBwMSNPcmRlciNhdWRpdC0xIiwiU0siOiJhdWRpdCIsInRlbmFudEtleSI6Ii0iLCJzdGF0dXMiOiJmYWlsIiwia2luZCI6ImF1ZGl0IiwiY3JlYXRlZEF0IjoiMjAyNi0wMS0wMlQwMzowNDowNS42NzhaIiwiaWQiOiJhdWRpdC0xIn0",
       "decoded": {
-        "PK": "App1.Order#audit-1",
+        "PK": "-#App1#Order#audit-1",
         "SK": "audit",
         "tenantKey": "-",
         "status": "fail",
@@ -68,7 +68,7 @@
     },
     {
       "key": {
-        "PK": "App1.Order#audit-1",
+        "PK": "-#App1#Order#audit-1",
         "SK": "audit",
         "tenantKey": "-",
         "traceId": "trace-1",
@@ -76,9 +76,9 @@
         "createdAt": "2026-01-02T03:04:05.678Z",
         "id": "audit-1"
       },
-      "token": "eyJQSyI6IkFwcDEuT3JkZXIjYXVkaXQtMSIsIlNLIjoiYXVkaXQiLCJ0ZW5hbnRLZXkiOiItIiwidHJhY2VJZCI6InRyYWNlLTEiLCJ0cmFjZVN0YWdlIjoyLCJjcmVhdGVkQXQiOiIyMDI2LTAxLTAyVDAzOjA0OjA1LjY3OFoiLCJpZCI6ImF1ZGl0LTEifQ",
+      "token": "eyJQSyI6Ii0jQXBwMSNPcmRlciNhdWRpdC0xIiwiU0siOiJhdWRpdCIsInRlbmFudEtleSI6Ii0iLCJ0cmFjZUlkIjoidHJhY2UtMSIsInRyYWNlU3RhZ2UiOjIsImNyZWF0ZWRBdCI6IjIwMjYtMDEtMDJUMDM6MDQ6MDUuNjc4WiIsImlkIjoiYXVkaXQtMSJ9",
       "decoded": {
-        "PK": "App1.Order#audit-1",
+        "PK": "-#App1#Order#audit-1",
         "SK": "audit",
         "tenantKey": "-",
         "traceId": "trace-1",
