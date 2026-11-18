@@ -140,15 +140,24 @@ type TypedAppResourceType<C extends AuditConfig> = {
 }[InferApp<C>];
 
 /**
- * Generic identifiers with typed App and ResourceType from config: naming the app
- * narrows the resource type to that app's.
+ * An audit's key, with typed App and ResourceType from config: naming the app
+ * narrows the resource type to that app's. (`Omit` on {@link TypedIdentifiers}
+ * would lose that, as it doesn't distribute over each app.)
  * @typeParam C - The audit config type for type inference
  */
-export type TypedIdentifiers<C extends AuditConfig> = TypedAppResourceType<C> & {
+export type TypedAuditIdentifiers<C extends AuditConfig> = TypedAppResourceType<C> & {
   /** Tenant/organization identifier for multi-tenancy support (optional) */
   tenantId?: string;
   /** Unique audit record identifier */
   id: string | number;
+};
+
+/**
+ * Generic identifiers with typed App and ResourceType from config: naming the app
+ * narrows the resource type to that app's.
+ * @typeParam C - The audit config type for type inference
+ */
+export type TypedIdentifiers<C extends AuditConfig> = TypedAuditIdentifiers<C> & {
   /** Optional resource identifier within the application */
   resourceId?: string | number;
 };
@@ -521,9 +530,7 @@ export class AuditRepository<C extends AuditConfig> {
    * }
    * ```
    */
-  public async getItem(
-    identifiers: Omit<TypedIdentifiers<C>, "resourceId">,
-  ): Promise<Audit | undefined> {
+  public async getItem(identifiers: TypedAuditIdentifiers<C>): Promise<Audit | undefined> {
     // The caller's mistake, so not logged
     const key = constructPrimaryKey(identifiers);
     try {

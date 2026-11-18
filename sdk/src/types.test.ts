@@ -1,11 +1,13 @@
 import { describe, expectTypeOf, it } from "vite-plus/test";
 import { defineAuditConfig } from "./config.js";
 import type {
+  AuditRepository,
   TypedIdentifiers,
   TypedListItemsOptions,
   TypedListObjectsOptions,
   TypedResourceFilters,
 } from "./repository.js";
+import type { AuditService } from "./service.js";
 import type { InferApp, InferResource, InferResourceType } from "./types.js";
 
 const config = defineAuditConfig({
@@ -40,6 +42,32 @@ describe("config types", () => {
     expectTypeOf({ app: "HubSpot", resource: { type: "Event", id: 1 } } as const).not.toExtend<
       TypedListItemsOptions<Config>
     >();
+  });
+
+  it("should narrow getItem's resource type to its app's", () => {
+    type ServiceKey = Parameters<AuditService<Config>["getItem"]>[0];
+    type RepositoryKey = Parameters<AuditRepository<Config>["getItem"]>[0];
+
+    expectTypeOf({
+      id: "a",
+      app: "HubSpot",
+      resourceType: "Company",
+    } as const).toExtend<ServiceKey>();
+    expectTypeOf({
+      id: "a",
+      app: "CVent",
+      resourceType: "Company",
+    } as const).not.toExtend<ServiceKey>();
+    expectTypeOf({
+      id: "a",
+      app: "HubSpot",
+      resourceType: "Company",
+    } as const).toExtend<RepositoryKey>();
+    expectTypeOf({
+      id: "a",
+      app: "CVent",
+      resourceType: "Company",
+    } as const).not.toExtend<RepositoryKey>();
   });
 
   it("should take a resource type of any app without an app filter", () => {

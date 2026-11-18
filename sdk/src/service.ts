@@ -10,7 +10,7 @@ import { PutEventsError } from "./events/batch-handler.js";
 import { AuditEventBus } from "./events/bus.js";
 import {
   AuditRepository,
-  type TypedIdentifiers,
+  type TypedAuditIdentifiers,
   type TypedListByStatusOptions,
   type TypedListItemsOptions,
   type TypedListObjectsOptions,
@@ -23,6 +23,7 @@ import { generateAuditId } from "./utils.js";
 
 export type {
   ListFilters,
+  TypedAuditIdentifiers,
   TypedIdentifiers,
   TypedResourceFilters,
   TypedListByStatusOptions,
@@ -111,7 +112,7 @@ export class AuditService<C extends AuditConfig> {
    * });
    * ```
    */
-  public async getItem(identifiers: Omit<TypedIdentifiers<C>, "resourceId">): Promise<Audit> {
+  public async getItem(identifiers: TypedAuditIdentifiers<C>): Promise<Audit> {
     const result = await this.storage.getItem(identifiers);
 
     if (result == null) {
