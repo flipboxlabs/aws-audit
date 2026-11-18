@@ -105,7 +105,8 @@ pub fn has_resource_id(id: Option<&ResourceId>) -> bool {
 ///
 /// The resource id is stored as a string, so numeric and string ids list together.
 /// Only audits get `kind` and the trace attributes, which keeps copies out of
-/// `ByStatus` and `ByTrace`.
+/// `ByStatus` and `ByTrace`; an audit whose trace has no id (`:2`) gets no trace
+/// attributes either.
 pub fn index_attributes(
     tenant_id: Option<&str>,
     target: &ResourceReference,
@@ -139,9 +140,12 @@ pub fn index_attributes(
         fields.push((attributes::KIND.to_owned(), Value::String(kind.to_owned())));
     }
 
-    let trace = trace.filter(|trace| audit && !trace.is_empty());
-    if let Some(trace) = trace {
-        let (id, stage) = trace_parts(trace);
+    // A trace without an id (`:2`) lists under none, as an index key can't be empty
+    let trace = trace
+        .filter(|_| audit)
+        .map(trace_parts)
+        .filter(|(id, _)| !id.is_empty());
+    if let Some((id, stage)) = trace {
         fields.push((
             attributes::TRACE_ID.to_owned(),
             Value::String(id.to_owned()),

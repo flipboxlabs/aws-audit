@@ -443,7 +443,8 @@ const fitsSortKey = (sortKey: string) => Buffer.byteLength(sortKey) <= KEY_BYTES
  *
  * The resource id is stored as a string, so numeric and string ids list together.
  * Only audits get `kind` and the trace attributes, which keeps copies out of
- * `ByStatus` and `ByTrace`.
+ * `ByStatus` and `ByTrace`; an audit whose trace has no id (`:2`) gets no trace
+ * attributes either.
  *
  * @param item - The audit, or a related-resource copy
  * @param kind - Whether the item is the audit or a copy
@@ -464,7 +465,8 @@ export function constructIndexAttributes(
     // A numeric id of 0 is an id; only a missing or empty one is left out
     ...(hasResourceId(item.target.id) ? { resourceId: String(item.target.id) } : {}),
     ...(audit ? { kind: DynamoDB.Kinds.AUDIT } : {}),
-    ...(trace ? { traceId: trace.id, traceStage: trace.stage } : {}),
+    // A trace without an id (`:2`) lists under none, as an index key can't be empty
+    ...(trace?.id ? { traceId: trace.id, traceStage: trace.stage } : {}),
   };
 }
 
@@ -624,9 +626,9 @@ export class AuditRepository<C extends AuditConfig> {
    *
    * A retry replaces the fields it gives and keeps those it leaves out, except the
    * target, which it replaces whole: a target without an id removes `resourceId`,
-   * so the audit no longer lists under its earlier resource. Likewise an empty
-   * `trace` removes `traceId` and `traceStage`, so the audit leaves its earlier
-   * trace's listing.
+   * so the audit no longer lists under its earlier resource. Likewise a `trace`
+   * without an id, empty or such as `:2`, removes `traceId` and `traceStage`, so
+   * the audit leaves its earlier trace's listing.
    *
    * @param item - The audit record to upsert (its `attempts`, if any, are ignored)
    * @param currentAttempt - The current attempt to append
@@ -685,9 +687,10 @@ export class AuditRepository<C extends AuditConfig> {
     );
 
     // Add all payload fields dynamically
+    const indexAttributes = constructIndexAttributes(payload, DynamoDB.Kinds.AUDIT);
     const allFields: Record<string, unknown> = {
       ...payload,
-      ...constructIndexAttributes(payload, DynamoDB.Kinds.AUDIT),
+      ...indexAttributes,
       ttl: this.constructTTLAttribute(this.config.ttlSeconds).ttl,
     };
 
@@ -709,13 +712,13 @@ export class AuditRepository<C extends AuditConfig> {
       }
     }
 
-    // The target is replaced whole, so its resourceId goes with it; an empty trace
-    // clears the trace, so its index attributes go too and the audit leaves its listing
+    // The target is replaced whole, so its resourceId goes with it; a trace without
+    // an id clears the trace's index attributes, so the audit leaves its listing
     const removed: string[] = [];
     if (!hasResourceId(payload.target.id)) {
       removed.push(Attributes.RESOURCE_ID);
     }
-    if (payload.trace === "") {
+    if (payload.trace !== undefined && indexAttributes.traceId === undefined) {
       removed.push(Attributes.TRACE_ID, Attributes.TRACE_STAGE);
     }
     for (const name of removed) {

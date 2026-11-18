@@ -661,6 +661,14 @@ const CASES: Case[] = [
     ],
   },
   {
+    name: "upsert/trace-without-id",
+    description:
+      "A trace without an id (`:2`) is stored, but sets no traceId or traceStage, as an index key can't be empty, and removes an earlier trace's",
+    operation: "upsertItem",
+    args: [upsertInput({ trace: ":2" })],
+    replies: [attempts(1), accepted()],
+  },
+  {
     name: "upsert/edge-ids",
     description:
       'A numeric id of 0 is an id (as resourceId "0" and for a related copy); a trace id may contain colons',

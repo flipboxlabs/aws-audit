@@ -423,6 +423,20 @@ describe("AuditRepository", () => {
       expect(kept.UpdateExpression).not.toMatch(/REMOVE/);
     });
 
+    it("should list a trace without an id under no trace, as an index key can't be empty", async () => {
+      mockClient.send.mockResolvedValue(updated());
+
+      await repository.upsertItem(upsertInput({ trace: ":2" }), attempt);
+
+      const command = mockClient.send.mock.calls[0][0] as UpdateItemCommand;
+      expect(setValues(command)).toMatchObject({ trace: ":2" });
+      // Removed, not set
+      expect(command.input.ExpressionAttributeValues).not.toHaveProperty(":traceId");
+      expect(command.input.ExpressionAttributeValues).not.toHaveProperty(":traceStage");
+      // It leaves an earlier trace's listing
+      expect(command.input.UpdateExpression).toMatch(/ REMOVE #traceId, #traceStage$/);
+    });
+
     it("should store a numeric resource id as a string", async () => {
       mockClient.send.mockResolvedValue(updated());
 

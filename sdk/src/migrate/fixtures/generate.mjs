@@ -112,6 +112,8 @@ const v180 = await run("sdk18", "v180", [
     target: { app: "Jobs", type: "Job", id: "2" },
     resources: [{ app: "CRM", type: "Contact", id: "9" }],
   },
+  // A trace without an id, under a tenant: its trace key is the tenant's prefix
+  { ...base, id: "traced", tenantId: "acme", target: job, trace: ":1" },
 ]);
 
 console.log(JSON.stringify({ "1.4.1": v141, "1.8.0": v180 }, null, 2));

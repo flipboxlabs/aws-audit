@@ -363,8 +363,9 @@ async function copyOf(
 
 /**
  * Why a v2 item can't be written, when a key attribute (of the table or an index)
- * is larger than DynamoDB allows: the escaped v2 keys are longer than the earlier
- * ones, so an item the earlier table took may not fit.
+ * is empty, or larger than DynamoDB allows: the escaped v2 keys are longer than the
+ * earlier ones, so an item the earlier table took may not fit, and an index key may
+ * be one the earlier table didn't have.
  */
 function keyProblem(item: UnmarshalledAttributes): string | undefined {
   const keys = [
@@ -377,7 +378,12 @@ function keyProblem(item: UnmarshalledAttributes): string | undefined {
   ];
   for (const { name, limit } of keys) {
     const value = item[name];
-    const bytes = typeof value === "string" ? Buffer.byteLength(value) : 0;
+    if (typeof value !== "string") continue;
+
+    const bytes = Buffer.byteLength(value);
+    if (bytes === 0) {
+      return `Its v2 ${name} would be empty, which DynamoDB doesn't allow for a key`;
+    }
     if (bytes > limit) {
       return `Its v2 ${name} would be ${bytes} bytes, over DynamoDB's ${limit}-byte limit for a key`;
     }

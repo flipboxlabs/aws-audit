@@ -108,7 +108,8 @@ the resource as a related resource. A copy has the audit's id, the resource as
 audit by its `source`. A retry keeps the fields it leaves out, and each copy it
 writes shows the audit as stored, with them; a retry whose target has no id no
 longer lists under the earlier target's resource, and one with an empty `trace` no
-longer lists under the earlier trace. Once it writes the copies, `upsertItem`
+longer lists under the earlier trace. A trace without an id, such as `:2`, is
+stored but lists under no trace, as an index key can't be empty. Once it writes the copies, `upsertItem`
 reads the audit back (`dynamodb:GetItem`, as well as `UpdateItem` and `PutItem`),
 in case the migration from 1.x merged it in the meantime. A retry whose target
 has an id also deletes any copy under that target (`dynamodb:DeleteItem`), since

@@ -460,6 +460,22 @@ describe("migrate", () => {
   });
 
   describe("items as the released SDKs stored them", () => {
+    it("writes SDK 1.8.0's audit whose trace has no id, listed under no trace, on a dry run too", async () => {
+      for (const dryRun of [true, false]) {
+        const { client, table } = stubClient([released["1.8.0"]]);
+
+        const report = await migrate({ client, from: FROM, to: TO, dryRun });
+
+        expect(report.invalid).toEqual([]);
+        if (dryRun) continue;
+        const audit = table.find(({ id }) => id === "traced");
+        expect(audit).toMatchObject({ PK: "acme#Jobs#Job#traced", trace: ":1" });
+        // An index key can't be empty
+        expect(audit).not.toHaveProperty("traceId");
+        expect(audit).not.toHaveProperty("traceStage");
+      }
+    });
+
     it("writes SDK 1.4.1's copies under the resources their SKs name, refusing those without one audit", async () => {
       const { client, table } = stubClient([released["1.4.1"]]);
 
@@ -533,7 +549,7 @@ describe("migrate", () => {
 
       const report = await migrate({ client, from: FROM, to: TO });
 
-      expect(report).toMatchObject({ audits: { written: 2 }, copies: { written: 2 }, invalid: [] });
+      expect(report).toMatchObject({ audits: { written: 3 }, copies: { written: 2 }, invalid: [] });
       const copy = putItems(send).find(({ related, id }) => related && id === "job");
       expect(copy).toMatchObject({
         PK: "-#Jobs#Job#job",
@@ -1066,6 +1082,25 @@ describe("migrate", () => {
           PK: "TestApp.User",
           SK: longCopy.SK,
           reason: "Its v2 SK would be 1221 bytes, over DynamoDB's 1024-byte limit for a key",
+        },
+      ]);
+    }
+  });
+
+  it("reports an item with an empty v2 key, on a dry run too", async () => {
+    const empty = v1Audit({ SK: "audit-2", id: "audit-2", target: { app: "App1", type: "" } });
+
+    for (const dryRun of [true, false]) {
+      const { client } = stubClient([[empty, v1Audit()]]);
+
+      const report = await migrate({ client, from: FROM, to: TO, dryRun });
+
+      expect(report.audits.written).toBe(1);
+      expect(report.invalid).toEqual([
+        {
+          PK: "App1.Order",
+          SK: "audit-2",
+          reason: "Its v2 resourceType would be empty, which DynamoDB doesn't allow for a key",
         },
       ]);
     }

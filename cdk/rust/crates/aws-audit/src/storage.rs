@@ -21,6 +21,7 @@ use crate::keys::{
 use crate::model::{Attempt, Audit, AuditSummary, ResourceReference, Status, Tier, Timestamp};
 use crate::pagination::{self, InvalidNextToken, Page, PageInfo, Pagination};
 use crate::table::{Index, SUMMARY_PROJECTION, attributes, keys, kinds};
+use crate::trace::trace_parts;
 use crate::upsert::{StoredAudit, UpsertAudit};
 
 /// A storage failure.
@@ -187,8 +188,8 @@ impl AuditRepository {
     /// A retry replaces the fields it gives and keeps those it leaves out, except
     /// the target, which it replaces whole: a target without an id removes
     /// `resourceId`, so the audit no longer lists under its earlier resource.
-    /// Likewise an empty `trace` removes `traceId` and `traceStage`, so the audit
-    /// leaves its earlier trace's listing.
+    /// Likewise a `trace` without an id, empty or such as `:2`, removes `traceId`
+    /// and `traceStage`, so the audit leaves its earlier trace's listing.
     ///
     /// Returns the attempt's number (its position in the stored list, which differs
     /// from `attempt.number` on a retry) and the audit as stored, with the stored
@@ -256,13 +257,17 @@ impl AuditRepository {
         let mut values = marshall_map(&values);
         values.insert(":scopes".to_owned(), AttributeValue::Ss(scopes));
 
-        // The target is replaced whole, so its resourceId goes with it; an empty trace
-        // clears the trace, so its index attributes go too and the audit leaves its listing
+        // The target is replaced whole, so its resourceId goes with it; a trace without
+        // an id clears the trace's index attributes, so the audit leaves its listing
         let mut removed = Vec::new();
         if !has_resource_id(stored.target.id.as_ref()) {
             removed.push(attributes::RESOURCE_ID);
         }
-        if stored.trace.as_deref() == Some("") {
+        if stored
+            .trace
+            .as_deref()
+            .is_some_and(|trace| trace_parts(trace).0.is_empty())
+        {
             removed.extend([attributes::TRACE_ID, attributes::TRACE_STAGE]);
         }
         for name in &removed {
