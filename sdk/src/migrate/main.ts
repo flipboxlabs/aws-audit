@@ -11,7 +11,7 @@ Options:
   --from <table>         The earlier table, e.g. PROD-Orders-Audit
   --to <table>           The v2 table, e.g. PROD-Orders-Audit-v2
   --region <region>      AWS region (default: AWS_REGION, then the SDK's default)
-  --concurrency <n>      Writes in flight at once (default: 10)
+  --concurrency <n>      Writes in flight at once, across the run (default: 10)
   --dry-run              Read and transform only; write nothing
   -h, --help             Show this help
 `;

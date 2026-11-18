@@ -941,6 +941,57 @@ describe("migrate", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { from: FROM, to: FROM },
+    { from: "", to: TO },
+    { from: FROM, to: "" },
+  ])("refuses to migrate from $from to $to, before it reads either", async ({ from, to }) => {
+    const { client, send } = stubClient([[v1Audit()]]);
+
+    // Merging a table into itself would add each audit's attempts to it again
+    await expect(migrate({ client, from, to })).rejects.toThrow(
+      new RangeError("from and to must name two different tables"),
+    );
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("keeps every write, copies' included, within the concurrency", async () => {
+    const resources = Array.from({ length: 12 }, (_, n) => `user-${n}`);
+    const { client, send } = stubClient([
+      [
+        v1Audit(),
+        ...resources.map((id) =>
+          v1Copy({
+            SK: `audit-1#TestApp.User#${id}`,
+            target: { app: "TestApp", type: "User", id },
+          }),
+        ),
+      ],
+    ]);
+    // Each write takes a moment, so overlapping writes are seen
+    const writes = { active: 0, most: 0, count: 0 };
+    const stub = send.getMockImplementation()!;
+    send.mockImplementation(async (command) => {
+      if (!(command instanceof PutItemCommand || command instanceof UpdateItemCommand)) {
+        return stub(command);
+      }
+      writes.most = Math.max(writes.most, ++writes.active);
+      writes.count++;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      writes.active--;
+      return stub(command);
+    });
+
+    for (const concurrency of [1, 4]) {
+      Object.assign(writes, { most: 0, count: 0 });
+      await migrate({ client, from: FROM, to: TO, concurrency });
+
+      // The audit and its copies, then the scopes and the copies again
+      expect(writes.count).toBeGreaterThan(25);
+      expect(writes.most).toBe(concurrency);
+    }
+  });
+
   it("leaves items already in the v2 table, and counts copies whose audit is missing", async () => {
     const { client } = stubClient([[v1Audit(), v1Copy()]], () => true);
 

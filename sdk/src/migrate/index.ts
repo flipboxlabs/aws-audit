@@ -59,7 +59,7 @@ export type MigrationOptions = {
   to: string;
   /** Read and transform only; write nothing */
   dryRun?: boolean;
-  /** Writes in flight at once (default 10) */
+  /** Writes in flight at once, across the whole run (default 10) */
   concurrency?: number;
   /** Called after each page of the scan, with the report so far */
   onProgress?: (report: MigrationReport) => void;
@@ -123,13 +123,20 @@ type Write = { kind: "audits" | "copies"; item: UnmarshalledAttributes };
  * (`DynamoDB.Attributes.MIGRATED`), which is how a later run knows to leave it.
  *
  * @returns What was copied, skipped and refused
- * @throws {RangeError} When `concurrency` isn't a positive integer
+ * @throws {RangeError} When `from` and `to` aren't two different tables, as merging
+ * a table into itself would add each audit's attempts to it again, or when
+ * `concurrency` isn't a positive integer
  */
 export async function migrate(options: MigrationOptions): Promise<MigrationReport> {
-  const { client, from, to, dryRun = false, concurrency = 10, onProgress } = options;
+  const { from, to, dryRun = false, concurrency = 10, onProgress } = options;
+  if (!from || !to || from === to) {
+    throw new RangeError("from and to must name two different tables");
+  }
   if (!Number.isInteger(concurrency) || concurrency < 1) {
     throw new RangeError(`concurrency must be a positive integer, not ${concurrency}`);
   }
+  // Every write, wherever it's made, takes one of `concurrency` slots
+  const client = limitWrites(options.client, concurrency);
   const report: MigrationReport = {
     scanned: 0,
     audits: { written: 0, existing: 0, merged: 0 },
@@ -794,6 +801,38 @@ async function putCopies(
 }
 
 /** Runs `fn` over `items`, `size` at a time. */
+/**
+ * A client whose writes (`PutItem`, `UpdateItem` and `DeleteItem`) wait for one of
+ * `limit` slots, so a run never has more in flight, however many partitions or
+ * copies it writes at once. Reads go straight through.
+ */
+function limitWrites(client: DynamoDBClient, limit: number): DynamoDBClient {
+  let active = 0;
+  const waiting: (() => void)[] = [];
+
+  const send = async (command: Parameters<DynamoDBClient["send"]>[0]) => {
+    const write = [PutItemCommand, UpdateItemCommand, DeleteItemCommand].some(
+      (type) => command instanceof type,
+    );
+    if (!write) return client.send(command);
+
+    if (active < limit) {
+      active++;
+    } else {
+      await new Promise<void>((resolve) => waiting.push(resolve));
+    }
+    try {
+      return await client.send(command);
+    } finally {
+      // Handed straight to the next write waiting, if any
+      const next = waiting.shift();
+      if (next) next();
+      else active--;
+    }
+  };
+  return { send } as unknown as DynamoDBClient;
+}
+
 async function inBatches<T>(items: T[], size: number, fn: (item: T) => Promise<void>) {
   for (let i = 0; i < items.length; i += size) {
     await Promise.all(items.slice(i, i + size).map(fn));
