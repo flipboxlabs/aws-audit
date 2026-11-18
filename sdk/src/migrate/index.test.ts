@@ -144,6 +144,7 @@ describe("migrate", () => {
       traceId: "trace-1",
       traceStage: 2,
       scopes: new Set(["App1", "App1#Order", "*#Order", "App1#Order#order-1"]),
+      migrated: true,
     });
     expect(report).toEqual({
       scanned: 1,
@@ -335,14 +336,16 @@ describe("migrate", () => {
         moved,
         {
           key: { PK: "-#App1#Order#audit-1", SK: "audit" },
-          expression: "SET #attempts = :attempts, #createdAt = :createdAt",
-          condition: "#createdAt = :current AND size(#attempts) = :count",
+          expression: "SET #attempts = :attempts, #createdAt = :createdAt, #migrated = :migrated",
+          condition:
+            "attribute_not_exists(#migrated) AND #createdAt = :current AND size(#attempts) = :count",
           values: {
             ":attempts": [
               { number: 1, status: "fail", error: "Boom", at: NOW },
               { number: 2, status: "success", at: NOW },
             ],
             ":createdAt": EARLIER,
+            ":migrated": true,
             ":current": NOW,
             ":count": 1,
           },
@@ -359,7 +362,8 @@ describe("migrate", () => {
         (command) =>
           isAuditPut(command) ||
           (command instanceof UpdateItemCommand &&
-            command.input.ConditionExpression?.startsWith("#createdAt") === true &&
+            command.input.ConditionExpression?.startsWith("attribute_not_exists(#migrated)") ===
+              true &&
             refused++ === 0),
         [v2Audit()],
       );
@@ -374,9 +378,43 @@ describe("migrate", () => {
       expect(report.audits).toMatchObject({ merged: 1 });
     });
 
-    it("is left alone once it has the earlier createdAt", async () => {
+    it("merges a retry that kept the earlier createdAt", async () => {
       const { client, send } = stubClient([[v1Audit({ createdAt: EARLIER })]], isAuditPut, [
         v2Audit({ createdAt: EARLIER }),
+        { ...v2Copy, createdAt: EARLIER },
+      ]);
+
+      const report = await migrate({ client, from: FROM, to: TO });
+
+      const [merge] = commands(send, UpdateItemCommand).filter(({ input }) =>
+        input.UpdateExpression?.startsWith("SET #attempts"),
+      );
+      expect(unmarshall(merge.input.ExpressionAttributeValues!)).toMatchObject({
+        ":attempts": [
+          { number: 1, status: "fail" },
+          { number: 2, status: "success" },
+        ],
+        ":createdAt": EARLIER,
+      });
+      expect(report.audits).toEqual({ written: 0, existing: 0, merged: 1 });
+    });
+
+    it("keeps the v2 createdAt when it's the earlier", async () => {
+      const { client, send } = stubClient([[v1Audit({ createdAt: NOW })]], isAuditPut, [
+        v2Audit({ createdAt: EARLIER }),
+      ]);
+
+      await migrate({ client, from: FROM, to: TO });
+
+      const [merge] = commands(send, UpdateItemCommand);
+      expect(unmarshall(merge.input.ExpressionAttributeValues!)).toMatchObject({
+        ":createdAt": EARLIER,
+      });
+    });
+
+    it("is left alone once merged", async () => {
+      const { client, send } = stubClient([[v1Audit({ createdAt: EARLIER })]], isAuditPut, [
+        v2Audit({ createdAt: EARLIER, migrated: true }),
         v2Copy,
       ]);
 
@@ -415,16 +453,30 @@ describe("migrate", () => {
       [
         v1Audit({ SK: "batch#7", id: "batch#7" }),
         v1Audit({ SK: "a#App1.Order#order-1#x", id: "a#App1.Order#order-1#x" }),
+        // Ends as a copy under its own target would: its attempts say it's an audit
+        v1Audit({ SK: "job#App1.Order#order-1", id: "job#App1.Order#order-1" }),
       ],
     ]);
 
     const report = await migrate({ client, from: FROM, to: TO });
 
-    expect(report).toMatchObject({ audits: { written: 2 }, copies: { written: 0 }, invalid: [] });
+    expect(report).toMatchObject({
+      audits: { written: 3 },
+      copies: { written: 0, ownTarget: 0 },
+      invalid: [],
+    });
     expect(putItems(send).map(({ PK, SK }) => [PK, SK])).toEqual([
       ["-#App1#Order#batch%237", "audit"],
       ["-#App1#Order#a%23App1.Order%23order-1%23x", "audit"],
+      ["-#App1#Order#job%23App1.Order%23order-1", "audit"],
     ]);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN])("refuses a concurrency of %s", async (concurrency) => {
+    const { client, send } = stubClient([[v1Audit()]]);
+
+    await expect(migrate({ client, from: FROM, to: TO, concurrency })).rejects.toThrow(RangeError);
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("leaves items already in the v2 table, and counts copies whose audit is missing", async () => {

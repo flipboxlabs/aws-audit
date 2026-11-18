@@ -65,6 +65,9 @@ pub mod attributes {
     /// and each related resource: `{app}`, `{app}#{type}`, `*#{type}` and, with an
     /// id, `{app}#{type}#{id}`, each part escaped as in the table's keys.
     pub const SCOPES: &str = "scopes";
+    /// `true` on an audit the migration from the earlier table wrote or merged, so
+    /// a later run leaves it alone; not projected or returned.
+    pub const MIGRATED: &str = "migrated";
     /// The latest outcome.
     pub const STATUS: &str = "status";
     /// When the audit was created.

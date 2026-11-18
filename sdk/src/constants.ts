@@ -80,6 +80,11 @@ const Attributes = {
    * and `%2A`
    */
   SCOPES: "scopes",
+  /**
+   * `true` on an audit the migration from the earlier table wrote or merged, so a
+   * later run leaves it alone; not projected or returned
+   */
+  MIGRATED: "migrated",
   STATUS: "status",
   CREATED_AT: "createdAt",
   ID: "id",

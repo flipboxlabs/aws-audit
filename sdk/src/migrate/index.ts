@@ -107,12 +107,17 @@ type Write = { kind: "audits" | "copies"; item: UnmarshalledAttributes; audit?: 
  * new version has written since the deploy. Deploy first, then migrate. An audit
  * retried since the deploy has a v2 audit of its own: the earlier attempts are
  * put before its attempts, renumbered, and it and its copies take the earlier
- * `createdAt`.
+ * `createdAt`. Each audit written or merged is marked `migrated`
+ * (`DynamoDB.Attributes.MIGRATED`), which is how a later run knows to leave it.
  *
  * @returns What was copied, skipped and refused
+ * @throws {RangeError} When `concurrency` isn't a positive integer
  */
 export async function migrate(options: MigrationOptions): Promise<MigrationReport> {
   const { client, from, to, dryRun = false, concurrency = 10, onProgress } = options;
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new RangeError(`concurrency must be a positive integer, not ${concurrency}`);
+  }
   const report: MigrationReport = {
     scanned: 0,
     audits: { written: 0, existing: 0, merged: 0 },
@@ -256,9 +261,13 @@ function auditCreatedAt(client: DynamoDBClient, table: string): CreatedAt {
 /**
  * The audit id of an earlier related resource's copy, whose `SK` is
  * `{auditId}#{app}.{type}#{id}` for its target; undefined for an audit, whose `SK`
- * is its id, which may hold a `#` too.
+ * is its id, which may hold a `#` too, even ending as a copy's would. An audit has
+ * attempts (the earlier SDK appended one on each upsert) and a copy has none, so
+ * only an item without attempts is read as a copy.
  */
 function copyAuditId(item: UnmarshalledAttributes): string | undefined {
+  if (Array.isArray(item.attempts) && item.attempts.length > 0) return undefined;
+
   const sortKey = String(item.SK ?? "");
   const target = item.target as Partial<ResourceReference> | undefined;
   if (!target?.app || !target.type || !hasResourceId(target.id)) return undefined;
@@ -306,6 +315,7 @@ function toAudit(item: UnmarshalledAttributes): Transformed {
         ...constructPrimaryKey({ tenantId, app: target.app, resourceType: target.type, id }),
         ...constructIndexAttributes({ tenantId, target, trace }, DynamoDB.Kinds.AUDIT),
         [Attributes.SCOPES]: new Set(resourceScopes(target)),
+        [Attributes.MIGRATED]: true,
       },
     },
   };
@@ -406,11 +416,11 @@ const MERGE_ATTEMPTS = 5;
 
 /**
  * Merges an earlier audit into the v2 audit an upsert wrote since the deploy: its
- * attempts go first, every attempt is renumbered by its position, and the audit
- * and its copies take its `createdAt`.
+ * attempts go first, every attempt is renumbered by its position, the audit and
+ * its copies take the earlier of the two `createdAt`s, and the audit is marked
+ * `migrated`.
  *
- * @returns False when the earlier audit isn't older, so there's nothing to merge,
- *   as after an earlier run
+ * @returns False when the v2 audit is marked `migrated` already, by an earlier run
  * @throws Error when upserts kept changing the audit while merging
  */
 async function mergeAudit(
@@ -419,7 +429,11 @@ async function mergeAudit(
   audit: UnmarshalledAttributes,
 ): Promise<boolean> {
   const key = marshall({ [Keys.PARTITION_KEY]: audit.PK, [Keys.SORT_KEY]: audit.SK });
-  const names = { "#attempts": "attempts", "#createdAt": "createdAt" };
+  const names = {
+    "#attempts": "attempts",
+    "#createdAt": "createdAt",
+    "#migrated": Attributes.MIGRATED,
+  };
 
   for (let attempt = 0; attempt < MERGE_ATTEMPTS; attempt++) {
     const { Item } = await client.send(
@@ -427,33 +441,44 @@ async function mergeAudit(
         TableName: table,
         Key: key,
         ConsistentRead: true,
-        ProjectionExpression: "#attempts, #createdAt",
+        ProjectionExpression: "#attempts, #createdAt, #migrated",
         ExpressionAttributeNames: names,
       }),
     );
     const current = Item ? unmarshall(Item) : undefined;
-    if (!current || !(Date.parse(audit.createdAt) < Date.parse(current.createdAt))) {
+    if (!current || current[Attributes.MIGRATED]) {
       return false;
     }
 
-    const attempts: UnmarshalledAttributes[] = [...(audit.attempts ?? []), ...current.attempts];
+    // A retry may have given the upsert the earlier createdAt, so it's no sign of a merge
+    const createdAt =
+      Date.parse(audit.createdAt) < Date.parse(current.createdAt)
+        ? audit.createdAt
+        : current.createdAt;
+    const attempts: UnmarshalledAttributes[] = [
+      ...(audit.attempts ?? []),
+      ...(current.attempts ?? []),
+    ];
     // First too: an interrupted run merges again, finding the audit unmerged
-    await moveCopies(client, table, audit.PK, audit.createdAt);
+    await moveCopies(client, table, audit.PK, createdAt);
     try {
       await client.send(
         new UpdateItemCommand({
           TableName: table,
           Key: key,
-          UpdateExpression: "SET #attempts = :attempts, #createdAt = :createdAt",
-          // Unchanged since the read: an upsert in between appended an attempt
-          ConditionExpression: "#createdAt = :current AND size(#attempts) = :count",
+          UpdateExpression:
+            "SET #attempts = :attempts, #createdAt = :createdAt, #migrated = :migrated",
+          // Unmerged and unchanged since the read: an upsert in between appended an attempt
+          ConditionExpression:
+            "attribute_not_exists(#migrated) AND #createdAt = :current AND size(#attempts) = :count",
           ExpressionAttributeNames: names,
           ExpressionAttributeValues: marshall(
             {
               ":attempts": attempts.map((item, i) => ({ ...item, number: i + 1 })),
-              ":createdAt": audit.createdAt,
+              ":createdAt": createdAt,
+              ":migrated": true,
               ":current": current.createdAt,
-              ":count": current.attempts.length,
+              ":count": current.attempts?.length ?? 0,
             },
             MARSHALL_OPTIONS,
           ),
@@ -465,7 +490,7 @@ async function mergeAudit(
     }
 
     // Again, as an upsert in between rewrote its copies with the audit's createdAt
-    await moveCopies(client, table, audit.PK, audit.createdAt);
+    await moveCopies(client, table, audit.PK, createdAt);
     return true;
   }
 
