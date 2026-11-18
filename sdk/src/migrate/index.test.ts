@@ -8,6 +8,7 @@ import {
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { migrate } from "./index.js";
 
@@ -58,6 +59,16 @@ const v1Copy = (overrides: Record<string, unknown> = {}) =>
     GSI1_SS_SK: "audit-1#TestApp.User#user-1",
     ...overrides,
   });
+
+/** Items as the released SDKs stored them, written by `fixtures/generate.mjs` */
+const released = Object.fromEntries(
+  Object.entries(
+    JSON.parse(readFileSync(new URL("fixtures/v1.json", import.meta.url), "utf8")) as Record<
+      string,
+      Parameters<typeof unmarshall>[0][]
+    >,
+  ).map(([version, items]) => [version, items.map((item) => unmarshall(item))]),
+);
 
 const conditionFailed = () =>
   new ConditionalCheckFailedException({ message: "The conditional request failed", $metadata: {} });
@@ -179,8 +190,10 @@ describe("migrate", () => {
       traceId: "trace-1",
       traceStage: 0,
     });
-    // A NULL trace beside trace keys is rebuilt from them too
-    expect(nullTrace).toMatchObject({ trace: "trace-1:2", traceId: "trace-1" });
+    // A NULL trace was an empty one, which cleared the trace; the keys beside it were left over
+    expect(nullTrace).toMatchObject({ trace: "" });
+    expect(nullTrace).not.toHaveProperty("traceId");
+    expect(nullTrace).not.toHaveProperty("traceStage");
   });
 
   it("writes a copy as a summary in its audit's partition and adds its scopes to the audit", async () => {
@@ -294,16 +307,12 @@ describe("migrate", () => {
   });
 
   describe("a copy written before SDK 1.4.2", () => {
-    /** It kept its audit's target and resources; only its SK names its resource */
+    /** It kept its audit's target, as its source too; only its SK names its resource */
     const v1LegacyCopy = (overrides: Record<string, unknown> = {}) =>
       v1Copy({
         PK: "App1.Order",
         target: { app: "App1", type: "Order", id: "order-1" },
         source: { app: "App1", type: "Order", id: "order-1" },
-        resources: [
-          { app: "TestApp", type: "User", id: "user-1" },
-          { app: "TestApp", type: "Order", id: 7 },
-        ],
         GSI1_SS_PK: "App1.Order#order-1",
         ...overrides,
       });
@@ -330,7 +339,6 @@ describe("migrate", () => {
         resourceType: "User",
         resourceId: "user-1",
       });
-      expect(copy).not.toHaveProperty("resources");
       const scopes = commands(send, UpdateItemCommand).map(({ input }) =>
         unmarshall(input.ExpressionAttributeValues!),
       );
@@ -339,47 +347,138 @@ describe("migrate", () => {
       ]);
     });
 
-    it("keeps a numeric resource id", async () => {
+    it("keeps its resource id as its SK holds it, as text", async () => {
       const { client, send } = stubClient([[v1LegacyCopy({ SK: "audit-1#TestApp.Order#7" })]]);
 
       await migrate({ client, from: FROM, to: TO });
 
       expect(putItems(send)[0]).toMatchObject({
         SK: "related#TestApp#Order#7",
-        target: { app: "TestApp", type: "Order", id: 7 },
+        target: { app: "TestApp", type: "Order", id: "7" },
       });
     });
 
-    it("is reported when its SK names none of its resources, or more than one", async () => {
+    it("takes the split of its SK whose audit id names an audit in its partition", async () => {
+      const { client, send } = stubClient([
+        [v1LegacyCopy({ SK: "audit-1#TestApp.User#x#TestApp.User#1" }), v1Audit()],
+      ]);
+
+      const report = await migrate({ client, from: FROM, to: TO });
+
+      expect(report.invalid).toEqual([]);
+      expect(putItems(send).find(({ related }) => related)).toMatchObject({
+        PK: "-#App1#Order#audit-1",
+        id: "audit-1",
+        target: { app: "TestApp", type: "User", id: "x#TestApp.User#1" },
+      });
+      expect(
+        commands(send, GetItemCommand)
+          .slice(0, 2)
+          .map(({ input }) => [input.TableName, unmarshall(input.Key!)]),
+      ).toEqual([
+        [FROM, { PK: "App1.Order", SK: "audit-1" }],
+        [FROM, { PK: "App1.Order", SK: "audit-1#TestApp.User#x" }],
+      ]);
+    });
+
+    it("is reported when its SK splits no way, or more than one way and none after an audit's id", async () => {
       const { client, send } = stubClient([
         [
-          v1LegacyCopy({ SK: "audit-1#TestApp.User#user-9" }),
-          v1LegacyCopy({
-            SK: "audit-1#TestApp.User#x#TestApp.User#1",
-            resources: [
-              { app: "TestApp", type: "User", id: "1" },
-              { app: "TestApp", type: "User", id: "x#TestApp.User#1" },
-            ],
-          }),
+          v1LegacyCopy({ SK: "audit-1#TestApp-User#user-1" }),
+          v1LegacyCopy({ SK: "audit-1#TestApp.User#user-1", source: undefined }),
+          v1LegacyCopy({ SK: "audit-9#TestApp.User#x#TestApp.User#1" }),
         ],
       ]);
 
       const report = await migrate({ client, from: FROM, to: TO });
 
+      const neither =
+        "An item without attempts, which isn't an audit, whose SK names neither its target nor a resource after an audit's id";
       expect(report.invalid).toEqual([
+        { PK: "App1.Order", SK: "audit-1#TestApp-User#user-1", reason: neither },
+        { PK: "App1.Order", SK: "audit-1#TestApp.User#user-1", reason: neither },
         {
           PK: "App1.Order",
-          SK: "audit-1#TestApp.User#user-9",
+          SK: "audit-9#TestApp.User#x#TestApp.User#1",
           reason:
-            "An item without attempts, which isn't an audit, whose SK names neither its target nor one of its resources",
-        },
-        {
-          PK: "App1.Order",
-          SK: "audit-1#TestApp.User#x#TestApp.User#1",
-          reason: "A related resource's copy whose SK names more than one of its resources",
+            "A related resource's copy whose SK splits more than one way, none after an audit's id",
         },
       ]);
       expect(putItems(send)).toEqual([]);
+    });
+  });
+
+  describe("items as the released SDKs stored them", () => {
+    it("writes SDK 1.4.1's copies under the resources their SKs name, refusing an ambiguous one", async () => {
+      const { client, send } = stubClient([released["1.4.1"]]);
+
+      const report = await migrate({ client, from: FROM, to: TO });
+
+      expect(report).toMatchObject({
+        scanned: 8,
+        audits: { written: 5 },
+        copies: { written: 2, ownTarget: 0 },
+        invalid: [
+          {
+            PK: "Jobs.Job",
+            SK: "a#CRM.Contact#7#CRM.Contact#8",
+            reason:
+              "A related resource's copy whose SK splits more than one way after an audit's id",
+          },
+        ],
+      });
+      const copies = putItems(send).filter(({ related }) => related);
+      expect(copies.map(({ id, SK, target, source }) => ({ id, SK, target, source }))).toEqual([
+        {
+          id: "job",
+          SK: "related#CRM#Contact#7",
+          target: { app: "CRM", type: "Contact", id: "7" },
+          source: { app: "Jobs", type: "Job", id: "1" },
+        },
+        {
+          id: "x#CRM.Contact#7",
+          SK: "related#CRM#Contact#8",
+          target: { app: "CRM", type: "Contact", id: "8" },
+          source: { app: "Jobs", type: "Job", id: "1" },
+        },
+      ]);
+      // In each audit's partition
+      const audits = putItems(send).filter(({ SK }) => SK === "audit");
+      for (const copy of copies) {
+        expect(audits.find(({ id }) => id === copy.id)?.PK).toBe(copy.PK);
+      }
+    });
+
+    it("gives back the empty strings SDK 1.4.1 stored as NULL", async () => {
+      const { client, send } = stubClient([released["1.4.1"]]);
+
+      const report = await migrate({ client, from: FROM, to: TO });
+
+      expect(report.invalid.map(({ SK }) => SK)).not.toContain("empty");
+      const audit = putItems(send).find(({ id }) => id === "empty");
+      expect(audit).toMatchObject({
+        operation: "",
+        context: { note: "", nested: { value: "" } },
+        event: { source: "jobs", "detail-type": "Sync", detail: "" },
+      });
+      // A null message is none
+      expect(audit).not.toHaveProperty("message");
+    });
+
+    it("writes SDK 1.8.0's copy under its target", async () => {
+      const { client, send } = stubClient([released["1.8.0"]]);
+
+      const report = await migrate({ client, from: FROM, to: TO });
+
+      expect(report).toMatchObject({ audits: { written: 1 }, copies: { written: 1 }, invalid: [] });
+      const [copy] = putItems(send).filter(({ related }) => related);
+      expect(copy).toMatchObject({
+        PK: "-#Jobs#Job#job",
+        SK: "related#CRM#Contact#7",
+        id: "job",
+        target: { app: "CRM", type: "Contact", id: "7" },
+        source: { app: "Jobs", type: "Job", id: "1" },
+      });
     });
   });
 
@@ -409,13 +508,16 @@ describe("migrate", () => {
     expect(audit).not.toHaveProperty("message");
   });
 
-  it("gives back the nested empty strings the earlier SDK stored as NULL, where a null isn't valid", async () => {
+  it("gives back the empty strings the earlier SDK stored as NULL, where a null isn't valid", async () => {
     const { client, send } = stubClient([
       [
         v1Audit({
+          operation: null,
+          trace: null,
           context: { note: null, nested: { label: null } },
+          event: { source: "orders", "detail-type": null, detail: null },
           source: { app: "TestApp", type: "User", id: null },
-          resources: [{ app: "TestApp", type: "User", id: null }],
+          error: { code: null },
           attempts: [{ number: 1, status: "fail", error: null, at: NOW }],
         }),
       ],
@@ -425,9 +527,13 @@ describe("migrate", () => {
 
     expect(report.invalid).toEqual([]);
     expect(putItems(send)[0]).toMatchObject({
+      operation: "",
+      trace: "",
       context: { note: "", nested: { label: "" } },
+      event: { source: "orders", "detail-type": "", detail: "" },
       source: { app: "TestApp", type: "User", id: "" },
-      resources: [{ app: "TestApp", type: "User", id: "" }],
+      // A null is valid in an error object, so it may have been one
+      error: { code: null },
       attempts: [{ number: 1, status: "fail", error: "", at: NOW }],
     });
   });

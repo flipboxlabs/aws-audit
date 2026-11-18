@@ -9,6 +9,7 @@ import {
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
+import type * as z from "zod/v4";
 import { DynamoDB } from "../constants.js";
 import {
   constructIndexAttributes,
@@ -105,9 +106,9 @@ type Write = {
  *
  * `createdAt` and `updatedAt` are written with milliseconds, as the SDK writes
  * them: the earlier table kept a caller's text, and listings compare them as text.
- * The earlier SDK wrote empty strings as NULL: top-level ones are left out, and
- * nested ones are empty strings again where a null isn't valid (see
- * {@link withEmptyStrings}).
+ * The earlier SDK wrote empty strings as NULL: they're empty strings again where
+ * a null isn't valid (see {@link withEmptyStrings}), and other top-level NULLs are
+ * left out.
  *
  * Writes are conditional, so a run can be repeated and never replaces what the
  * new version has written since the deploy. Deploy first, then migrate. An audit
@@ -135,6 +136,20 @@ export async function migrate(options: MigrationOptions): Promise<MigrationRepor
 
   // Related resources' scopes per audit partition, added once every audit is written
   const relatedScopes = new Map<string, Set<string>>();
+
+  // Whether the earlier table holds an audit under a key, which only has attempts
+  const isAudit = async (key: Key) => {
+    const { Item } = await client.send(
+      new GetItemCommand({
+        TableName: from,
+        Key: marshall(key),
+        ProjectionExpression: "#attempts",
+        ExpressionAttributeNames: { "#attempts": "attempts" },
+      }),
+    );
+    const attempts = Item && unmarshall(Item).attempts;
+    return Array.isArray(attempts) && attempts.length > 0;
+  };
 
   const put = async ({ kind, item, audit }: Write, createdAt: CreatedAt) => {
     if (audit) {
@@ -175,7 +190,7 @@ export async function migrate(options: MigrationOptions): Promise<MigrationRepor
     for (const raw of items) {
       report.scanned++;
       const item = unmarshall(raw);
-      const copy = copyOf(item);
+      const copy = await copyOf(item, isAudit);
       const result = !copy ? toAudit(item) : "reason" in copy ? copy : toCopy(item, copy);
 
       if ("reason" in result) {
@@ -280,49 +295,67 @@ function auditCreatedAt(client: DynamoDBClient, from: string, to: string): Creat
 type Copy = { auditId: string; target: ResourceReference };
 
 /**
+ * A resource as an earlier copy's `SK` names it after its audit's id,
+ * `{app}.{type}#{id}`, with app and type names as a v2 config allows (`NAME_PATTERN`).
+ */
+const SORT_KEY_RESOURCE = /^([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)#(.+)$/s;
+
+/**
  * The audit id and resource of an earlier related resource's copy, whose `SK` is
  * `{auditId}#{app}.{type}#{id}` for its resource; undefined for an audit, whose
  * `SK` is its id, which may hold a `#` too, even ending as a copy's would. Every
  * earlier SDK appended an attempt on each upsert of an audit and gave a copy none,
- * so only an item without attempts is a copy.
+ * so only an item without attempts is a copy. No earlier SDK stored `resources`.
  *
- * From SDK 1.4.2 on, a copy's `target` is its resource. Before, a copy kept its
- * audit's `target` (and `resources`), and only its `SK` named its resource: it's
- * found among the copy's `resources`. A copy whose `SK` names no such resource, or
- * more than one, is refused with the reason, to be reconciled by hand.
+ * From SDK 1.4.2 on, a copy's `target` is its resource, which its `SK` ends with.
+ * Before, a copy kept its audit's `target`, as its `source` too, in its audit's
+ * partition, and only its `SK` named its resource, as text. As an audit's id may
+ * hold a `#`, that `SK` may split into an audit id and a resource more than one
+ * way: then the split whose audit id names an audit in the copy's partition is
+ * taken. A copy whose `SK` splits no way, or more than one way that names an
+ * audit, or none, is refused with the reason, to be reconciled by hand.
+ *
+ * @param isAudit - Whether the earlier table holds an audit under this key
  */
-function copyOf(item: UnmarshalledAttributes): Copy | { reason: string } | undefined {
+async function copyOf(
+  item: UnmarshalledAttributes,
+  isAudit: (key: Key) => Promise<boolean>,
+): Promise<Copy | { reason: string } | undefined> {
   if (Array.isArray(item.attempts) && item.attempts.length > 0) return undefined;
 
   const sortKey = String(item.SK ?? "");
-  const auditId = (resource: Partial<ResourceReference> | undefined) => {
-    if (!resource?.app || !resource.type || !hasResourceId(resource.id)) return undefined;
-    const suffix = `#${resource.app}.${resource.type}#${resource.id}`;
-    return sortKey.length > suffix.length && sortKey.endsWith(suffix)
-      ? sortKey.slice(0, -suffix.length)
-      : undefined;
-  };
-
   const target = item.target as ResourceReference | undefined;
-  const id = auditId(target);
-  if (id !== undefined && target) return { auditId: id, target };
-
-  // Before 1.4.2: one of its resources, each once however its id was typed
-  const copies = new Map<string, Copy>();
-  for (const resource of Array.isArray(item.resources) ? item.resources : []) {
-    const id = auditId(resource as Partial<ResourceReference>);
-    if (id === undefined) continue;
-    const { app, type, id: resourceId } = resource as ResourceReference;
-    const copy = { auditId: id, target: { app, type, id: resourceId } };
-    copies.set(JSON.stringify([id, relatedSortKey(copy.target)]), copy);
+  if (target?.app && target.type && hasResourceId(target.id)) {
+    const suffix = `#${target.app}.${target.type}#${target.id}`;
+    if (sortKey.length > suffix.length && sortKey.endsWith(suffix)) {
+      return { auditId: sortKey.slice(0, -suffix.length), target };
+    }
   }
-  if (copies.size === 1) return [...copies.values()][0];
+
+  // Before 1.4.2: under its audit's target, which is its source too
+  const source = item.source as ResourceReference | undefined;
+  const splits: Copy[] = [];
+  if (target?.app && source?.app && relatedSortKey(target) === relatedSortKey(source)) {
+    for (let at = sortKey.indexOf("#", 1); at !== -1; at = sortKey.indexOf("#", at + 1)) {
+      const [, app, type, id] = SORT_KEY_RESOURCE.exec(sortKey.slice(at + 1)) ?? [];
+      if (app) splits.push({ auditId: sortKey.slice(0, at), target: { app, type, id } });
+    }
+  }
+  if (splits.length === 1) return splits[0];
+
+  const audits: Copy[] = [];
+  for (const split of splits) {
+    if (await isAudit({ PK: String(item.PK), SK: split.auditId })) audits.push(split);
+  }
+  if (audits.length === 1) return audits[0];
 
   return {
     reason:
-      copies.size > 1
-        ? "A related resource's copy whose SK names more than one of its resources"
-        : "An item without attempts, which isn't an audit, whose SK names neither its target nor one of its resources",
+      splits.length === 0
+        ? "An item without attempts, which isn't an audit, whose SK names neither its target nor a resource after an audit's id"
+        : audits.length === 0
+          ? "A related resource's copy whose SK splits more than one way, none after an audit's id"
+          : "A related resource's copy whose SK splits more than one way after an audit's id",
   };
 }
 
@@ -442,16 +475,18 @@ function toCopy(item: UnmarshalledAttributes, { auditId, target }: Copy): Transf
 }
 
 /**
- * An earlier item's fields without its keys or the attributes stored as NULL (empty
- * strings), with its trace as a string: one the item kept only in its trace index
- * keys is rebuilt from them (`{id}` at stage 0, else `{id}:{stage}`).
+ * An earlier item's fields without its keys, with its empty strings back and
+ * without its other NULL attributes, with its trace as a string: one the item kept
+ * only in its trace index keys is rebuilt from them (`{id}` at stage 0, else
+ * `{id}:{stage}`). A NULL trace was an empty one, which cleared the trace, so it
+ * isn't rebuilt from the keys an earlier upsert left.
  */
 function withTrace(item: UnmarshalledAttributes): UnmarshalledAttributes {
-  const fields = withEmptyStrings(
-    Object.fromEntries(
-      Object.entries(item).filter(([name, value]) => !V1_KEYS.includes(name) && value !== null),
-    ),
-  );
+  const restored = withEmptyStrings(
+    Object.fromEntries(Object.entries(item).filter(([name]) => !V1_KEYS.includes(name))),
+    AuditSchema,
+  ) as UnmarshalledAttributes;
+  const fields = Object.fromEntries(Object.entries(restored).filter(([, value]) => value !== null));
   if (typeof fields.trace === "string") return fields;
 
   if (typeof item.GSI1_SN_PK !== "string" || item.GSI1_SN_SK === undefined) return fields;
@@ -467,36 +502,71 @@ function withTrace(item: UnmarshalledAttributes): UnmarshalledAttributes {
 }
 
 /**
- * An earlier item's fields with the empty strings the earlier SDK wrote as NULL
- * (`convertEmptyValues`) back where a null isn't valid, so the v2 item is read as
- * the audit was written: in `context`, as a target's, source's or resource's id,
- * and as an attempt's error. A null elsewhere (in `event` or an `error` object)
- * may be one, so it's kept.
+ * A value of an earlier item with the empty strings the earlier SDK wrote as NULL
+ * (`convertEmptyValues`) back, so the v2 item is read as the audit was written:
+ * each NULL where `schema` takes an empty string but not a null, such as an
+ * `operation`, an event's `detail`, a `context` value or a target's id. A NULL
+ * where a null is valid (an `error` object's) may be one, so it's kept, as is one
+ * where an empty string isn't valid either.
  */
-function withEmptyStrings(fields: UnmarshalledAttributes): UnmarshalledAttributes {
-  const context = (value: unknown): unknown =>
-    value === null
-      ? ""
-      : isRecord(value)
-        ? Object.fromEntries(Object.entries(value).map(([name, v]) => [name, context(v)]))
-        : value;
-  const reference = (value: unknown) =>
-    isRecord(value) && value.id === null ? { ...value, id: "" } : value;
-  const attempt = (value: unknown) =>
-    isRecord(value) && value.error === null ? { ...value, error: "" } : value;
+function withEmptyStrings(value: unknown, schema: z.ZodType): unknown {
+  if (value === null) {
+    return !schema.safeParse(null).success && schema.safeParse("").success ? "" : null;
+  }
 
-  return {
-    ...fields,
-    ...(isRecord(fields.context) ? { context: context(fields.context) } : {}),
-    ...(isRecord(fields.target) ? { target: reference(fields.target) } : {}),
-    ...(isRecord(fields.source) ? { source: reference(fields.source) } : {}),
-    ...(Array.isArray(fields.resources) ? { resources: fields.resources.map(reference) } : {}),
-    ...(Array.isArray(fields.attempts) ? { attempts: fields.attempts.map(attempt) } : {}),
-  };
+  const kinds = schemaKinds(schema);
+  if (Array.isArray(value)) {
+    const array = kinds.find((kind) => kind.type === "array");
+    return array?.element ? value.map((v) => withEmptyStrings(v, array.element!)) : value;
+  }
+  if (typeof value === "object" && !(value instanceof Set)) {
+    const object = kinds.find((kind) => kind.type === "object" || kind.type === "record");
+    if (!object) return value;
+    return Object.fromEntries(
+      Object.entries(value).map(([name, v]) => {
+        const field = object.type === "object" ? object.shape?.[name] : object.valueType;
+        return [name, field ? withEmptyStrings(v, field) : v];
+      }),
+    );
+  }
+  return value;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+/** The parts of a zod schema's definition {@link schemaKinds} reads */
+type SchemaDef = {
+  type: string;
+  innerType?: z.ZodType;
+  in?: z.ZodType;
+  getter?: () => z.ZodType;
+  options?: z.ZodType[];
+  shape?: Record<string, z.ZodType>;
+  valueType?: z.ZodType;
+  element?: z.ZodType;
+};
+
+/**
+ * The definitions of the schemas a value may parse as: through optional, default,
+ * pipe and lazy schemas, and each option of a union.
+ */
+function schemaKinds(schema: z.ZodType): SchemaDef[] {
+  const def = schema._zod.def as unknown as SchemaDef;
+  switch (def.type) {
+    case "optional":
+    case "nullable":
+    case "default":
+    case "prefault":
+    case "readonly":
+    case "catch":
+      return schemaKinds(def.innerType!);
+    case "pipe":
+      return schemaKinds(def.in!);
+    case "lazy":
+      return schemaKinds(def.getter!());
+    case "union":
+      return def.options!.flatMap(schemaKinds);
+    default:
+      return [def];
+  }
 }
 
 /** Reads of an audit a merge makes when an upsert changes it meanwhile */
