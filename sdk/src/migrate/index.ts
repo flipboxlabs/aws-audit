@@ -137,7 +137,25 @@ export async function migrate(options: MigrationOptions): Promise<MigrationRepor
     throw new RangeError(`concurrency must be a positive integer, not ${concurrency}`);
   }
   // Every write, wherever it's made, takes one of `concurrency` slots
-  const client = limitWrites(options.client, concurrency);
+  const writes = new WriteLimit(options.client, concurrency);
+  try {
+    return await run({ from, to, dryRun, concurrency, onProgress }, writes.client);
+  } catch (error) {
+    // No write starts once the run fails, and none is in flight when it returns,
+    // so a caller that retries at once can't have two runs writing
+    writes.stop(error);
+    await writes.settled();
+    throw writes.failure ?? error;
+  }
+}
+
+/** A migration's run, whose writes go through `client` */
+async function run(
+  options: Omit<Required<MigrationOptions>, "client" | "onProgress"> &
+    Pick<MigrationOptions, "onProgress">,
+  client: DynamoDBClient,
+): Promise<MigrationReport> {
+  const { from, to, dryRun, concurrency, onProgress } = options;
   const report: MigrationReport = {
     scanned: 0,
     audits: { written: 0, existing: 0, merged: 0 },
@@ -826,33 +844,76 @@ export function tablesProblem(from: string | undefined, to: string | undefined) 
  * A client whose writes (`PutItem`, `UpdateItem` and `DeleteItem`) wait for one of
  * `limit` slots, so a run never has more in flight, however many partitions or
  * copies it writes at once. Reads go straight through.
+ *
+ * Once a write fails (other than on its condition, which its caller handles), or
+ * the run is stopped, the writes waiting for a slot are cancelled and no other
+ * starts.
  */
-function limitWrites(client: DynamoDBClient, limit: number): DynamoDBClient {
-  let active = 0;
-  const waiting: (() => void)[] = [];
+class WriteLimit {
+  readonly client: DynamoDBClient;
+  /** What stopped the writes: the first write's failure, or the run's */
+  failure: unknown;
+  private stopped = false;
+  private active = 0;
+  private waiting: { resolve: () => void; reject: (error: Error) => void }[] = [];
+  private idle: (() => void)[] = [];
 
-  const send = async (command: Parameters<DynamoDBClient["send"]>[0]) => {
-    const write = [PutItemCommand, UpdateItemCommand, DeleteItemCommand].some(
-      (type) => command instanceof type,
-    );
-    if (!write) return client.send(command);
+  constructor(
+    client: DynamoDBClient,
+    private readonly limit: number,
+  ) {
+    this.client = {
+      send: (command: Parameters<DynamoDBClient["send"]>[0]) =>
+        [PutItemCommand, UpdateItemCommand, DeleteItemCommand].some(
+          (type) => command instanceof type,
+        )
+          ? this.write(() => client.send(command))
+          : client.send(command),
+    } as unknown as DynamoDBClient;
+  }
 
-    if (active < limit) {
-      active++;
+  /** Cancels the writes waiting for a slot, and refuses any other */
+  stop(error: unknown) {
+    if (this.stopped) return;
+    this.stopped = true;
+    this.failure ??= error;
+    for (const { reject } of this.waiting.splice(0)) reject(cancelled());
+  }
+
+  /** Resolves once no write is in flight */
+  settled(): Promise<void> {
+    return this.active === 0
+      ? Promise.resolve()
+      : new Promise((resolve) => this.idle.push(resolve));
+  }
+
+  private async write<T>(send: () => Promise<T>): Promise<T> {
+    if (this.stopped) throw cancelled();
+    if (this.active < this.limit) {
+      this.active++;
     } else {
-      await new Promise<void>((resolve) => waiting.push(resolve));
+      await new Promise<void>((resolve, reject) => this.waiting.push({ resolve, reject }));
     }
+
     try {
-      return await client.send(command);
+      return await send();
+    } catch (error) {
+      if (!(error instanceof ConditionalCheckFailedException)) this.stop(error);
+      throw error;
     } finally {
       // Handed straight to the next write waiting, if any
-      const next = waiting.shift();
-      if (next) next();
-      else active--;
+      const next = this.waiting.shift();
+      if (next) {
+        next.resolve();
+      } else if (--this.active === 0) {
+        for (const resolve of this.idle.splice(0)) resolve();
+      }
     }
-  };
-  return { send } as unknown as DynamoDBClient;
+  }
 }
+
+/** A write that didn't start, as an earlier one failed */
+const cancelled = () => new Error("Write cancelled, as the migration failed");
 
 async function inBatches<T>(items: T[], size: number, fn: (item: T) => Promise<void>) {
   for (let i = 0; i < items.length; i += size) {

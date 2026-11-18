@@ -1013,6 +1013,62 @@ describe("migrate", () => {
     }
   });
 
+  describe("a write that fails", () => {
+    /** An audit and its 12 copies, which are put again from it once it's written */
+    const pages = () => [
+      [
+        v1Audit(),
+        ...Array.from({ length: 12 }, (_, n) =>
+          v1Copy({
+            SK: `audit-1#TestApp.User#user-${n}`,
+            target: { app: "TestApp", type: "User", id: `user-${n}` },
+          }),
+        ),
+      ],
+    ];
+    /** Its writes take a moment; the first copy put again from the audit fails */
+    const failing = (send: ReturnType<typeof stubClient>["send"]) => {
+      const writes = { active: 0, started: 0, afterFailure: 0, failed: false };
+      const stub = send.getMockImplementation()!;
+      send.mockImplementation(async (command) => {
+        const write = command instanceof PutItemCommand || command instanceof UpdateItemCommand;
+        if (!write) return stub(command);
+
+        writes.started++;
+        if (writes.failed) writes.afterFailure++;
+        writes.active++;
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        writes.active--;
+        const reconciling = String(command.input.ConditionExpression).includes("#revision");
+        if (reconciling && !writes.failed) {
+          writes.failed = true;
+          throw new Error("ProvisionedThroughputExceededException");
+        }
+        return stub(command);
+      });
+      return writes;
+    };
+
+    it.each([1, 4])(
+      "stops the writes queued behind it, at a concurrency of %s",
+      async (concurrency) => {
+        const { client, send } = stubClient(pages());
+        const writes = failing(send);
+
+        await expect(migrate({ client, from: FROM, to: TO, concurrency })).rejects.toThrow(
+          "ProvisionedThroughputExceededException",
+        );
+
+        // Only those in flight with it, and none once it has rejected
+        expect(writes.afterFailure).toBeLessThan(concurrency);
+        expect(writes.active).toBe(0);
+        const started = writes.started;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(writes.started).toBe(started);
+      },
+    );
+  });
+
   it("leaves items already in the v2 table, and counts copies whose audit is missing", async () => {
     const { client } = stubClient([[v1Audit(), v1Copy()]], () => true);
 
