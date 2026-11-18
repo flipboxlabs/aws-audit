@@ -168,6 +168,15 @@ describe("defineAuditConfig", () => {
       expect(() => defineAuditConfig({ apps })).toThrow(message);
     });
 
+    it.each([
+      [["Orders"], 'apps must map each app to its resource types, such as { Orders: ["Order"] }'],
+      [null, 'apps must map each app to its resource types, such as { Orders: ["Order"] }'],
+      [{ Orders: "Order" }, 'App "Orders" must list its resource types as an array of strings'],
+      [{ Orders: [1] }, 'App "Orders" must list its resource types as an array of strings'],
+    ])("should refuse the shape %j, which JavaScript doesn't check", (apps, message) => {
+      expect(() => defineAuditConfig({ apps: apps as never })).toThrow(message);
+    });
+
     it("should accept letters, digits, - and _", () => {
       expect(() =>
         defineAuditConfig({ apps: { "Hub_Spot-2": ["Contact_v2", "a-1"] } }),

@@ -102,9 +102,14 @@ describe("ConfigLayerConstruct", () => {
     [{ Orders: [] }, 'App "Orders" must list at least one resource type'],
     [{ "Order Desk": ["Order"] }, 'App "Order Desk" must hold only letters, digits, - and _'],
     [{ Orders: ["Order/Line"] }, 'Resource type "Order/Line" of app "Orders" must hold only'],
+    // The 1.x shape, from a JavaScript caller, which the Rust Lambdas can't load
+    [["Orders"], "apps must map each app to its resource types"],
+    [{ Orders: "Order" }, 'App "Orders" must list its resource types as an array of strings'],
   ])("should refuse %j at synth", (apps, message) => {
     const stack = new cdk.Stack(new cdk.App(), "TestStack");
 
-    expect(() => new ConfigLayerConstruct(stack, "AuditConfigLayer", { apps })).toThrow(message);
+    expect(
+      () => new ConfigLayerConstruct(stack, "AuditConfigLayer", { apps: apps as never }),
+    ).toThrow(message);
   });
 });

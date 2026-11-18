@@ -32,20 +32,28 @@ export interface AuditConfigInput {
 }
 
 /**
- * Why an audit config is refused, or undefined when it's valid: at least one app,
- * each with at least one resource type, every name URL-safe ({@link NAME_PATTERN}).
- * The CDK config layer and the Rust Lambdas check the same.
+ * Why an audit config is refused, or undefined when it's valid: an object mapping
+ * at least one app to an array of at least one resource type, every name URL-safe
+ * ({@link NAME_PATTERN}). The CDK config layer and the Rust Lambdas check the same;
+ * the shape is checked too, for JavaScript callers, as the Rust Lambdas read only
+ * a map of arrays (an earlier `apps: ["Orders"]` would load as an app named "0").
  */
 export function auditConfigProblem(apps: AuditConfigInput["apps"]): string | undefined {
-  const entries = Object.entries(apps);
+  if (typeof apps !== "object" || apps === null || Array.isArray(apps)) {
+    return 'apps must map each app to its resource types, such as { Orders: ["Order"] }';
+  }
+  const entries = Object.entries(apps as Record<string, unknown>);
   if (entries.length === 0) return "apps must list at least one app";
 
   for (const [app, types] of entries) {
     if (!NAME_PATTERN.test(app)) {
       return `App "${app}" must hold only letters, digits, - and _`;
     }
+    if (!Array.isArray(types) || types.some((type) => typeof type !== "string")) {
+      return `App "${app}" must list its resource types as an array of strings`;
+    }
     if (types.length === 0) return `App "${app}" must list at least one resource type`;
-    for (const type of types) {
+    for (const type of types as string[]) {
       if (!NAME_PATTERN.test(type)) {
         return `Resource type "${type}" of app "${app}" must hold only letters, digits, - and _`;
       }
