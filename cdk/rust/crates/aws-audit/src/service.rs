@@ -108,7 +108,11 @@ impl AuditService {
             at: Timestamp::from(self.clock.now()),
         };
         let upserted = self.storage.upsert_item(&audit, &id, &attempt).await?;
-        self.storage.upsert_related(&audit, &id, &upserted).await?;
+        // Copies of the audit as stored: with the fields a retry kept, sorted with
+        // the audit by its stored createdAt
+        self.storage
+            .upsert_related(&upserted.audit, audit.resources.iter().flatten())
+            .await?;
 
         if let Some(events) = &self.events
             && let Err(error) = events.upserted(std::slice::from_ref(&audit)).await

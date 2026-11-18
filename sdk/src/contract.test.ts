@@ -20,6 +20,7 @@ import { BatchHandler } from "./events/batch-handler.js";
 import { AuditEventBus } from "./events/bus.js";
 import { AuditRepository } from "./repository.js";
 import { decodeNextPageToken, encodeNextPageToken, type PageKey } from "./repository.utils.js";
+import { DateTimeStringSchema } from "./schema/common.js";
 import type { LogAuditInput } from "./schema/log.js";
 import { AuditService } from "./service.js";
 import { testConfig } from "./test-config.js";
@@ -98,16 +99,56 @@ type Operation =
   | "listTraceItems"
   | "listByStatus";
 
+/** The UpdateItem reply of an upsert: the audit as stored, from the case's input */
+type StoredReply = {
+  stored: { count: number; createdAt?: string; kept?: Record<string, unknown> };
+};
+
 type Case = {
   name: string;
   description: string;
   operation: Operation;
   args: unknown[];
-  replies?: Reply[];
+  replies?: (Reply | StoredReply)[];
+};
+
+/**
+ * What UpdateItem's `ALL_NEW` returns for an upsert of `input`: its fields, over
+ * those an earlier attempt `kept`, with `count` attempts.
+ */
+const storedReply = (
+  input: Record<string, unknown>,
+  { count, createdAt, kept = {} }: StoredReply["stored"],
+): Reply => {
+  const { resources: _, attempts: __, ...fields } = input;
+  return {
+    output: {
+      Attributes: marshall(
+        {
+          status: "success",
+          tier: 2,
+          ...kept,
+          ...fields,
+          createdAt: createdAt ?? DateTimeStringSchema.parse(fields.createdAt ?? NOW),
+          updatedAt: NOW,
+          attempts: Array.from({ length: count }, (_, i) => ({
+            number: i + 1,
+            status: "success",
+            at: NOW,
+          })),
+        },
+        { removeUndefinedValues: true, convertEmptyValues: true },
+      ),
+    },
+  };
 };
 
 const record = async ({ name, description, operation, args, replies = [] }: Case) => {
-  const { calls, service } = recordingService(replies);
+  const { calls, service } = recordingService(
+    replies.map((reply) =>
+      "stored" in reply ? storedReply(args[0] as Record<string, unknown>, reply.stored) : reply,
+    ),
+  );
 
   let result: unknown;
   let error: { name: string; message: string } | undefined;
@@ -215,18 +256,12 @@ const accepted = (count = 1) => ({
 });
 
 /** UpdateItem's ALL_NEW reply after this many attempts, with the stored createdAt */
-const attempts = (count: number, createdAt = NOW) => ({
-  output: {
-    Attributes: marshall({
-      createdAt,
-      attempts: Array.from({ length: count }, (_, i) => ({
-        number: i + 1,
-        status: "success",
-        at: NOW,
-      })),
-    }),
-  },
-});
+/** An upsert's UpdateItem reply: the audit as stored, with `count` attempts */
+const attempts = (
+  count: number,
+  createdAt?: string,
+  kept?: Record<string, unknown>,
+): StoredReply => ({ stored: { count, createdAt, kept } });
 
 const upsertInput = (overrides: Record<string, unknown> = {}) => ({
   id: "audit-1",
@@ -424,6 +459,36 @@ const CASES: Case[] = [
       }),
     ],
     replies: [attempts(2, "2026-01-01T00:00:00.000Z"), { output: {} }, { output: {} }, accepted()],
+  },
+  {
+    name: "upsert/retry-kept-fields",
+    description:
+      "A retry keeps the fields it leaves out, and its copies are the audit as stored, with them",
+    operation: "upsertItem",
+    args: [
+      upsertInput({
+        status: "fail",
+        resources: [{ app: "TestApp", type: "User", id: "user-1" }],
+      }),
+    ],
+    replies: [
+      attempts(2, "2026-01-01T00:00:00.000Z", {
+        message: "Order created",
+        trace: "trace-1:2",
+        rerunable: true,
+      }),
+      { output: {} },
+      { output: {} },
+      accepted(),
+    ],
+  },
+  {
+    name: "upsert/retry-without-target-id",
+    description:
+      "A retry whose target has no id removes resourceId, so the audit lists under its earlier resource no more",
+    operation: "upsertItem",
+    args: [upsertInput({ target: { app: "App1", type: "Order" } })],
+    replies: [attempts(2, "2026-01-01T00:00:00.000Z"), { output: {} }, accepted()],
   },
   {
     name: "upsert/edge-ids",

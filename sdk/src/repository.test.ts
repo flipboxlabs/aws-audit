@@ -27,6 +27,7 @@ import {
 } from "./repository.js";
 import { encodeNextPageToken } from "./repository.utils.js";
 import type { UpsertAuditInput } from "./schema/service.js";
+import { AuditStorageSchema } from "./schema/storage.js";
 import { App, ResourceType, testConfig } from "./test-config.js";
 
 type ListItemsOptions = TypedListItemsOptions<typeof testConfig>;
@@ -105,9 +106,13 @@ describe("AuditRepository", () => {
 
   const attempt = { number: 1, status: "fail", at: CREATED_AT };
 
-  /** The UpdateItem response for a first attempt */
-  const updated = (attempts = [attempt], createdAt = CREATED_AT) => ({
-    Attributes: marshall({ attempts, createdAt }),
+  /** The UpdateItem response: the audit as stored, for a first attempt */
+  const updated = (
+    attempts = [attempt],
+    createdAt = CREATED_AT,
+    overrides: Record<string, unknown> = {},
+  ) => ({
+    Attributes: marshall(storedAudit({ attempts, createdAt, ...overrides })),
   });
 
   /** The names and values an UpdateItem sets, unmarshalled */
@@ -235,19 +240,26 @@ describe("AuditRepository", () => {
   });
 
   describe("upsertItem", () => {
-    it("should update the audit's item and return the attempt and stored createdAt", async () => {
+    it("should update the audit's item and return the attempt and the audit as stored", async () => {
       mockClient.send.mockResolvedValue(updated([attempt], "2025-12-31T00:00:00.000Z"));
 
       const result = await repository.upsertItem(upsertInput(), attempt);
 
       expect(result).toEqual({
         attemptNumber: 1,
-        createdAt: "2025-12-31T00:00:00.000Z",
-        updatedAt: expect.any(String),
+        audit: {
+          id: "audit-123",
+          operation: "createOrder",
+          status: "fail",
+          tier: 1,
+          target: { app: App.App1, type: ResourceType.ORDER, id: "order-1" },
+          trace: "trace-1:2",
+          error: "Boom",
+          attempts: [attempt],
+          createdAt: "2025-12-31T00:00:00.000Z",
+          updatedAt: CREATED_AT,
+        },
       });
-      expect(result.updatedAt).toBe(
-        setValues(mockClient.send.mock.calls[0][0] as UpdateItemCommand).updatedAt,
-      );
       const command = mockClient.send.mock.calls[0][0] as UpdateItemCommand;
       expect(command).toBeInstanceOf(UpdateItemCommand);
       expect(command.input.TableName).toBe(TABLE);
@@ -337,6 +349,33 @@ describe("AuditRepository", () => {
       expect(setValues(command)).toMatchObject({ tenantKey: "tenant-a", tenantId: "tenant-a" });
     });
 
+    it("should return the fields a retry kept, with its attempt renumbered", async () => {
+      const retry = { number: 1, status: "success", at: CREATED_AT };
+      mockClient.send.mockResolvedValue(
+        updated([attempt, retry], "2025-12-31T00:00:00.000Z", { message: "Order failed" }),
+      );
+
+      const { audit } = await repository.upsertItem(upsertInput({ status: "success" }), retry);
+
+      expect(audit.message).toBe("Order failed");
+      expect(audit.attempts?.map(({ number }) => number)).toEqual([1, 2]);
+    });
+
+    it("should remove the resource id when the target has none, so it lists under its resource no more", async () => {
+      mockClient.send.mockResolvedValue(updated());
+
+      await repository.upsertItem(
+        upsertInput({ target: { app: App.App1, type: ResourceType.ORDER } }),
+        attempt,
+      );
+
+      const { UpdateExpression, ExpressionAttributeNames } = (
+        mockClient.send.mock.calls[0][0] as UpdateItemCommand
+      ).input;
+      expect(UpdateExpression).toMatch(/ ADD #scopes :scopes REMOVE #resourceId$/);
+      expect(ExpressionAttributeNames).toMatchObject({ "#resourceId": "resourceId" });
+    });
+
     it("should store a numeric resource id as a string", async () => {
       mockClient.send.mockResolvedValue(updated());
 
@@ -358,8 +397,10 @@ describe("AuditRepository", () => {
         attempt,
       );
 
-      const values = setValues(mockClient.send.mock.calls[0][0] as UpdateItemCommand);
-      expect(values).not.toHaveProperty("resourceId");
+      const command = mockClient.send.mock.calls[0][0] as UpdateItemCommand;
+      const values = setValues(command);
+      // Removed, not set
+      expect(command.input.ExpressionAttributeValues).not.toHaveProperty(":resourceId");
       expect(values).not.toHaveProperty("traceId");
       expect(values).not.toHaveProperty("traceStage");
       expect(values.scopes).toEqual(new Set(["App1", "App1#Order", "*#Order"]));
@@ -478,6 +519,7 @@ describe("AuditRepository", () => {
         },
       ],
       ["tenant", { tenantId: "tenant-abc" }],
+      ["no target id", { target: { app: App.App1, type: ResourceType.ORDER } }],
     ])(
       "should only send expression names and values the update expression uses (%s)",
       async (_label, overrides) => {
@@ -508,10 +550,20 @@ describe("AuditRepository", () => {
       ]?.map((request) => unmarshall(request.PutRequest?.Item ?? {}));
     const STORED = { createdAt: CREATED_AT, updatedAt: CREATED_AT };
 
+    /** Writes the copies of `input` as upsertItem stored it */
+    const upsertRelated = (
+      input: UpsertAuditInput & { id: string },
+      timestamps: { createdAt: string; updatedAt: string },
+    ) =>
+      repository.upsertRelated(
+        AuditStorageSchema.parse({ ...input, ...timestamps }),
+        input.resources,
+      );
+
     it("should write a summary copy per related resource with an id", async () => {
       mockClient.send.mockResolvedValue({});
 
-      await repository.upsertRelated(
+      await upsertRelated(
         upsertInput({
           trace: "trace-1:2",
           message: "Order failed",
@@ -552,10 +604,24 @@ describe("AuditRepository", () => {
       });
     });
 
-    it("should key a tenant's copies under its audit", async () => {
+    it("should copy the audit as stored, with the fields a retry kept", async () => {
       mockClient.send.mockResolvedValue({});
 
       await repository.upsertRelated(
+        AuditStorageSchema.parse({
+          ...upsertInput({ message: "Order failed", trace: "trace-1:2" }),
+          ...STORED,
+        }),
+        [{ app: App.TestApp, type: ResourceType.USER, id: 7 }],
+      );
+
+      expect(putItems()?.[0]).toMatchObject({ message: "Order failed", trace: "trace-1:2" });
+    });
+
+    it("should key a tenant's copies under its audit", async () => {
+      mockClient.send.mockResolvedValue({});
+
+      await upsertRelated(
         upsertInput({
           tenantId: "tenant-a",
           resources: [{ app: App.TestApp, type: ResourceType.USER, id: "u" }],
@@ -573,7 +639,7 @@ describe("AuditRepository", () => {
     it("should keep the audit's rerunable setting", async () => {
       mockClient.send.mockResolvedValue({});
 
-      await repository.upsertRelated(
+      await upsertRelated(
         upsertInput({
           rerunable: false,
           event: { source: "orders", "detail-type": "OrderCreated", detail: {} },
@@ -586,11 +652,11 @@ describe("AuditRepository", () => {
     });
 
     it("should write nothing without related resources that have an id", async () => {
-      await repository.upsertRelated(
+      await upsertRelated(
         upsertInput({ resources: [{ app: App.TestApp, type: ResourceType.USER }] }),
         STORED,
       );
-      await repository.upsertRelated(upsertInput(), STORED);
+      await upsertRelated(upsertInput(), STORED);
 
       expect(mockClient.send).not.toHaveBeenCalled();
     });
@@ -598,7 +664,7 @@ describe("AuditRepository", () => {
     it("should write one copy per resource, from its last listing", async () => {
       mockClient.send.mockResolvedValue({});
 
-      await repository.upsertRelated(
+      await upsertRelated(
         upsertInput({
           resources: [
             { app: App.TestApp, type: ResourceType.USER, id: 1 },
@@ -619,7 +685,7 @@ describe("AuditRepository", () => {
     it("should leave out the audit's own target, which it lists under already", async () => {
       mockClient.send.mockResolvedValue({});
 
-      await repository.upsertRelated(
+      await upsertRelated(
         upsertInput({
           resources: [
             { app: App.App1, type: ResourceType.ORDER, id: "order-1" },
@@ -628,7 +694,7 @@ describe("AuditRepository", () => {
         }),
         STORED,
       );
-      await repository.upsertRelated(
+      await upsertRelated(
         upsertInput({ resources: [{ app: App.App1, type: ResourceType.ORDER, id: "order-1" }] }),
         STORED,
       );
@@ -640,7 +706,7 @@ describe("AuditRepository", () => {
     it("should write 25 copies at a time", async () => {
       mockClient.send.mockResolvedValue({});
 
-      await repository.upsertRelated(
+      await upsertRelated(
         upsertInput({
           resources: Array.from({ length: 26 }, (_, id) => ({
             app: App.TestApp,
@@ -666,7 +732,7 @@ describe("AuditRepository", () => {
           .mockResolvedValueOnce({ UnprocessedItems: {} });
 
         try {
-          const promise = repository.upsertRelated(upsertInput({ resources }), STORED);
+          const promise = upsertRelated(upsertInput({ resources }), STORED);
           await vi.runAllTimersAsync();
           await promise;
         } finally {
@@ -688,7 +754,7 @@ describe("AuditRepository", () => {
         mockClient.send.mockResolvedValue({ UnprocessedItems: unprocessed });
 
         try {
-          const promise = repository.upsertRelated(upsertInput({ resources }), STORED);
+          const promise = upsertRelated(upsertInput({ resources }), STORED);
           const rejection = expect(promise).rejects.toThrow(
             "BatchWriteItem failed: unprocessed items after 8 retries",
           );

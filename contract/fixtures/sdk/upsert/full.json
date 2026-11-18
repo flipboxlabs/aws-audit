@@ -218,7 +218,87 @@
       },
       "output": {
         "Attributes": {
+          "status": {
+            "S": "fail"
+          },
+          "tier": {
+            "N": "1"
+          },
+          "id": {
+            "S": "audit-1"
+          },
+          "operation": {
+            "S": "createOrder"
+          },
+          "target": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "type": {
+                "S": "Order"
+              },
+              "id": {
+                "S": "order-1"
+              }
+            }
+          },
+          "trace": {
+            "S": "trace-1:2"
+          },
+          "source": {
+            "M": {
+              "app": {
+                "S": "TestApp"
+              },
+              "type": {
+                "S": "User"
+              },
+              "id": {
+                "N": "42"
+              }
+            }
+          },
+          "context": {
+            "M": {
+              "attempt": {
+                "N": "1"
+              },
+              "label": {
+                "S": "retry"
+              },
+              "nested": {
+                "M": {
+                  "ok": {
+                    "BOOL": false
+                  }
+                }
+              }
+            }
+          },
+          "message": {
+            "S": "Order failed"
+          },
+          "error": {
+            "S": "Boom"
+          },
+          "event": {
+            "M": {
+              "source": {
+                "S": "orders"
+              },
+              "detail-type": {
+                "S": "OrderCreated"
+              },
+              "detail": {
+                "S": "{\"orderId\":\"order-1\"}"
+              }
+            }
+          },
           "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "updatedAt": {
             "S": "2026-01-02T03:04:05.678Z"
           },
           "attempts": {

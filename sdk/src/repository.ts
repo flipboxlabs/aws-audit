@@ -524,14 +524,18 @@ export class AuditRepository<C extends AuditConfig> {
    * Attempts are system-managed: each call appends exactly one attempt (`currentAttempt`).
    * Any `attempts` on `item` are ignored; they are neither written nor appended.
    *
+   * A retry replaces the fields it gives and keeps those it leaves out, except the
+   * target, which it replaces whole: a target without an id removes `resourceId`,
+   * so the audit no longer lists under its earlier resource.
+   *
    * @param item - The audit record to upsert (its `attempts`, if any, are ignored)
    * @param currentAttempt - The current attempt to append
-   * @returns The attempt number (1 for new items, incremented for existing), the
-   *   stored `createdAt`, and the `updatedAt` this upsert stored
+   * @returns The attempt number (1 for new items, incremented for existing), and
+   *   the audit as stored, with the fields a retry kept and the stored `createdAt`
    *
    * @example
    * ```typescript
-   * const { attemptNumber, createdAt, updatedAt } = await repository.upsertItem(
+   * const { attemptNumber, audit } = await repository.upsertItem(
    *   { operation: 'processPayment', status: 'success', ... },
    *   { number: 1, status: 'success', at: '2024-01-01T00:00:00Z' }
    * );
@@ -545,7 +549,7 @@ export class AuditRepository<C extends AuditConfig> {
       error?: unknown;
       at: string;
     },
-  ): Promise<{ attemptNumber: number; createdAt: string; updatedAt: string }> {
+  ): Promise<{ attemptNumber: number; audit: AuditStorage }> {
     const now = new Date();
 
     const payload = AuditStorageSchema.parse({
@@ -605,11 +609,18 @@ export class AuditRepository<C extends AuditConfig> {
       }
     }
 
+    // The target is replaced whole, so its resourceId goes with it
+    let removeClause = "";
+    if (!hasResourceId(payload.target.id)) {
+      expressionAttributeNames["#resourceId"] = Attributes.RESOURCE_ID;
+      removeClause = " REMOVE #resourceId";
+    }
+
     const result = await this.client.send(
       new UpdateItemCommand({
         TableName: DynamoDB.Table.Name(),
         Key: marshall(primaryKey, MARSHALL_OPTIONS),
-        UpdateExpression: `SET ${setClauses.join(", ")} ADD #scopes :scopes`,
+        UpdateExpression: `SET ${setClauses.join(", ")} ADD #scopes :scopes${removeClause}`,
         ExpressionAttributeNames: expressionAttributeNames,
         ExpressionAttributeValues: marshall(expressionAttributeValues, MARSHALL_OPTIONS),
         ReturnValues: "ALL_NEW",
@@ -619,8 +630,8 @@ export class AuditRepository<C extends AuditConfig> {
     if (!result.Attributes) {
       throw new Error("UpdateItem did not return attributes");
     }
-    const updated = unmarshall(result.Attributes) as { attempts: unknown[]; createdAt: string };
-    const attemptNumber = updated.attempts.length;
+    const updated = unmarshall(result.Attributes);
+    const attemptNumber = (updated.attempts as unknown[]).length;
 
     if (attemptNumber !== currentAttempt.number) {
       await this.client.send(
@@ -639,7 +650,11 @@ export class AuditRepository<C extends AuditConfig> {
       );
     }
 
-    return { attemptNumber, createdAt: updated.createdAt, updatedAt: payload.updatedAt };
+    const audit = AuditStorageSchema.parse(withoutNulls(updated));
+    // As renumbered above
+    const appended = audit.attempts?.at(-1);
+    if (appended) appended.number = attemptNumber;
+    return { attemptNumber, audit };
   }
 
   /**
@@ -647,54 +662,50 @@ export class AuditRepository<C extends AuditConfig> {
    *
    * A copy holds the audit's summary, with the resource as `target`, the audit's
    * target as `source` and `related: true`, in the audit's partition (`SK`
-   * `related#{app}#{type}#{resourceId}`). It takes the audit's stored `createdAt` and
-   * `updatedAt`, so it sorts with the audit. Each upsert rewrites the copies of the resources it
+   * `related#{app}#{type}#{resourceId}`). It is built from the audit as stored, so
+   * it holds the fields a retry kept and sorts with the audit by its stored
+   * `createdAt`. Each upsert rewrites the copies of the resources it
    * lists, once per resource, except its own target, under which the audit lists
    * already; a copy under a resource a retry no longer lists stays,
    * as do that resource's `scopes` on the audit. Items are written with
    * BatchWriteItem, 25 at a time.
    *
-   * @param item - The audit, with its id
-   * @param stored - The audit's stored `createdAt` and `updatedAt`, from {@link upsertItem}
+   * @param audit - The audit as stored, from {@link upsertItem}
+   * @param related - The resources the upsert listed in `resources`
    * @throws Error if unprocessed items remain after the maximum retries
    *
    * @example
    * ```typescript
-   * const stored = await repository.upsertItem(item, attempt);
-   * await repository.upsertRelated(item, stored);
+   * const { audit } = await repository.upsertItem(item, attempt);
+   * await repository.upsertRelated(audit, item.resources);
    * ```
    */
   public async upsertRelated(
-    item: UpsertAuditInput & { id: string },
-    stored: { createdAt: string; updatedAt: string },
+    audit: AuditStorage,
+    related: Iterable<ResourceReference> | undefined,
   ): Promise<void> {
     const BATCH_SIZE = 25;
 
     // One copy per resource: a BatchWriteItem can't put the same key twice. The last
     // listing of a resource wins, as it would have if each were written in turn
     const resources = new Map(
-      Array.from(item.resources ?? [])
+      Array.from(related ?? [])
         .filter((resource) => hasResourceId(resource.id))
         .map((resource) => [relatedSortKey(resource), resource]),
     );
     // The audit lists under its own target already
-    if (hasResourceId(item.target.id)) {
-      resources.delete(relatedSortKey(item.target));
+    if (hasResourceId(audit.target.id)) {
+      resources.delete(relatedSortKey(audit.target));
     }
     if (resources.size === 0) return;
 
-    const payload = AuditStorageSchema.parse({
-      ...item,
-      createdAt: stored.createdAt,
-      updatedAt: stored.updatedAt,
-    });
     const primaryKey = constructPrimaryKey({
-      tenantId: payload.tenantId,
-      id: payload.id,
-      resourceType: payload.target.type,
-      app: payload.target.app,
+      tenantId: audit.tenantId,
+      id: audit.id,
+      resourceType: audit.target.type,
+      app: audit.target.app,
     });
-    const summary = AuditSummarySchema.parse(payload);
+    const summary = AuditSummarySchema.parse(audit);
     const ttl = this.constructTTLAttribute(this.config.ttlSeconds);
 
     const requests: WriteRequest[] = Array.from(resources, ([sortKey, resource]) => {
@@ -702,8 +713,8 @@ export class AuditRepository<C extends AuditConfig> {
       const copy = {
         ...summary,
         target,
-        source: payload.target,
-        rerunable: payload.rerunable ?? !!payload.event,
+        source: audit.target,
+        rerunable: audit.rerunable ?? !!audit.event,
         related: true,
       };
 

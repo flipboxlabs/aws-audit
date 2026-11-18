@@ -143,6 +143,70 @@
       },
       "output": {
         "Attributes": {
+          "PK": {
+            "S": "-#App1#Order#audit-1"
+          },
+          "SK": {
+            "S": "audit"
+          },
+          "id": {
+            "S": "audit-1"
+          },
+          "status": {
+            "S": "success"
+          },
+          "tier": {
+            "N": "2"
+          },
+          "target": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "id": {
+                "S": "order-1"
+              },
+              "type": {
+                "S": "Order"
+              }
+            }
+          },
+          "operation": {
+            "S": "createOrder"
+          },
+          "trace": {
+            "S": "1-5759e988-bd862e3fe1be46a994272793"
+          },
+          "updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "tenantKey": {
+            "S": "-"
+          },
+          "app": {
+            "S": "App1"
+          },
+          "resourceType": {
+            "S": "Order"
+          },
+          "resourceId": {
+            "S": "order-1"
+          },
+          "kind": {
+            "S": "audit"
+          },
+          "traceId": {
+            "S": "1-5759e988-bd862e3fe1be46a994272793"
+          },
+          "traceStage": {
+            "N": "0"
+          },
+          "ttl": {
+            "N": "1775099045"
+          },
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
           "attempts": {
             "L": [
               {
@@ -160,8 +224,13 @@
               }
             ]
           },
-          "createdAt": {
-            "S": "2026-01-02T03:04:05.678Z"
+          "scopes": {
+            "SS": [
+              "App1",
+              "App1#Order",
+              "*#Order",
+              "App1#Order#order-1"
+            ]
           }
         }
       }

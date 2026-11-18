@@ -60,11 +60,14 @@ describe("AuditService", () => {
 
     mockStorage = {
       getItem: vi.fn(),
-      upsertItem: vi.fn().mockResolvedValue({
+      upsertItem: vi.fn(async (item: Record<string, unknown>) => ({
         attemptNumber: 1,
-        createdAt: "2026-01-02T03:04:05.678Z",
-        updatedAt: "2026-01-02T03:04:05.678Z",
-      }),
+        audit: {
+          ...item,
+          createdAt: "2026-01-02T03:04:05.678Z",
+          updatedAt: "2026-01-02T03:04:05.678Z",
+        },
+      })),
       upsertRelated: vi.fn(),
       listObjects: vi.fn(),
       listItems: vi.fn(),
@@ -238,8 +241,8 @@ describe("AuditService", () => {
         }),
       );
       expect(mockStorage.upsertRelated).toHaveBeenCalledWith(
-        mockStorage.upsertItem.mock.calls[0][0],
-        { createdAt: "2026-01-02T03:04:05.678Z", updatedAt: "2026-01-02T03:04:05.678Z" },
+        (await mockStorage.upsertItem.mock.results[0].value).audit,
+        undefined,
       );
       expect(mockEvents.upsertedOrThrow).toHaveBeenCalledWith([
         expect.objectContaining({
@@ -254,12 +257,9 @@ describe("AuditService", () => {
       );
     });
 
-    it("should give the related copies the audit's stored timestamps", async () => {
-      mockStorage.upsertItem.mockResolvedValue({
-        attemptNumber: 2,
-        createdAt: "2025-12-31T00:00:00.000Z",
-        updatedAt: "2026-01-02T03:04:05.678Z",
-      });
+    it("should copy the audit as stored to the resources the upsert lists", async () => {
+      const stored = { id: "parent-id", message: "Kept from an earlier attempt" };
+      mockStorage.upsertItem.mockResolvedValue({ attemptNumber: 2, audit: stored });
       const input: UpsertAuditInput = {
         ...baseInput,
         id: "parent-id",
@@ -268,10 +268,7 @@ describe("AuditService", () => {
 
       await service.upsertItem(input);
 
-      expect(mockStorage.upsertRelated).toHaveBeenCalledWith(
-        expect.objectContaining({ id: "parent-id", resources: input.resources }),
-        { createdAt: "2025-12-31T00:00:00.000Z", updatedAt: "2026-01-02T03:04:05.678Z" },
-      );
+      expect(mockStorage.upsertRelated).toHaveBeenCalledWith(stored, input.resources);
     });
 
     it("should generate one id for the audit, its copies and its event", async () => {
@@ -416,7 +413,7 @@ describe("AuditService", () => {
         // Simulate retry scenario where upsertItem returns 2
         mockStorage.upsertItem.mockResolvedValue({
           attemptNumber: 2,
-          createdAt: "2026-01-02T03:04:05.678Z",
+          audit: { createdAt: "2026-01-02T03:04:05.678Z" },
         });
 
         await service.upsertItem({

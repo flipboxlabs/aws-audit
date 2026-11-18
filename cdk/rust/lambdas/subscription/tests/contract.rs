@@ -144,9 +144,17 @@ async fn stores_each_audit_independently() {
             ("UpdateItem", "-#App1#Order#audit-2") => json!({
                 "error": { "name": "ProvisionedThroughputExceededException", "message": "Slow down" }
             }),
-            ("UpdateItem", _) => json!({
-                "output": { "Attributes": { "attempts": { "L": [{ "M": {} }] } } }
-            }),
+            // The audit as stored, from what the upsert set
+            ("UpdateItem", _) => {
+                let values = &call.input["ExpressionAttributeValues"];
+                let attributes: Map<String, Value> =
+                    ["id", "status", "operation", "target", "createdAt"]
+                        .into_iter()
+                        .map(|name| (name.to_owned(), values[format!(":{name}")].clone()))
+                        .chain([("attempts".to_owned(), values[":newAttempt"].clone())])
+                        .collect();
+                json!({ "output": { "Attributes": attributes } })
+            }
             _ => {
                 json!({ "output": { "FailedEntryCount": 0, "Entries": [{ "EventId": "event-1" }] } })
             }

@@ -128,7 +128,8 @@ export class AuditService<C extends AuditConfig> {
    * For each resource in the `resources` array that has an ID, writes a copy of the
    * audit's summary that lists it under that resource:
    * - The resource is the copy's target, and the audit's target its source
-   * - It has the audit's id and stored `createdAt`
+   * - It is the audit as stored: its id, its stored `createdAt`, and the fields a
+   *   retry kept
    * - It inherits rerunable status from the audit or event presence
    *
    * When an audit with the same ID already exists (retry scenario):
@@ -180,11 +181,12 @@ export class AuditService<C extends AuditConfig> {
 
     // Upsert main item with atomic attempt tracking
     // This handles both new items and retries in a single atomic operation
-    const { attemptNumber, ...stored } = await this.storage.upsertItem(item, currentAttempt);
+    const { attemptNumber, audit } = await this.storage.upsertItem(item, currentAttempt);
     currentAttempt.number = attemptNumber;
 
-    // A copy per related resource, sorted with the audit by its stored createdAt
-    await this.storage.upsertRelated(item, stored);
+    // A copy per related resource, of the audit as stored: with the fields a retry
+    // kept, sorted with the audit by its stored createdAt
+    await this.storage.upsertRelated(audit, item.resources);
 
     try {
       await this.events?.upsertedOrThrow([item]);

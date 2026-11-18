@@ -129,14 +129,13 @@ impl ResourceFilter {
 }
 
 /// What an upsert stored.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Upserted {
     /// The attempt's number: its position in the audit's attempts.
     pub attempt_number: u32,
-    /// The audit's stored `createdAt`; a retry keeps the first one.
-    pub created_at: Timestamp,
-    /// The audit's `updatedAt`: when this upsert stored it.
-    pub updated_at: Timestamp,
+    /// The audit as stored (`ALL_NEW`): the fields a retry kept as well as those it
+    /// gave, and the stored `createdAt`, which a retry keeps.
+    pub audit: Audit,
 }
 
 /// Reads and writes audits.
@@ -216,9 +215,14 @@ impl AuditRepository {
 
     /// Creates or updates the audit `id`, appending `attempt` to its attempts.
     ///
+    /// A retry replaces the fields it gives and keeps those it leaves out, except
+    /// the target, which it replaces whole: a target without an id removes
+    /// `resourceId`, so the audit no longer lists under its earlier resource.
+    ///
     /// Returns the attempt's number (its position in the stored list, which differs
-    /// from `attempt.number` on a retry) and the stored `createdAt`, which a retry
-    /// keeps, so the audit keeps its place in every listing.
+    /// from `attempt.number` on a retry) and the audit as stored, with the stored
+    /// `createdAt`, which a retry keeps, so the audit keeps its place in every
+    /// listing.
     pub async fn upsert_item(
         &self,
         audit: &UpsertAudit,
@@ -281,12 +285,22 @@ impl AuditRepository {
         let mut values = Marshall::ITEM.map(&values);
         values.insert(":scopes".to_owned(), AttributeValue::Ss(scopes));
 
+        // The target is replaced whole, so its resourceId goes with it
+        let mut remove = "";
+        if !has_resource_id(stored.target.id.as_ref()) {
+            names.insert("#resourceId".to_owned(), attributes::RESOURCE_ID.to_owned());
+            remove = " REMOVE #resourceId";
+        }
+
         let output = self
             .client
             .update_item()
             .table_name(&self.table)
             .set_key(Some(Marshall::ITEM.map(&key)))
-            .update_expression(format!("SET {} ADD #scopes :scopes", clauses.join(", ")))
+            .update_expression(format!(
+                "SET {} ADD #scopes :scopes{remove}",
+                clauses.join(", ")
+            ))
             .set_expression_attribute_names(Some(names))
             .set_expression_attribute_values(Some(values))
             .return_values(ReturnValue::AllNew)
@@ -299,11 +313,7 @@ impl AuditRepository {
             .and_then(|attempts| attempts.as_l().ok())
             .ok_or(StorageError::MissingAttributes)?;
         let number = u32::try_from(attempts.len()).unwrap_or(u32::MAX);
-        let created_at = attributes
-            .get("createdAt")
-            .and_then(|created_at| created_at.as_s().ok())
-            .and_then(|created_at| Timestamp::try_from(created_at.clone()).ok())
-            .unwrap_or(stored.created_at);
+        let mut audit = parse_item(unmarshall_map(attributes))?;
 
         // A retry appended to earlier attempts: renumber this one by its position
         if number != attempt.number {
@@ -325,39 +335,45 @@ impl AuditRepository {
                 .await?;
         }
 
+        // As renumbered above
+        if let Some(appended) = audit
+            .attempts
+            .as_mut()
+            .and_then(|attempts| attempts.last_mut())
+        {
+            appended.number = number;
+        }
+
         Ok(Upserted {
             attempt_number: number,
-            created_at,
-            updated_at: stored.updated_at,
+            audit,
         })
     }
 
-    /// Writes the copy of audit `id` that lists it under each related resource with
-    /// an id, 25 per `BatchWriteItem`, retrying unprocessed items.
+    /// Writes the copy of `audit` that lists it under each of the `related`
+    /// resources with an id, 25 per `BatchWriteItem`, retrying unprocessed items.
     ///
     /// A copy holds the audit's summary, with the resource as `target` and the
     /// audit's target as `source`, in the audit's partition (`SK`
-    /// `related#{app}#{type}#{resourceId}`), marked `related`. It takes the audit's
-    /// stored `createdAt` and `updatedAt` (from [`upsert_item`](Self::upsert_item)),
-    /// so it sorts with the audit. Each upsert rewrites the copies of the resources it lists, once per
-    /// resource, except its own target, under which the audit lists already; a copy
-    /// under a resource a retry no longer lists stays, as do that resource's
-    /// `scopes` on the audit.
-    pub async fn upsert_related(
+    /// `related#{app}#{type}#{resourceId}`), marked `related`. It is built from the
+    /// audit as stored (from [`upsert_item`](Self::upsert_item)), so it holds the
+    /// fields a retry kept and sorts with the audit by its stored `createdAt`. Each
+    /// upsert rewrites the copies of the resources it lists, once per resource,
+    /// except its own target, under which the audit lists already; a copy under a
+    /// resource a retry no longer lists stays, as do that resource's `scopes` on
+    /// the audit.
+    pub async fn upsert_related<'a>(
         &self,
-        audit: &UpsertAudit,
-        id: &str,
-        upserted: &Upserted,
+        audit: &Audit,
+        related: impl IntoIterator<Item = &'a ResourceReference>,
     ) -> Result<(), StorageError> {
         // One copy per resource: a BatchWriteItem can't put the same key twice. The
         // last listing of a resource wins, as it would have if each were written in turn
         let own =
             has_resource_id(audit.target.id.as_ref()).then(|| related_sort_key(&audit.target));
         let mut resources: Vec<(String, &ResourceReference)> = Vec::new();
-        for resource in audit
-            .resources
-            .iter()
-            .flatten()
+        for resource in related
+            .into_iter()
             .filter(|resource| has_resource_id(resource.id.as_ref()))
         {
             let sort_key = related_sort_key(resource);
@@ -375,24 +391,22 @@ impl AuditRepository {
         }
 
         let now = self.clock.now();
-        let mut stored = StoredAudit::new(audit, id.to_owned(), &upserted.updated_at);
-        stored.created_at = upserted.created_at.clone();
         let key = primary_key(
-            stored.tenant_id.as_deref(),
-            &stored.target.app,
-            &stored.target.resource_type,
-            &stored.id,
+            audit.tenant_id.as_deref(),
+            &audit.target.app,
+            &audit.target.resource_type,
+            &audit.id,
         )?;
 
-        let Value::Object(payload) = serde_json::to_value(&stored)? else {
+        let Value::Object(payload) = serde_json::to_value(audit)? else {
             unreachable!("an audit serializes to an object");
         };
         let summary: Map<String, Value> = payload
             .into_iter()
             .filter(|(name, _)| SUMMARY_PROJECTION.contains(&name.as_str()))
             .collect();
-        let source = serde_json::to_value(&stored.target)?;
-        let rerunable = stored.rerunable.unwrap_or(stored.event.is_some());
+        let source = serde_json::to_value(&audit.target)?;
+        let rerunable = audit.rerunable.unwrap_or(audit.event.is_some());
 
         let mut requests = Vec::new();
         for (sort_key, resource) in resources {
@@ -409,7 +423,7 @@ impl AuditRepository {
             item.insert("rerunable".to_owned(), Value::Bool(rerunable));
             item.insert("related".to_owned(), Value::Bool(true));
             item.extend(index_attributes(
-                stored.tenant_id.as_deref(),
+                audit.tenant_id.as_deref(),
                 resource,
                 None,
                 kinds::RELATED,

@@ -105,7 +105,9 @@ audit's target or any of its related resources.
 The resource and resource type listings also hold a copy of each audit that names
 the resource as a related resource. A copy has the audit's id, the resource as
 `target`, the audit's target as `source`, and `related: true`: fetch or rerun the
-audit by its `source`.
+audit by its `source`. A retry keeps the fields it leaves out, and each copy it
+writes shows the audit as stored, with them; a retry whose target has no id no
+longer lists under the earlier target's resource.
 
 ```typescript
 const { items, pagination } = await service.listByStatus(
