@@ -16,11 +16,12 @@ use crate::attribute::{Item, marshall_map, unmarshall, unmarshall_map};
 use crate::config::AuditConfig;
 use crate::keys::{
     IncompleteResourceFilter, ReservedTenant, audit_scopes, filter_scope, fits_sort_key,
-    has_resource_id, index_attributes, primary_key, related_sort_key, tenant_key,
+    has_resource_id, index_attributes, join_key, primary_key, related_sort_key, resource_scopes,
+    tenant_key,
 };
 use crate::model::{Attempt, Audit, AuditSummary, ResourceReference, Status, Tier, Timestamp};
 use crate::pagination::{self, InvalidNextToken, Page, PageInfo, Pagination};
-use crate::table::{Index, SUMMARY_PROJECTION, attributes, keys, kinds};
+use crate::table::{Index, SUMMARY_PROJECTION, attributes, keys, kinds, sort_keys};
 use crate::trace::trace_parts;
 use crate::upsert::{StoredAudit, UpsertAudit};
 
@@ -301,6 +302,7 @@ impl AuditRepository {
             .and_then(|attempts| attempts.as_l().ok())
             .ok_or(StorageError::MissingAttributes)?;
         let number = u32::try_from(attempts.len()).unwrap_or(u32::MAX);
+        let listed = audit.resources.iter().flatten();
         let mut audit = parse_item(unmarshall_map(attributes))?;
 
         // A retry appended to earlier attempts: renumber this one by its position
@@ -320,6 +322,15 @@ impl AuditRepository {
                     Value::from(number),
                 )]))))
                 .send()
+                .await?;
+        }
+
+        if number > 1 {
+            let scopes = attributes
+                .get(attributes::SCOPES)
+                .and_then(|scopes| scopes.as_ss().ok())
+                .map_or(&[][..], Vec::as_slice);
+            self.remove_stale_scopes(&key, &stored.target, scopes, listed, number)
                 .await?;
         }
 
@@ -496,6 +507,104 @@ impl AuditRepository {
             .await;
         match delete {
             // A later upsert put it
+            Err(error)
+                if error
+                    .as_service_error()
+                    .is_some_and(|error| error.is_conditional_check_failed_exception()) =>
+            {
+                Ok(())
+            }
+            result => result.map(|_| ()).map_err(Into::into),
+        }
+    }
+
+    /// Removes the `scopes` a retry left behind: those of a resource under the
+    /// target's app and type (as an earlier target is) that neither the audit's
+    /// `target`, the retry's `listed` related resources, nor a related resource's
+    /// copy in the audit's partition (read consistently) lists. Only when no upsert
+    /// has appended an attempt since `revision`, as a later one's scopes and target
+    /// are its own. Nothing is read or written when there is no such scope, as when
+    /// a retry keeps its target.
+    async fn remove_stale_scopes<'a>(
+        &self,
+        key: &Map<String, Value>,
+        target: &'a ResourceReference,
+        scopes: &[String],
+        listed: impl IntoIterator<Item = &'a ResourceReference>,
+        revision: u32,
+    ) -> Result<(), StorageError> {
+        let prefix = format!(
+            "{}#",
+            join_key([target.app.as_str(), target.resource_type.as_str()])
+        );
+        let kept: Vec<String> = std::iter::once(target)
+            .chain(listed)
+            .flat_map(resource_scopes)
+            .collect();
+        let mut stale: Vec<String> = scopes
+            .iter()
+            .filter(|scope| scope.starts_with(&prefix) && !kept.contains(scope))
+            .cloned()
+            .collect();
+
+        // Unless a related resource's copy still lists the audit under it
+        let mut start_key = None;
+        while !stale.is_empty() {
+            let output = self
+                .client
+                .query()
+                .table_name(&self.table)
+                .key_condition_expression("#pk = :pk AND begins_with(#sk, :related)")
+                .expression_attribute_names("#pk", keys::PARTITION_KEY)
+                .expression_attribute_names("#sk", keys::SORT_KEY)
+                .expression_attribute_names("#target", "target")
+                .set_expression_attribute_values(Some(marshall_map(&Map::from_iter([
+                    (":pk".to_owned(), key[keys::PARTITION_KEY].clone()),
+                    (
+                        ":related".to_owned(),
+                        Value::String(sort_keys::RELATED_PREFIX.to_owned()),
+                    ),
+                ]))))
+                .projection_expression("#target")
+                .consistent_read(true)
+                .set_exclusive_start_key(start_key.take())
+                .send()
+                .await?;
+            for copy in output.items() {
+                let Some(Ok(resource)) = copy
+                    .get("target")
+                    .map(|target| ResourceReference::deserialize(unmarshall(target)))
+                else {
+                    continue;
+                };
+                for scope in resource_scopes(&resource) {
+                    stale.retain(|stale| *stale != scope);
+                }
+            }
+            start_key = output.last_evaluated_key().cloned();
+            if start_key.is_none() {
+                break;
+            }
+        }
+        if stale.is_empty() {
+            return Ok(());
+        }
+
+        let update = self
+            .client
+            .update_item()
+            .table_name(&self.table)
+            .set_key(Some(marshall_map(key)))
+            .update_expression("DELETE #scopes :stale")
+            .condition_expression("size(#attempts) = :revision")
+            .expression_attribute_names("#scopes", attributes::SCOPES)
+            .expression_attribute_names("#attempts", "attempts")
+            .expression_attribute_values(":stale", AttributeValue::Ss(stale))
+            .expression_attribute_values(":revision", AttributeValue::N(revision.to_string()))
+            .send()
+            .await;
+        match update {
+            // An upsert since has its own target and scopes
             Err(error)
                 if error
                     .as_service_error()

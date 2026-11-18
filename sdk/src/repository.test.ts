@@ -437,6 +437,92 @@ describe("AuditRepository", () => {
       expect(command.input.UpdateExpression).toMatch(/ REMOVE #traceId, #traceStage$/);
     });
 
+    describe("a retry that changes the target's id", () => {
+      const moved = (id: string) => ({ app: App.App1, type: ResourceType.ORDER, id });
+      /** The retry's UpdateItem reply: its scopes still hold the earlier target's */
+      const retried = () =>
+        updated([attempt, { ...attempt, number: 2 }], CREATED_AT, {
+          target: moved("moved-new"),
+          scopes: new Set([
+            "App1",
+            "App1#Order",
+            "*#Order",
+            "App1#Order#moved-old",
+            "App1#Order#moved-new",
+            "TestApp#User#u",
+            "App1#Order#kept",
+          ]),
+        });
+      const copy = (target: Record<string, unknown>) => ({ Items: [marshall({ target })] });
+      const commands = () => mockClient.send.mock.calls.map(([command]) => command);
+
+      it("should remove the earlier target from scopes, so status and trace filters no longer match it", async () => {
+        mockClient.send
+          .mockResolvedValueOnce(retried())
+          .mockResolvedValueOnce({})
+          // A related resource's copy, under a resource of the same type
+          .mockResolvedValueOnce(copy(moved("kept")))
+          .mockResolvedValueOnce({});
+
+        await repository.upsertItem(upsertInput({ target: moved("moved-new") }), attempt);
+
+        const [, , query, removed] = commands() as [never, never, QueryCommand, UpdateItemCommand];
+        expect(query.input).toMatchObject({
+          KeyConditionExpression: "#pk = :pk AND begins_with(#sk, :related)",
+          ProjectionExpression: "#target",
+          ConsistentRead: true,
+        });
+        expect(removed.input).toMatchObject({
+          Key: marshall({ PK: "-#App1#Order#audit-123", SK: "audit" }),
+          UpdateExpression: "DELETE #scopes :stale",
+          // Unless an upsert since has its own target and scopes
+          ConditionExpression: "size(#attempts) = :revision",
+          ExpressionAttributeNames: { "#scopes": "scopes", "#attempts": "attempts" },
+        });
+        expect(unmarshall(removed.input.ExpressionAttributeValues!)).toEqual({
+          ":stale": new Set(["App1#Order#moved-old"]),
+          ":revision": 2,
+        });
+      });
+
+      it("should keep the earlier target's scope while a copy, or the retry, lists it as related", async () => {
+        mockClient.send
+          .mockResolvedValueOnce(retried())
+          .mockResolvedValueOnce({})
+          .mockResolvedValueOnce({
+            Items: [marshall({ target: moved("moved-old") }), marshall({ target: moved("kept") })],
+          });
+        await repository.upsertItem(upsertInput({ target: moved("moved-new") }), attempt);
+        expect(commands()).toHaveLength(3);
+
+        mockClient.send.mockClear();
+        mockClient.send.mockResolvedValueOnce(retried()).mockResolvedValueOnce({});
+        await repository.upsertItem(
+          upsertInput({
+            target: moved("moved-new"),
+            resources: [moved("moved-old"), moved("kept")],
+          }),
+          attempt,
+        );
+        // Nothing to read
+        expect(commands()).toHaveLength(2);
+      });
+
+      it("should leave the scopes to a later upsert, which changed the audit since", async () => {
+        mockClient.send
+          .mockResolvedValueOnce(retried())
+          .mockResolvedValueOnce({})
+          .mockResolvedValueOnce({ Items: [] })
+          .mockRejectedValueOnce(
+            new ConditionalCheckFailedException({ message: "Condition failed", $metadata: {} }),
+          );
+
+        await expect(
+          repository.upsertItem(upsertInput({ target: moved("moved-new") }), attempt),
+        ).resolves.toMatchObject({ attemptNumber: 2 });
+      });
+    });
+
     it("should store a numeric resource id as a string", async () => {
       mockClient.send.mockResolvedValue(updated());
 

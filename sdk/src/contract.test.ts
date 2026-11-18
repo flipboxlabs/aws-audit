@@ -395,6 +395,30 @@ const CASES: Case[] = [
     replies: [attempts(2, "2026-01-01T00:00:00.000Z"), { output: {} }, { output: {} }, accepted()],
   },
   {
+    name: "upsert/retarget",
+    description:
+      "A retry that changes the target's id removes the earlier target's resource from scopes, unless a related resource's copy (read consistently) still lists the audit under it, and only if no upsert appended an attempt since",
+    operation: "upsertItem",
+    args: [upsertInput({ status: "fail", target: { app: "App1", type: "Order", id: "order-2" } })],
+    replies: [
+      attempts(2, "2026-01-01T00:00:00.000Z", {
+        scopes: new Set([
+          "App1",
+          "App1#Order",
+          "*#Order",
+          "App1#Order#order-1",
+          "App1#Order#order-2",
+          "App1#Order#order-3",
+        ]),
+      }),
+      { output: {} },
+      { output: { Items: [marshall({ target: { app: "App1", type: "Order", id: "order-3" } })] } },
+      { output: {} },
+      { output: {} },
+      accepted(),
+    ],
+  },
+  {
     name: "upsert/retry-long-keys",
     description:
       "A retry deletes no copy under a target, and puts none under a related resource, whose copy's SK would be longer than DynamoDB allows: none could be stored",
