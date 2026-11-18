@@ -395,6 +395,20 @@ const CASES: Case[] = [
     replies: [attempts(2, "2026-01-01T00:00:00.000Z"), { output: {} }, { output: {} }, accepted()],
   },
   {
+    name: "upsert/retry-long-keys",
+    description:
+      "A retry deletes no copy under a target, and puts none under a related resource, whose copy's SK would be longer than DynamoDB allows: none could be stored",
+    operation: "upsertItem",
+    args: [
+      upsertInput({
+        status: "fail",
+        target: { app: "App1", type: "Order", id: "o".repeat(1100) },
+        resources: [{ app: "TestApp", type: "User", id: "u".repeat(1100) }],
+      }),
+    ],
+    replies: [attempts(2, "2026-01-01T00:00:00.000Z"), { output: {} }, accepted()],
+  },
+  {
     name: "upsert/tenant",
     description:
       "A tenant is the first part of the partition key and the index attributes' tenantKey",

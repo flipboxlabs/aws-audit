@@ -66,6 +66,15 @@ pub fn primary_key(
     ]))
 }
 
+/// DynamoDB's largest sort key attribute value, in bytes.
+pub const SORT_KEY_BYTES: usize = 1024;
+
+/// Whether a copy keyed `sort_key` ([`related_sort_key`]) can be stored: a resource
+/// id may be longer than a sort key allows.
+pub fn fits_sort_key(sort_key: &str) -> bool {
+    sort_key.len() <= SORT_KEY_BYTES
+}
+
 /// The sort key of an audit's copy under a related resource:
 /// `related#{app}#{type}#{id}`, each part escaped by [`join_key`].
 pub fn related_sort_key(resource: &ResourceReference) -> String {

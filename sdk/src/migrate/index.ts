@@ -13,6 +13,7 @@ import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import type * as z from "zod/v4";
 import { DynamoDB } from "../constants.js";
 import {
+  KEY_BYTES,
   constructIndexAttributes,
   constructPrimaryKey,
   relatedCopy,
@@ -359,9 +360,6 @@ async function copyOf(
           : "A related resource's copy whose SK reads as more than one audit's",
   };
 }
-
-/** DynamoDB's largest partition and sort key attribute values, in bytes */
-const KEY_BYTES = { partition: 2048, sort: 1024 };
 
 /**
  * Why a v2 item can't be written, when a key attribute (of the table or an index)

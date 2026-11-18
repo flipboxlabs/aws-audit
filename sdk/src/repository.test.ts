@@ -933,6 +933,29 @@ describe("AuditRepository", () => {
         expect(puts()).toHaveLength(2);
       });
 
+      it("should neither delete nor put a copy whose key is longer than DynamoDB allows", async () => {
+        mockClient.send.mockResolvedValue({});
+        const long = "x".repeat(1100);
+        const short = { app: App.TestApp, type: ResourceType.USER, id: "u" };
+
+        await repository.upsertRelated(
+          AuditStorageSchema.parse({
+            ...upsertInput({ target: { app: App.App1, type: ResourceType.ORDER, id: long } }),
+            ...STORED,
+            attempts: [attempt, { ...attempt, number: 2 }],
+          }),
+          [{ app: App.TestApp, type: ResourceType.USER, id: long }, short],
+        );
+
+        // No copy could be stored under either, so there's none to delete
+        expect(deletes()).toEqual([]);
+        expect(putItems()?.map(({ target }) => target)).toEqual([short]);
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+          "Related resource's id is too long for a copy to list it",
+          expect.objectContaining({ id: "audit-123", bytes: 1121 }),
+        );
+      });
+
       it("should leave the copies when the audit was merged before its upsert, or is gone", async () => {
         readBack(storedAudit({ attempts: threeAttempts.slice(0, 2), migrated: true }));
         await retried();

@@ -426,6 +426,19 @@ export function relatedSortKey(resource: ResourceReference): string {
 }
 
 /**
+ * DynamoDB's largest partition and sort key attribute values, in bytes.
+ *
+ * @internal
+ */
+export const KEY_BYTES = { partition: 2048, sort: 1024 } as const;
+
+/**
+ * Whether a copy keyed `sortKey` ({@link relatedSortKey}) can be stored: a
+ * resource id may be longer than a sort key allows.
+ */
+const fitsSortKey = (sortKey: string) => Buffer.byteLength(sortKey) <= KEY_BYTES.sort;
+
+/**
  * Constructs the top-level attributes the index keys are built from.
  *
  * The resource id is stored as a string, so numeric and string ids list together.
@@ -779,6 +792,9 @@ export class AuditRepository<C extends AuditConfig> {
    * a copy under the target a later, overlapping upsert gave the audit. Each
    * delete leaves a copy a later upsert put.
    *
+   * A resource whose copy's `SK` would be longer than DynamoDB allows (1,024 bytes)
+   * gets no copy, with a warning, as the audit is stored already.
+   *
    * @param audit - The audit as stored, from {@link upsertItem}
    * @param related - The resources the upsert listed in `resources`
    *
@@ -802,17 +818,27 @@ export class AuditRepository<C extends AuditConfig> {
     const own = hasResourceId(audit.target.id) ? relatedSortKey(audit.target) : undefined;
 
     // A retry's target may be a resource an earlier attempt listed: the audit lists
-    // there itself now, so that copy goes
-    if (own && revision > 1) {
+    // there itself now, so that copy goes, unless its key is too long for there to be one
+    if (own && revision > 1 && fitsSortKey(own)) {
       await this.deleteRelated(key, own, revision);
     }
 
     // One copy per resource, from its last listing
-    const resources = new Map(
-      Array.from(related ?? [])
-        .filter((resource) => hasResourceId(resource.id))
-        .map((resource) => [relatedSortKey(resource), resource]),
-    );
+    const resources = new Map<string, ResourceReference>();
+    for (const resource of related ?? []) {
+      if (!hasResourceId(resource.id)) continue;
+      const sortKey = relatedSortKey(resource);
+      if (fitsSortKey(sortKey)) {
+        resources.set(sortKey, resource);
+      } else {
+        // The audit is stored already, so it isn't refused for one listing
+        this.logger.warn("Related resource's id is too long for a copy to list it", {
+          id: audit.id,
+          resource,
+          bytes: Buffer.byteLength(sortKey),
+        });
+      }
+    }
     // The audit lists under its own target already
     if (own) resources.delete(own);
     if (resources.size === 0) return;

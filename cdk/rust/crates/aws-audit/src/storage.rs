@@ -15,8 +15,8 @@ use serde_json::{Map, Value};
 use crate::attribute::{Item, marshall_map, unmarshall, unmarshall_map};
 use crate::config::AuditConfig;
 use crate::keys::{
-    IncompleteResourceFilter, ReservedTenant, audit_scopes, filter_scope, has_resource_id,
-    index_attributes, primary_key, related_sort_key, tenant_key,
+    IncompleteResourceFilter, ReservedTenant, audit_scopes, filter_scope, fits_sort_key,
+    has_resource_id, index_attributes, primary_key, related_sort_key, tenant_key,
 };
 use crate::model::{Attempt, Audit, AuditSummary, ResourceReference, Status, Tier, Timestamp};
 use crate::pagination::{self, InvalidNextToken, Page, PageInfo, Pagination};
@@ -359,6 +359,9 @@ impl AuditRepository {
     /// copy, as the audit lists under its target itself; so does an upsert that put
     /// a copy under the target a later, overlapping upsert gave the audit. Each
     /// delete leaves a copy a later upsert put.
+    ///
+    /// A resource whose copy's `SK` would be longer than DynamoDB allows (1,024
+    /// bytes) gets no copy, with a warning, as the audit is stored already.
     pub async fn upsert_related<'a>(
         &self,
         audit: &Audit,
@@ -375,8 +378,12 @@ impl AuditRepository {
             has_resource_id(audit.target.id.as_ref()).then(|| related_sort_key(&audit.target));
 
         // A retry's target may be a resource an earlier attempt listed: the audit
-        // lists there itself now, so that copy goes
-        if let Some(own) = own.as_deref().filter(|_| revision > 1) {
+        // lists there itself now, so that copy goes, unless its key is too long for
+        // there to be one
+        if let Some(own) = own
+            .as_deref()
+            .filter(|own| revision > 1 && fits_sort_key(own))
+        {
             self.delete_related(&key, own, revision).await?;
         }
 
@@ -389,6 +396,17 @@ impl AuditRepository {
             let sort_key = related_sort_key(resource);
             // The audit lists under its own target already
             if own.as_ref() == Some(&sort_key) {
+                continue;
+            }
+            if !fits_sort_key(&sort_key) {
+                // The audit is stored already, so it isn't refused for one listing
+                tracing::warn!(
+                    id = %audit.id,
+                    app = %resource.app,
+                    resourceType = %resource.resource_type,
+                    bytes = sort_key.len(),
+                    "Related resource's id is too long for a copy to list it"
+                );
                 continue;
             }
             match resources.iter_mut().find(|(listed, _)| *listed == sort_key) {

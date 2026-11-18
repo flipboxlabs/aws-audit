@@ -113,7 +113,9 @@ reads the audit back (`dynamodb:GetItem`, as well as `UpdateItem` and `PutItem`)
 in case the migration from 1.x merged it in the meantime. A retry whose target
 has an id also deletes any copy under that target (`dynamodb:DeleteItem`), since
 an earlier attempt may have listed the resource as related and the audit now
-lists there itself.
+lists there itself. A related resource whose copy's sort key would be over
+DynamoDB's 1,024-byte limit gets no copy, with a warning, rather than failing an
+upsert whose audit is already stored.
 
 ```typescript
 const { items, pagination } = await service.listByStatus(
