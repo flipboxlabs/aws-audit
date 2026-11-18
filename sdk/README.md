@@ -112,6 +112,9 @@ const { items, pagination } = await service.listByStatus(
 Filters apply after a page is read, so a filtered page can hold fewer items than
 its size, or none, while `pagination.nextToken` continues the listing.
 
+The tenant id `-` is reserved: it keys the audits without a tenant. An audit with
+it fails validation, and a listing for it throws.
+
 ## Migrating from 1.x
 
 2.0 stores audits in a new table, `{ENV}-{service}-Audit-v2`. After deploying

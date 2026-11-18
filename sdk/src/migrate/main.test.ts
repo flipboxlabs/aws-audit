@@ -31,7 +31,7 @@ describe("aws-audit-migrate", () => {
       dryRun: false,
       scanned: 0,
       audits: { written: 0, existing: 0 },
-      copies: { written: 0, existing: 0 },
+      copies: { written: 0, existing: 0, ownTarget: 0 },
       scopes: { updated: 0, missingAudit: 0 },
       invalid: [],
     });

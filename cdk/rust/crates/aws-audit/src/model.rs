@@ -13,6 +13,10 @@ use serde_json::{Map, Number, Value};
 
 use crate::js;
 
+/// `tenantKey` of an audit without a tenant: index key attributes must be present.
+/// Reserved as a tenant id, since that tenant would list these audits as its own.
+pub const NO_TENANT: &str = "-";
+
 /// The outcome of an audited operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -278,12 +282,13 @@ impl From<DateTime<chrono::Utc>> for Timestamp {
 impl TryFrom<String> for Timestamp {
     type Error = String;
 
-    // zod's z.iso.datetime(): UTC ("Z"), any fractional precision
+    // zod's z.iso.datetime(): UTC ("Z"), any fractional precision. Kept with
+    // milliseconds, as `DateTimeStringSchema` does: `createdAt` is the sort key of
+    // every listing, compared as text
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        if value.ends_with('Z') && DateTime::parse_from_rfc3339(&value).is_ok() {
-            Ok(Timestamp(value))
-        } else {
-            Err(format!("expected an ISO 8601 UTC datetime, got {value:?}"))
+        match DateTime::parse_from_rfc3339(&value) {
+            Ok(time) if value.ends_with('Z') => Ok(Timestamp::from(time.to_utc())),
+            _ => Err(format!("expected an ISO 8601 UTC datetime, got {value:?}")),
         }
     }
 }
@@ -602,9 +607,26 @@ mod tests {
     }
 
     #[test]
-    fn validates_timestamps() {
-        assert!(Timestamp::try_from("2026-01-02T03:04:05.678Z".to_owned()).is_ok());
-        assert!(Timestamp::try_from("2026-01-02T03:04:05Z".to_owned()).is_ok());
+    fn validates_timestamps_and_keeps_milliseconds() {
+        let timestamp = |value: &str| Timestamp::try_from(value.to_owned()).map(|t| t.to_string());
+
+        // As text, every listing's sort key: `.6Z` would sort after `.678Z`
+        assert_eq!(
+            timestamp("2026-01-02T03:04:05.678Z").as_deref(),
+            Ok("2026-01-02T03:04:05.678Z")
+        );
+        assert_eq!(
+            timestamp("2026-01-02T03:04:05.6Z").as_deref(),
+            Ok("2026-01-02T03:04:05.600Z")
+        );
+        assert_eq!(
+            timestamp("2026-01-02T03:04:05Z").as_deref(),
+            Ok("2026-01-02T03:04:05.000Z")
+        );
+        assert_eq!(
+            timestamp("2026-01-02T03:04:05.678999Z").as_deref(),
+            Ok("2026-01-02T03:04:05.678Z")
+        );
         assert!(Timestamp::try_from("2026-01-02T03:04:05+01:00".to_owned()).is_err());
         assert!(Timestamp::try_from("yesterday".to_owned()).is_err());
     }

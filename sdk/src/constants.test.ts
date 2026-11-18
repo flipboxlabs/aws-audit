@@ -60,6 +60,7 @@ describe("constants", () => {
               { name: "createdAt", type: "string" },
               { name: "id", type: "string" },
             ],
+            filters: ["scopes"],
           },
           BY_TRACE: {
             name: "ByTrace",
@@ -72,6 +73,7 @@ describe("constants", () => {
               { name: "createdAt", type: "string" },
               { name: "id", type: "string" },
             ],
+            filters: ["scopes"],
           },
         });
       });

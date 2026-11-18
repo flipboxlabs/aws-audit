@@ -1,4 +1,13 @@
 import * as z from "zod/v4";
+import { DynamoDB } from "../constants.js";
+
+/**
+ * Schema for a tenant id. `-` is reserved: it is the index key of audits without a
+ * tenant, so a tenant of that name would list them as its own.
+ */
+export const TenantIdSchema = z.string().refine((tenantId) => tenantId !== DynamoDB.NO_TENANT, {
+  message: `Tenant id "${DynamoDB.NO_TENANT}" is reserved for audits without a tenant`,
+});
 
 /**
  * Schema for EventBridge event data embedded in audit records.

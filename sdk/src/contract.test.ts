@@ -167,7 +167,7 @@ const copyOverrides = {
   app: "TestApp",
   resourceType: "User",
   resourceId: "user-1",
-  kind: "related",
+  kind: undefined,
   scopes: undefined,
 };
 
@@ -369,6 +369,26 @@ const CASES: Case[] = [
       }),
     ],
     replies: [attempts(1), { output: {} }, accepted()],
+  },
+  {
+    name: "upsert/own-target-related",
+    description:
+      "No copy under the audit's own target, which it lists under already; with no other resource, no BatchWriteItem",
+    operation: "upsertItem",
+    args: [
+      upsertInput({
+        resources: [{ app: "App1", type: "Order", id: "order-1" }],
+      }),
+    ],
+    replies: [attempts(1), accepted()],
+  },
+  {
+    name: "upsert/created-at-precision",
+    description:
+      "A given createdAt is stored with milliseconds, as every listing sorts on it as text",
+    operation: "upsertItem",
+    args: [upsertInput({ createdAt: "2026-01-01T00:00:00.5Z" })],
+    replies: [attempts(1), accepted()],
   },
   {
     name: "upsert/retry-related",

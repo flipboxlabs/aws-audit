@@ -334,14 +334,40 @@ impl AuditRepository {
     /// `related#{app}.{type}#{resourceId}`). It takes the audit's stored
     /// `created_at` (from [`upsert_item`](Self::upsert_item)), so it sorts with the
     /// audit. Each upsert rewrites the copies of the resources it lists, once per
-    /// resource; a copy under a resource a retry no longer lists stays, as do that
-    /// resource's `scopes` on the audit.
+    /// resource, except its own target, under which the audit lists already; a copy
+    /// under a resource a retry no longer lists stays, as do that resource's
+    /// `scopes` on the audit.
     pub async fn upsert_related(
         &self,
         audit: &UpsertAudit,
         id: &str,
         created_at: &Timestamp,
     ) -> Result<(), StorageError> {
+        // One copy per resource: a BatchWriteItem can't put the same key twice. The
+        // last listing of a resource wins, as it would have if each were written in turn
+        let own =
+            has_resource_id(audit.target.id.as_ref()).then(|| related_sort_key(&audit.target));
+        let mut resources: Vec<(String, &ResourceReference)> = Vec::new();
+        for resource in audit
+            .resources
+            .iter()
+            .flatten()
+            .filter(|resource| has_resource_id(resource.id.as_ref()))
+        {
+            let sort_key = related_sort_key(resource);
+            // The audit lists under its own target already
+            if own.as_ref() == Some(&sort_key) {
+                continue;
+            }
+            match resources.iter_mut().find(|(listed, _)| *listed == sort_key) {
+                Some(listed) => listed.1 = resource,
+                None => resources.push((sort_key, resource)),
+            }
+        }
+        if resources.is_empty() {
+            return Ok(());
+        }
+
         let now = self.clock.now();
         let mut stored = StoredAudit::new(audit, id.to_owned(), &Timestamp::from(now));
         stored.created_at = created_at.clone();
@@ -361,22 +387,6 @@ impl AuditRepository {
             .collect();
         let source = serde_json::to_value(&stored.target)?;
         let rerunable = stored.rerunable.unwrap_or(stored.event.is_some());
-
-        // One copy per resource: a BatchWriteItem can't put the same key twice. The
-        // last listing of a resource wins, as it would have if each were written in turn
-        let mut resources: Vec<(String, &ResourceReference)> = Vec::new();
-        for resource in audit
-            .resources
-            .iter()
-            .flatten()
-            .filter(|resource| has_resource_id(resource.id.as_ref()))
-        {
-            let sort_key = related_sort_key(resource);
-            match resources.iter_mut().find(|(listed, _)| *listed == sort_key) {
-                Some(listed) => listed.1 = resource,
-                None => resources.push((sort_key, resource)),
-            }
-        }
 
         let mut requests = Vec::new();
         for (sort_key, resource) in resources {

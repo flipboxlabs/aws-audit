@@ -28,7 +28,8 @@ pub mod sort_keys {
     pub const RELATED_PREFIX: &str = "related#";
 }
 
-/// Values of the `kind` attribute.
+/// What an item is: an audit, which gets the `kind` attribute, or a related
+/// resource's copy.
 pub mod kinds {
     /// An audit.
     pub const AUDIT: &str = "audit";
@@ -48,8 +49,8 @@ pub mod attributes {
     pub const RESOURCE_TYPE: &str = "resourceType";
     /// The item's `target.id`, as a string; absent when the target has none.
     pub const RESOURCE_ID: &str = "resourceId";
-    /// [`kinds::AUDIT`](super::kinds::AUDIT) or
-    /// [`kinds::RELATED`](super::kinds::RELATED).
+    /// [`kinds::AUDIT`](super::kinds::AUDIT) on an audit; a related resource's copy
+    /// has none, so `ByStatus` holds audits only.
     pub const KIND: &str = "kind";
     /// The trace id from `trace`; only audits with a trace have it.
     pub const TRACE_ID: &str = "traceId";
@@ -67,8 +68,7 @@ pub mod attributes {
     pub const ID: &str = "id";
 }
 
-/// `tenantKey` of an audit without a tenant: index key attributes must be present.
-pub const NO_TENANT: &str = "-";
+pub use crate::model::NO_TENANT;
 
 /// The summary attributes a listing returns (`AuditSummarySchema`). Each index
 /// projects those that aren't its keys.
@@ -104,8 +104,7 @@ pub enum Index {
     ByType,
     /// Audits and related-resource copies of a resource, newest first.
     ByResource,
-    /// Audits by status, newest first; queried with `kind` `audit` to leave out
-    /// copies.
+    /// Audits by status, newest first; sparse, since copies have no `kind`.
     ByStatus,
     /// Audits by trace, by stage then creation; sparse, since copies have no
     /// trace id.

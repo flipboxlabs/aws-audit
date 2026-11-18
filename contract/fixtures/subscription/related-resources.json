@@ -275,9 +275,6 @@
                   "resourceId": {
                     "S": "user-1"
                   },
-                  "kind": {
-                    "S": "related"
-                  },
                   "ttl": {
                     "N": "1775099045"
                   }

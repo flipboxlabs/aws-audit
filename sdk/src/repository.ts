@@ -99,7 +99,7 @@ export type IndexAttributes = {
   app: string;
   resourceType: string;
   resourceId?: string;
-  kind: (typeof DynamoDB.Kinds)[keyof typeof DynamoDB.Kinds];
+  kind?: typeof DynamoDB.Kinds.AUDIT;
   traceId?: string;
   traceStage?: number;
 };
@@ -304,8 +304,18 @@ function buildFilter(filters: ListFilters & { scope?: string }) {
   };
 }
 
-/** The tenant part of every index key */
-const tenantKey = (tenantId?: string) => tenantId || DynamoDB.NO_TENANT;
+/**
+ * The tenant part of every index key.
+ *
+ * @throws Error for the tenant id `-`, the key of audits without a tenant, which a
+ *   listing would otherwise return as that tenant's
+ */
+function tenantKey(tenantId?: string): string {
+  if (tenantId === DynamoDB.NO_TENANT) {
+    throw new Error(`Tenant id "${DynamoDB.NO_TENANT}" is reserved for audits without a tenant`);
+  }
+  return tenantId || DynamoDB.NO_TENANT;
+}
 
 /**
  * Constructs the DynamoDB primary key of an audit.
@@ -342,7 +352,8 @@ export function relatedSortKey(resource: ResourceReference): string {
  * Constructs the top-level attributes the index keys are built from.
  *
  * The resource id is stored as a string, so numeric and string ids list together.
- * Only audits get the trace attributes, which keeps copies out of `ByTrace`.
+ * Only audits get `kind` and the trace attributes, which keeps copies out of
+ * `ByStatus` and `ByTrace`.
  *
  * @param item - The audit, or a related-resource copy
  * @param kind - Whether the item is the audit or a copy
@@ -351,9 +362,10 @@ export function relatedSortKey(resource: ResourceReference): string {
  */
 export function constructIndexAttributes(
   item: Pick<AuditStorage, "tenantId" | "target" | "trace">,
-  kind: IndexAttributes["kind"],
+  kind: (typeof DynamoDB.Kinds)[keyof typeof DynamoDB.Kinds],
 ): IndexAttributes {
-  const trace = kind === DynamoDB.Kinds.AUDIT && item.trace ? getTraceParts(item.trace) : undefined;
+  const audit = kind === DynamoDB.Kinds.AUDIT;
+  const trace = audit && item.trace ? getTraceParts(item.trace) : undefined;
 
   return {
     tenantKey: tenantKey(item.tenantId),
@@ -361,7 +373,7 @@ export function constructIndexAttributes(
     resourceType: item.target.type,
     // A numeric id of 0 is an id; only a missing or empty one is left out
     ...(hasResourceId(item.target.id) ? { resourceId: String(item.target.id) } : {}),
-    kind,
+    ...(audit ? { kind: DynamoDB.Kinds.AUDIT } : {}),
     ...(trace ? { traceId: trace.id, traceStage: trace.stage } : {}),
   };
 }
@@ -603,7 +615,8 @@ export class AuditRepository<C extends AuditConfig> {
    * target as `source`, in the audit's partition (`SK`
    * `related#{app}.{type}#{resourceId}`). It takes the audit's stored `createdAt`, so
    * it sorts with the audit. Each upsert rewrites the copies of the resources it
-   * lists, once per resource; a copy under a resource a retry no longer lists stays,
+   * lists, once per resource, except its own target, under which the audit lists
+   * already; a copy under a resource a retry no longer lists stays,
    * as do that resource's `scopes` on the audit. Items are written with
    * BatchWriteItem, 25 at a time.
    *
@@ -623,6 +636,19 @@ export class AuditRepository<C extends AuditConfig> {
   ): Promise<void> {
     const BATCH_SIZE = 25;
 
+    // One copy per resource: a BatchWriteItem can't put the same key twice. The last
+    // listing of a resource wins, as it would have if each were written in turn
+    const resources = new Map(
+      Array.from(item.resources ?? [])
+        .filter((resource) => hasResourceId(resource.id))
+        .map((resource) => [relatedSortKey(resource), resource]),
+    );
+    // The audit lists under its own target already
+    if (hasResourceId(item.target.id)) {
+      resources.delete(relatedSortKey(item.target));
+    }
+    if (resources.size === 0) return;
+
     const payload = AuditStorageSchema.parse({ ...item, createdAt, updatedAt: new Date() });
     const primaryKey = constructPrimaryKey({
       tenantId: payload.tenantId,
@@ -632,14 +658,6 @@ export class AuditRepository<C extends AuditConfig> {
     });
     const summary = AuditSummarySchema.parse(payload);
     const ttl = this.constructTTLAttribute(this.config.ttlSeconds);
-
-    // One copy per resource: a BatchWriteItem can't put the same key twice. The last
-    // listing of a resource wins, as it would have if each were written in turn
-    const resources = new Map(
-      Array.from(item.resources ?? [])
-        .filter((resource) => hasResourceId(resource.id))
-        .map((resource) => [relatedSortKey(resource), resource]),
-    );
 
     const requests: WriteRequest[] = Array.from(resources, ([sortKey, resource]) => {
       const target = { app: resource.app, type: resource.type, id: resource.id };

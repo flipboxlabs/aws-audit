@@ -72,8 +72,8 @@ pub fn has_resource_id(id: Option<&ResourceId>) -> bool {
 /// upsert sets them.
 ///
 /// The resource id is stored as a string, so numeric and string ids list together.
-/// Only audits (`kind` `audit`) get the trace attributes, which keeps copies out of
-/// `ByTrace`.
+/// Only audits get `kind` and the trace attributes, which keeps copies out of
+/// `ByStatus` and `ByTrace`.
 pub fn index_attributes(
     tenant_id: Option<&str>,
     target: &ResourceReference,
@@ -102,9 +102,12 @@ pub fn index_attributes(
         ));
     }
 
-    fields.push((attributes::KIND.to_owned(), Value::String(kind.to_owned())));
+    let audit = kind == crate::table::kinds::AUDIT;
+    if audit {
+        fields.push((attributes::KIND.to_owned(), Value::String(kind.to_owned())));
+    }
 
-    let trace = trace.filter(|trace| kind == crate::table::kinds::AUDIT && !trace.is_empty());
+    let trace = trace.filter(|trace| audit && !trace.is_empty());
     if let Some(trace) = trace {
         let (id, stage) = trace_parts(trace);
         fields.push((
@@ -205,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn leaves_trace_attributes_off_copies() {
+    fn leaves_kind_and_trace_attributes_off_copies() {
         let target = resource(json!({ "app": "App1", "type": "Order", "id": 0 }));
 
         let audit = index_attributes(None, &target, Some("trace-1:2"), "audit");
@@ -222,7 +225,7 @@ mod tests {
             Value::Object(copy.into_iter().collect()),
             json!({
                 "tenantKey": "tenant-1", "app": "App1", "resourceType": "Order",
-                "resourceId": "0", "kind": "related",
+                "resourceId": "0",
             })
         );
     }

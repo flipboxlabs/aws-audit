@@ -69,7 +69,8 @@ export type MigrationReport = {
   /** Items read from the earlier table */
   scanned: number;
   audits: { written: number; existing: number };
-  copies: { written: number; existing: number };
+  /** `ownTarget`: copies under their audit's own target, left out as the audit lists there */
+  copies: { written: number; existing: number; ownTarget: number };
   /** Audits whose `scopes` gained their related resources, from their copies */
   scopes: { updated: number; missingAudit: number };
   /** Items that aren't valid audits or copies, which weren't copied */
@@ -91,7 +92,8 @@ type Write = { kind: "audits" | "copies"; item: UnmarshalledAttributes; audit?: 
  *   written as a summary copy in its audit's partition, with its audit's
  *   `createdAt` so it sorts with the audit (the earlier table gave a copy the time
  *   of the audit's latest upsert). Its resource is added to the audit's `scopes`,
- *   so status and trace filters match it.
+ *   so status and trace filters match it. A copy under the audit's own target is
+ *   left out, as the audit lists there already.
  *
  * Writes are conditional, so a run can be repeated and never replaces what the
  * new version has written since the deploy. Deploy first, then migrate.
@@ -103,7 +105,7 @@ export async function migrate(options: MigrationOptions): Promise<MigrationRepor
   const report: MigrationReport = {
     scanned: 0,
     audits: { written: 0, existing: 0 },
-    copies: { written: 0, existing: 0 },
+    copies: { written: 0, existing: 0, ownTarget: 0 },
     scopes: { updated: 0, missingAudit: 0 },
     invalid: [],
   };
@@ -151,6 +153,10 @@ export async function migrate(options: MigrationOptions): Promise<MigrationRepor
 
       if ("reason" in result) {
         report.invalid.push({ PK: item.PK, SK: item.SK, reason: result.reason });
+        continue;
+      }
+      if ("ownTarget" in result) {
+        report.copies.ownTarget++;
         continue;
       }
 
@@ -201,7 +207,8 @@ export async function migrate(options: MigrationOptions): Promise<MigrationRepor
 
 type Transformed =
   | { write: Write; scopes?: { partition: string; values: string[] } }
-  | { reason: string };
+  | { reason: string }
+  | { ownTarget: true };
 
 /** Reads an earlier audit's `createdAt`, once per audit */
 type CreatedAt = (audit: Key) => Promise<string | undefined>;
@@ -299,6 +306,9 @@ function toCopy(item: UnmarshalledAttributes, auditId: string): Transformed {
 
   if (!source?.app || !source.type) {
     return { reason: "A related resource's copy needs a source" };
+  }
+  if (hasResourceId(source.id) && relatedSortKey(source) === relatedSortKey(target)) {
+    return { ownTarget: true };
   }
 
   const fields = withTrace(item);

@@ -97,7 +97,8 @@ describe("AuditTable", () => {
         ],
         Projection: {
           ProjectionType: "INCLUDE",
-          NonKeyAttributes: summaryLess("status", "createdAt", "id"),
+          // Resource filters match scopes, which the query must see
+          NonKeyAttributes: [...summaryLess("status", "createdAt", "id"), "scopes"],
         },
       },
       {
@@ -109,7 +110,10 @@ describe("AuditTable", () => {
           key("createdAt", "RANGE"),
           key("id", "RANGE"),
         ],
-        Projection: { ProjectionType: "INCLUDE", NonKeyAttributes: summaryLess("createdAt", "id") },
+        Projection: {
+          ProjectionType: "INCLUDE",
+          NonKeyAttributes: [...summaryLess("createdAt", "id"), "scopes"],
+        },
       },
     ]);
 

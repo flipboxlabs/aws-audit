@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::config::AuditConfig;
 use crate::model::{
-    Attempt, Context, EventBridgeEvent, ResourceReference, Status, Tier, Timestamp,
+    Attempt, Context, EventBridgeEvent, NO_TENANT, ResourceReference, Status, Tier, Timestamp,
     parse_error_value,
 };
 
@@ -88,11 +88,12 @@ pub struct InvalidAudit {
 }
 
 impl UpsertAudit {
-    /// Checks every resource reference against the configured apps and types, as
-    /// `createTypedUpsertAuditSchema` does.
+    /// Checks the tenant id isn't [`NO_TENANT`], and every resource reference
+    /// against the configured apps and types, as `createTypedUpsertAuditSchema` does.
     pub fn validate(&self, config: &AuditConfig) -> Result<(), InvalidAudit> {
-        check_references(
+        check_audit(
             config,
+            self.tenant_id.as_deref(),
             &self.target,
             self.source.as_ref(),
             self.resources.iter().flatten(),
@@ -100,15 +101,23 @@ impl UpsertAudit {
     }
 }
 
-/// Checks an audit's target, source and related resources against the configured
-/// apps and resource types, reporting every problem at its path.
-pub(crate) fn check_references<'a>(
+/// Checks an audit's tenant id isn't [`NO_TENANT`], and its target, source and
+/// related resources against the configured apps and resource types, reporting
+/// every problem at its path.
+pub(crate) fn check_audit<'a>(
     config: &AuditConfig,
+    tenant_id: Option<&str>,
     target: &ResourceReference,
     source: Option<&ResourceReference>,
     resources: impl IntoIterator<Item = &'a ResourceReference>,
 ) -> Result<(), InvalidAudit> {
     let mut issues = Vec::new();
+    if tenant_id == Some(NO_TENANT) {
+        issues.push(Issue {
+            message: format!("Tenant id \"{NO_TENANT}\" is reserved for audits without a tenant"),
+            path: vec!["tenantId".into()],
+        });
+    }
     let mut check = |reference: &ResourceReference, path: Vec<Value>| {
         if !config.is_app(&reference.app) {
             issues.push(Issue {
@@ -267,6 +276,28 @@ mod tests {
             issues[0].message,
             r#"Invalid option: expected one of "App1"|"TestApp""#
         );
+    }
+
+    #[test]
+    fn reserves_the_no_tenant_key() {
+        let audit = |tenant: &str| -> UpsertAudit {
+            serde_json::from_value(json!({
+                "operation": "createOrder",
+                "tenantId": tenant,
+                "target": { "app": "Nope", "type": "Order" },
+            }))
+            .unwrap()
+        };
+
+        let issues = audit("-").validate(&config()).unwrap_err().issues;
+
+        assert_eq!(issues[0].path, [json!("tenantId")]);
+        assert_eq!(
+            issues[0].message,
+            r#"Tenant id "-" is reserved for audits without a tenant"#
+        );
+        assert_eq!(issues.len(), 2);
+        assert_eq!(audit("-a").validate(&config()).unwrap_err().issues.len(), 1);
     }
 
     #[test]

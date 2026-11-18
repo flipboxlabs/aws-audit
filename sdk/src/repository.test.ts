@@ -522,7 +522,6 @@ describe("AuditRepository", () => {
         app: "TestApp",
         resourceType: "User",
         resourceId: "7",
-        kind: "related",
         ttl: expect.any(Number),
       });
     });
@@ -589,6 +588,27 @@ describe("AuditRepository", () => {
         { SK: "related#TestApp.User#1", target: { app: "TestApp", type: "User", id: "1" } },
         { SK: "related#TestApp.Order#o", target: { app: "TestApp", type: "Order", id: "o" } },
       ]);
+    });
+
+    it("should leave out the audit's own target, which it lists under already", async () => {
+      mockClient.send.mockResolvedValue({});
+
+      await repository.upsertRelated(
+        upsertInput({
+          resources: [
+            { app: App.App1, type: ResourceType.ORDER, id: "order-1" },
+            { app: App.TestApp, type: ResourceType.USER, id: "u" },
+          ],
+        }),
+        CREATED_AT,
+      );
+      await repository.upsertRelated(
+        upsertInput({ resources: [{ app: App.App1, type: ResourceType.ORDER, id: "order-1" }] }),
+        CREATED_AT,
+      );
+
+      expect(mockClient.send).toHaveBeenCalledTimes(1);
+      expect(putItems()?.map(({ SK }) => SK)).toEqual(["related#TestApp.User#u"]);
     });
 
     it("should write 25 copies at a time", async () => {
@@ -778,6 +798,13 @@ describe("AuditRepository", () => {
           ...listing.partition,
           tenantKey: "tenant-a",
         });
+      });
+
+      it("should refuse the tenant id of audits without a tenant", async () => {
+        await expect(listing.list(repository, { tenantId: "-" })).rejects.toThrow(
+          'Tenant id "-" is reserved for audits without a tenant',
+        );
+        expect(mockClient.send).not.toHaveBeenCalled();
       });
 
       it("should return summaries and a nextToken", async () => {

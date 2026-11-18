@@ -51,6 +51,8 @@ export type IndexDefinition = {
   readonly name: string;
   readonly partitionKeys: readonly KeyAttribute[];
   readonly sortKeys: readonly KeyAttribute[];
+  /** Attributes a listing filters on, projected beside the summary */
+  readonly filters?: readonly string[];
 };
 
 /** Top-level attributes the secondary index keys are built from */
@@ -65,7 +67,7 @@ const Attributes = {
   RESOURCE_TYPE: "resourceType",
   /** The item's `target.id`, as a string; absent when the target has none */
   RESOURCE_ID: "resourceId",
-  /** `audit` for an audit, `related` for its copy under a related resource */
+  /** `audit` on an audit; a copy under a related resource has none, so `ByStatus` holds audits only */
   KIND: "kind",
   /** The trace id from `trace`; only audits with a trace have it */
   TRACE_ID: "traceId",
@@ -100,7 +102,8 @@ const BY_CREATION = [key(Attributes.CREATED_AT), key(Attributes.ID)];
  *   audit's target as `source`
  *
  * The indexes use multi-attribute keys built from top-level attributes
- * ({@link DynamoDB.Attributes}), and each projects {@link DynamoDB.Projections.SUMMARY}.
+ * ({@link DynamoDB.Attributes}), and each projects {@link DynamoDB.Projections.SUMMARY}
+ * and the attributes its listing filters on.
  *
  * @example
  * ```typescript
@@ -135,7 +138,7 @@ export const DynamoDB = {
     /** Prefix of a related-resource copy: `related#{app}.{type}#{resourceId}` */
     RELATED_PREFIX: "related#",
   },
-  /** Values of the `kind` attribute */
+  /** What an item is: an audit, which gets the `kind` attribute, or a related resource's copy */
   Kinds: {
     AUDIT: "audit",
     RELATED: "related",
@@ -166,17 +169,20 @@ export const DynamoDB = {
       ],
       sortKeys: BY_CREATION,
     },
-    /** Audits by status, newest first; queried with `kind` `audit` to leave out copies */
+    /** Audits by status, newest first; sparse, since copies have no `kind` */
     BY_STATUS: {
       name: "ByStatus",
       partitionKeys: [key(Attributes.TENANT_KEY), key(Attributes.STATUS), key(Attributes.KIND)],
       sortKeys: BY_CREATION,
+      // Resource filters match the audit's scopes; a query sees only what's projected
+      filters: [Attributes.SCOPES],
     },
     /** Audits by trace, by stage then creation; sparse, since copies have no trace id */
     BY_TRACE: {
       name: "ByTrace",
       partitionKeys: [key(Attributes.TENANT_KEY), key(Attributes.TRACE_ID)],
       sortKeys: [key(Attributes.TRACE_STAGE, "number"), ...BY_CREATION],
+      filters: [Attributes.SCOPES],
     },
   },
   /** Index projections */

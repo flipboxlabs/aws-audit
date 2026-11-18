@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::AuditConfig;
 use crate::model::{Context, EventBridgeEvent, ResourceReference, Status, Tier};
 use crate::trace::xray_trace_id_from_env;
-use crate::upsert::{InvalidAudit, check_references};
+use crate::upsert::{InvalidAudit, check_audit};
 
 /// The key an audit is logged under (`AUDIT_LOG_IDENTIFIER`).
 pub const AUDIT_LOG_IDENTIFIER: &str = "_audit";
@@ -198,11 +198,13 @@ impl LogAudit {
         self
     }
 
-    /// Checks the target, source and related resources against the configured apps
-    /// and resource types.
+    /// Checks the tenant id isn't [`NO_TENANT`](crate::model::NO_TENANT), and the
+    /// target, source and related resources against the configured apps and
+    /// resource types.
     pub fn validate(&self, config: &AuditConfig) -> Result<(), InvalidAudit> {
-        check_references(
+        check_audit(
             config,
+            self.tenant_id.as_deref(),
             &self.target,
             self.source.as_ref(),
             self.resources.iter().flatten(),

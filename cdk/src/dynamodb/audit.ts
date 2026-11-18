@@ -1,5 +1,5 @@
 import type { CDKConfig } from "@flipboxlabs/aws-audit-cdk";
-import { DynamoDB } from "@flipboxlabs/aws-audit-sdk";
+import { DynamoDB, type IndexDefinition } from "@flipboxlabs/aws-audit-sdk";
 import * as cdk from "aws-cdk-lib";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import { Construct } from "constructs";
@@ -50,8 +50,8 @@ export default class extends Construct {
     });
 
     // Multi-attribute keys on top-level attributes; each index projects the audit
-    // summary a listing returns, less its own keys
-    for (const index of Object.values(DynamoDB.Indexes)) {
+    // summary a listing returns, and what it filters on, less its own keys
+    for (const index of Object.values(DynamoDB.Indexes) as IndexDefinition[]) {
       const keys = new Set([...index.partitionKeys, ...index.sortKeys].map(({ name }) => name));
 
       this.table.addGlobalSecondaryIndex({
@@ -59,7 +59,9 @@ export default class extends Construct {
         partitionKeys: attributes(index.partitionKeys),
         sortKeys: attributes(index.sortKeys),
         projectionType: dynamodb.ProjectionType.INCLUDE,
-        nonKeyAttributes: DynamoDB.Projections.SUMMARY.filter((name) => !keys.has(name)),
+        nonKeyAttributes: [...DynamoDB.Projections.SUMMARY, ...(index.filters ?? [])].filter(
+          (name) => !keys.has(name),
+        ),
       });
     }
   }

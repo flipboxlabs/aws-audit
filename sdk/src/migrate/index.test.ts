@@ -139,7 +139,7 @@ describe("migrate", () => {
     expect(report).toEqual({
       scanned: 1,
       audits: { written: 1, existing: 0 },
-      copies: { written: 0, existing: 0 },
+      copies: { written: 0, existing: 0, ownTarget: 0 },
       scopes: { updated: 0, missingAudit: 0 },
       invalid: [],
     });
@@ -196,7 +196,6 @@ describe("migrate", () => {
       app: "TestApp",
       resourceType: "User",
       resourceId: "user-1",
-      kind: "related",
       ttl: 1775099045,
     });
 
@@ -245,7 +244,7 @@ describe("migrate", () => {
 
     await migrate({ client, from: FROM, to: TO });
 
-    const copies = putItems(send).filter(({ kind }) => kind === "related");
+    const copies = putItems(send).filter(({ SK }) => SK !== "audit");
     expect(copies.map(({ PK, createdAt }) => [PK, createdAt])).toEqual([
       ["App1.Order#audit-1", EARLIER],
       ["App1.Order#audit-1", EARLIER],
@@ -261,6 +260,29 @@ describe("migrate", () => {
       [FROM, { PK: "tenant-a#App1.Order", SK: "audit-1" }],
       [FROM, { PK: "App1.Order", SK: "audit-2" }],
     ]);
+  });
+
+  it("leaves out a copy under its audit's own target", async () => {
+    const { client, send } = stubClient([
+      [
+        v1Copy({
+          PK: "App1.Order",
+          SK: "audit-1#App1.Order#order-1",
+          target: { app: "App1", type: "Order", id: "order-1" },
+        }),
+        v1Audit(),
+      ],
+    ]);
+
+    const report = await migrate({ client, from: FROM, to: TO });
+
+    expect(report).toMatchObject({
+      audits: { written: 1 },
+      copies: { written: 0, ownTarget: 1 },
+      scopes: { updated: 0 },
+      invalid: [],
+    });
+    expect(putItems(send).map(({ SK }) => SK)).toEqual(["audit"]);
   });
 
   it("writes an audit whose id holds a # as an audit", async () => {

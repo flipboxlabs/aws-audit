@@ -248,9 +248,6 @@
                   "resourceId": {
                     "S": "7"
                   },
-                  "kind": {
-                    "S": "related"
-                  },
                   "ttl": {
                     "N": "1775099045"
                   }
@@ -324,9 +321,6 @@
                   },
                   "resourceId": {
                     "S": "order-2"
-                  },
-                  "kind": {
-                    "S": "related"
                   },
                   "ttl": {
                     "N": "1775099045"
