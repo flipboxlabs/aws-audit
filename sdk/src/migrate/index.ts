@@ -23,10 +23,8 @@ import { hasResourceId } from "../utils.js";
 
 const { Attributes, Keys } = DynamoDB;
 
-const MARSHALL_OPTIONS = {
-  removeUndefinedValues: true,
-  convertEmptyValues: true,
-} as const;
+/** Empty strings are written as such, as the SDK writes them */
+const MARSHALL_OPTIONS = { removeUndefinedValues: true } as const;
 
 /**
  * The key attributes of the earlier table (`{ENV}-{service}-Audit`), which aren't
@@ -101,7 +99,9 @@ type Write = { kind: "audits" | "copies"; item: UnmarshalledAttributes; audit?: 
  *
  * `createdAt` and `updatedAt` are written with milliseconds, as the SDK writes
  * them: the earlier table kept a caller's text, and listings compare them as text.
- * Attributes stored as NULL (empty strings) are left out.
+ * The earlier SDK wrote empty strings as NULL: top-level ones are left out, and
+ * nested ones are empty strings again where a null isn't valid (see
+ * {@link withEmptyStrings}).
  *
  * Writes are conditional, so a run can be repeated and never replaces what the
  * new version has written since the deploy. Deploy first, then migrate. An audit
@@ -394,8 +394,10 @@ function toCopy(item: UnmarshalledAttributes, auditId: string): Transformed {
  * keys is rebuilt from them (`{id}` at stage 0, else `{id}:{stage}`).
  */
 function withTrace(item: UnmarshalledAttributes): UnmarshalledAttributes {
-  const fields = Object.fromEntries(
-    Object.entries(item).filter(([name, value]) => !V1_KEYS.includes(name) && value !== null),
+  const fields = withEmptyStrings(
+    Object.fromEntries(
+      Object.entries(item).filter(([name, value]) => !V1_KEYS.includes(name) && value !== null),
+    ),
   );
   if (typeof fields.trace === "string") return fields;
 
@@ -409,6 +411,39 @@ function withTrace(item: UnmarshalledAttributes): UnmarshalledAttributes {
   const stage = Number(item.GSI1_SN_SK);
 
   return { ...fields, trace: stage === 0 ? id : `${id}:${stage}` };
+}
+
+/**
+ * An earlier item's fields with the empty strings the earlier SDK wrote as NULL
+ * (`convertEmptyValues`) back where a null isn't valid, so the v2 item is read as
+ * the audit was written: in `context`, as a target's, source's or resource's id,
+ * and as an attempt's error. A null elsewhere (in `event` or an `error` object)
+ * may be one, so it's kept.
+ */
+function withEmptyStrings(fields: UnmarshalledAttributes): UnmarshalledAttributes {
+  const context = (value: unknown): unknown =>
+    value === null
+      ? ""
+      : isRecord(value)
+        ? Object.fromEntries(Object.entries(value).map(([name, v]) => [name, context(v)]))
+        : value;
+  const reference = (value: unknown) =>
+    isRecord(value) && value.id === null ? { ...value, id: "" } : value;
+  const attempt = (value: unknown) =>
+    isRecord(value) && value.error === null ? { ...value, error: "" } : value;
+
+  return {
+    ...fields,
+    ...(isRecord(fields.context) ? { context: context(fields.context) } : {}),
+    ...(isRecord(fields.target) ? { target: reference(fields.target) } : {}),
+    ...(isRecord(fields.source) ? { source: reference(fields.source) } : {}),
+    ...(Array.isArray(fields.resources) ? { resources: fields.resources.map(reference) } : {}),
+    ...(Array.isArray(fields.attempts) ? { attempts: fields.attempts.map(attempt) } : {}),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Reads of an audit a merge makes when an upsert changes it meanwhile */

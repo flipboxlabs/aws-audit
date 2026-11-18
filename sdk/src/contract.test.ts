@@ -137,7 +137,7 @@ const storedReply = (
             at: NOW,
           })),
         },
-        { removeUndefinedValues: true, convertEmptyValues: true },
+        { removeUndefinedValues: true },
       ),
     },
   };
@@ -376,6 +376,20 @@ const CASES: Case[] = [
     description: "An empty tenant id is none: it isn't stored, and the keys have the tenant key -",
     operation: "upsertItem",
     args: [upsertInput({ tenantId: "" })],
+    replies: [attempts(1), accepted()],
+  },
+  {
+    name: "upsert/empty-strings",
+    description:
+      "Empty strings are stored as such, not as NULL, so the audit as stored is valid: in context, as the message and as the target's id",
+    operation: "upsertItem",
+    args: [
+      upsertInput({
+        target: { app: "App1", type: "Order", id: "" },
+        context: { note: "", nested: { label: "" } },
+        message: "",
+      }),
+    ],
     replies: [attempts(1), accepted()],
   },
   {

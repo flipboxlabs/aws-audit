@@ -34,9 +34,12 @@ import { getTraceParts, hasResourceId } from "./utils.js";
 
 const { Attributes, Indexes, Keys } = DynamoDB;
 
+/**
+ * An empty string is written as one, not as NULL (`convertEmptyValues`): the
+ * schemas don't accept a null in its place, so an item wouldn't read back as written.
+ */
 const MARSHALL_OPTIONS = {
   removeUndefinedValues: true,
-  convertEmptyValues: true,
   convertClassInstanceToMap: true,
 } as const;
 
@@ -1059,7 +1062,7 @@ export class AuditRepository<C extends AuditConfig> {
 }
 
 /**
- * Drops the attributes stored as NULL: an empty string is written as NULL
+ * Drops the attributes stored as NULL: the 1.x SDK wrote an empty string as NULL
  * (`convertEmptyValues`), and a field such as `trace` doesn't accept it.
  *
  * @internal

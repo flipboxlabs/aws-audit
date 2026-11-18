@@ -299,6 +299,29 @@ describe("migrate", () => {
     expect(audit).not.toHaveProperty("message");
   });
 
+  it("gives back the nested empty strings the earlier SDK stored as NULL, where a null isn't valid", async () => {
+    const { client, send } = stubClient([
+      [
+        v1Audit({
+          context: { note: null, nested: { label: null } },
+          source: { app: "TestApp", type: "User", id: null },
+          resources: [{ app: "TestApp", type: "User", id: null }],
+          attempts: [{ number: 1, status: "fail", error: null, at: NOW }],
+        }),
+      ],
+    ]);
+
+    const report = await migrate({ client, from: FROM, to: TO });
+
+    expect(report.invalid).toEqual([]);
+    expect(putItems(send)[0]).toMatchObject({
+      context: { note: "", nested: { label: "" } },
+      source: { app: "TestApp", type: "User", id: "" },
+      resources: [{ app: "TestApp", type: "User", id: "" }],
+      attempts: [{ number: 1, status: "fail", error: "", at: NOW }],
+    });
+  });
+
   describe("an audit retried since the deploy", () => {
     const EARLIER = "2026-01-01T00:00:00.000Z";
     const v2Audit = (overrides: Record<string, unknown> = {}) => ({

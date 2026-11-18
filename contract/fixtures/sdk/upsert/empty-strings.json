@@ -1,0 +1,246 @@
+{
+  "description": "Empty strings are stored as such, not as NULL, so the audit as stored is valid: in context, as the message and as the target's id",
+  "operation": "upsertItem",
+  "args": [
+    {
+      "id": "audit-1",
+      "operation": "createOrder",
+      "status": "success",
+      "tier": 2,
+      "target": {
+        "app": "App1",
+        "type": "Order",
+        "id": ""
+      },
+      "context": {
+        "note": "",
+        "nested": {
+          "label": ""
+        }
+      },
+      "message": ""
+    }
+  ],
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "UpdateItem",
+      "input": {
+        "TableName": "TEST-Contract-Audit-v2",
+        "Key": {
+          "PK": {
+            "S": "-#App1#Order#audit-1"
+          },
+          "SK": {
+            "S": "audit"
+          }
+        },
+        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #context = :context, #operation = :operation, #message = :message, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #kind = :kind, #ttl = :ttl ADD #scopes :scopes REMOVE #resourceId",
+        "ExpressionAttributeNames": {
+          "#attempts": "attempts",
+          "#createdAt": "createdAt",
+          "#scopes": "scopes",
+          "#id": "id",
+          "#status": "status",
+          "#tier": "tier",
+          "#target": "target",
+          "#context": "context",
+          "#operation": "operation",
+          "#message": "message",
+          "#updatedAt": "updatedAt",
+          "#tenantKey": "tenantKey",
+          "#app": "app",
+          "#resourceType": "resourceType",
+          "#kind": "kind",
+          "#ttl": "ttl",
+          "#resourceId": "resourceId"
+        },
+        "ExpressionAttributeValues": {
+          ":emptyList": {
+            "L": []
+          },
+          ":newAttempt": {
+            "L": [
+              {
+                "M": {
+                  "number": {
+                    "N": "1"
+                  },
+                  "status": {
+                    "S": "success"
+                  },
+                  "at": {
+                    "S": "2026-01-02T03:04:05.678Z"
+                  }
+                }
+              }
+            ]
+          },
+          ":scopes": {
+            "SS": [
+              "App1",
+              "App1#Order",
+              "*#Order"
+            ]
+          },
+          ":id": {
+            "S": "audit-1"
+          },
+          ":status": {
+            "S": "success"
+          },
+          ":tier": {
+            "N": "2"
+          },
+          ":target": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "id": {
+                "S": ""
+              },
+              "type": {
+                "S": "Order"
+              }
+            }
+          },
+          ":context": {
+            "M": {
+              "note": {
+                "S": ""
+              },
+              "nested": {
+                "M": {
+                  "label": {
+                    "S": ""
+                  }
+                }
+              }
+            }
+          },
+          ":operation": {
+            "S": "createOrder"
+          },
+          ":message": {
+            "S": ""
+          },
+          ":updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          ":createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          ":tenantKey": {
+            "S": "-"
+          },
+          ":app": {
+            "S": "App1"
+          },
+          ":resourceType": {
+            "S": "Order"
+          },
+          ":kind": {
+            "S": "audit"
+          },
+          ":ttl": {
+            "N": "1775099045"
+          }
+        },
+        "ReturnValues": "ALL_NEW"
+      },
+      "output": {
+        "Attributes": {
+          "status": {
+            "S": "success"
+          },
+          "tier": {
+            "N": "2"
+          },
+          "id": {
+            "S": "audit-1"
+          },
+          "operation": {
+            "S": "createOrder"
+          },
+          "target": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "type": {
+                "S": "Order"
+              },
+              "id": {
+                "S": ""
+              }
+            }
+          },
+          "context": {
+            "M": {
+              "note": {
+                "S": ""
+              },
+              "nested": {
+                "M": {
+                  "label": {
+                    "S": ""
+                  }
+                }
+              }
+            }
+          },
+          "message": {
+            "S": ""
+          },
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "attempts": {
+            "L": [
+              {
+                "M": {
+                  "number": {
+                    "N": "1"
+                  },
+                  "status": {
+                    "S": "success"
+                  },
+                  "at": {
+                    "S": "2026-01-02T03:04:05.678Z"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "service": "EventBridge",
+      "command": "PutEvents",
+      "input": {
+        "Entries": [
+          {
+            "EventBusName": "TEST-Contract-Audit",
+            "Detail": "{\"audit\":{\"id\":\"audit-1\",\"operation\":\"createOrder\",\"tier\":2,\"status\":\"success\",\"target\":{\"app\":\"App1\",\"type\":\"Order\",\"id\":\"\"},\"context\":{\"note\":\"\",\"nested\":{\"label\":\"\"}},\"message\":\"\"}}",
+            "DetailType": "Upserted",
+            "Source": "Audit"
+          }
+        ]
+      },
+      "output": {
+        "FailedEntryCount": 0,
+        "Entries": [
+          {
+            "EventId": "event-1"
+          }
+        ]
+      }
+    }
+  ],
+  "result": null
+}

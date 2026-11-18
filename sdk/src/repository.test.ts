@@ -267,6 +267,29 @@ describe("AuditRepository", () => {
       expect(command.input.ReturnValues).toBe("ALL_NEW");
     });
 
+    it("should write empty strings as such, so the audit as stored is valid", async () => {
+      // DynamoDB answers with the values set, as they were marshalled
+      mockClient.send.mockImplementation(async (command: UpdateItemCommand) => {
+        const { ExpressionAttributeNames: names = {}, ExpressionAttributeValues: values = {} } =
+          command.input;
+        const stored = Object.entries(names)
+          .map(([token, name]) => [name, values[`:${token.slice(1)}`]] as const)
+          .filter(([, value]) => value !== undefined);
+        return { Attributes: { ...Object.fromEntries(stored), attempts: values[":newAttempt"] } };
+      });
+
+      const { audit } = await repository.upsertItem(
+        upsertInput({
+          target: { app: App.App1, type: ResourceType.ORDER, id: "" },
+          context: { note: "" },
+        }),
+        attempt,
+      );
+
+      expect(audit.target).toEqual({ app: App.App1, type: ResourceType.ORDER, id: "" });
+      expect(audit.context).toEqual({ note: "" });
+    });
+
     it("should append the attempt and keep the first createdAt", async () => {
       mockClient.send.mockResolvedValue(updated());
 

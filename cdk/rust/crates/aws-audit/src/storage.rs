@@ -13,7 +13,7 @@ use lambda_kit::logging::ErrorChain;
 use lambda_kit::retry::{Backoff, Jitter, RandomJitter};
 use serde_json::{Map, Value};
 
-use crate::attribute::{Item, Marshall, unmarshall, unmarshall_map};
+use crate::attribute::{Item, marshall_map, unmarshall, unmarshall_map};
 use crate::config::AuditConfig;
 use crate::keys::{
     IncompleteResourceFilter, ReservedTenant, audit_scopes, filter_scope, has_resource_id,
@@ -191,7 +191,7 @@ impl AuditRepository {
             .client
             .get_item()
             .table_name(&self.table)
-            .set_key(Some(Marshall::ITEM.map(&key)))
+            .set_key(Some(marshall_map(&key)))
             .send()
             .await
             .map_err(|error| {
@@ -282,7 +282,7 @@ impl AuditRepository {
         // Added to, not replaced: a copy under a resource a retry no longer lists
         // stays, so the status and trace filters keep matching that resource too
         names.insert("#scopes".to_owned(), attributes::SCOPES.to_owned());
-        let mut values = Marshall::ITEM.map(&values);
+        let mut values = marshall_map(&values);
         values.insert(":scopes".to_owned(), AttributeValue::Ss(scopes));
 
         // The target is replaced whole, so its resourceId goes with it
@@ -296,7 +296,7 @@ impl AuditRepository {
             .client
             .update_item()
             .table_name(&self.table)
-            .set_key(Some(Marshall::ITEM.map(&key)))
+            .set_key(Some(marshall_map(&key)))
             .update_expression(format!(
                 "SET {} ADD #scopes :scopes{remove}",
                 clauses.join(", ")
@@ -320,14 +320,14 @@ impl AuditRepository {
             self.client
                 .update_item()
                 .table_name(&self.table)
-                .set_key(Some(Marshall::ITEM.map(&key)))
+                .set_key(Some(marshall_map(&key)))
                 .update_expression(format!(
                     "SET #attempts[{}].#number = :attemptNumber",
                     number - 1
                 ))
                 .expression_attribute_names("#attempts", "attempts")
                 .expression_attribute_names("#number", "number")
-                .set_expression_attribute_values(Some(Marshall::PLAIN.map(&Map::from_iter([(
+                .set_expression_attribute_values(Some(marshall_map(&Map::from_iter([(
                     ":attemptNumber".to_owned(),
                     Value::from(number),
                 )]))))
@@ -434,7 +434,7 @@ impl AuditRepository {
                 WriteRequest::builder()
                     .put_request(
                         PutRequest::builder()
-                            .set_item(Some(Marshall::ITEM.map(&item)))
+                            .set_item(Some(marshall_map(&item)))
                             .build()?,
                     )
                     .build(),
@@ -636,10 +636,10 @@ impl AuditRepository {
             .scan_index_forward(forward)
             .key_condition_expression(conditions.join(" AND "))
             .set_expression_attribute_names(Some(names))
-            .set_expression_attribute_values(Some(Marshall::PLAIN.map(&values)))
+            .set_expression_attribute_values(Some(marshall_map(&values)))
             .set_filter_expression(filter_expression)
             .limit(i32::try_from(pagination.limit()).unwrap_or(i32::MAX))
-            .set_exclusive_start_key(start_key.map(|key| Marshall::PLAIN.map(&key)))
+            .set_exclusive_start_key(start_key.map(|key| marshall_map(&key)))
             .send()
             .await?;
 
@@ -710,7 +710,7 @@ fn page_key(key: &Item, index: Index) -> Map<String, Value> {
     page_key
 }
 
-/// Drops a `trace` that isn't a string. An empty trace is written as NULL
+/// Drops a `trace` that isn't a string: the 1.x SDK wrote an empty trace as NULL
 /// (`convertEmptyValues`), which the models don't accept.
 fn without_null_trace(mut item: Map<String, Value>) -> Map<String, Value> {
     if item.get("trace").is_some_and(|trace| !trace.is_string()) {

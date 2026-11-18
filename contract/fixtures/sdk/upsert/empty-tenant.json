@@ -156,7 +156,7 @@
             }
           },
           "tenantId": {
-            "NULL": true
+            "S": ""
           },
           "createdAt": {
             "S": "2026-01-02T03:04:05.678Z"
