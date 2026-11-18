@@ -410,7 +410,7 @@ const CASES: Case[] = [
   {
     name: "upsert/related-resources",
     description:
-      "Each related resource with an id gets a summary copy in the audit's partition, written with BatchWriteItem",
+      "Each related resource with an id gets a summary copy in the audit's partition, put as the audit's attempt count (revision) over none of a later one",
     operation: "upsertItem",
     args: [
       upsertInput({
@@ -424,12 +424,11 @@ const CASES: Case[] = [
         event: { source: "orders", "detail-type": "OrderCreated", detail: "{}" },
       }),
     ],
-    replies: [attempts(1), { output: {} }, accepted()],
+    replies: [attempts(1), { output: {} }, { output: {} }, accepted()],
   },
   {
     name: "upsert/repeated-related",
-    description:
-      'A resource listed twice (7 and "7" alike) gets one copy, from its last listing, as BatchWriteItem can\'t put a key twice',
+    description: 'A resource listed twice (7 and "7" alike) gets one copy, from its last listing',
     operation: "upsertItem",
     args: [
       upsertInput({
@@ -440,12 +439,12 @@ const CASES: Case[] = [
         ],
       }),
     ],
-    replies: [attempts(1), { output: {} }, accepted()],
+    replies: [attempts(1), { output: {} }, { output: {} }, accepted()],
   },
   {
     name: "upsert/own-target-related",
     description:
-      "No copy under the audit's own target, which it lists under already; with no other resource, no BatchWriteItem",
+      "No copy under the audit's own target, which it lists under already; with no other resource, no PutItem",
     operation: "upsertItem",
     args: [
       upsertInput({
@@ -473,6 +472,33 @@ const CASES: Case[] = [
       }),
     ],
     replies: [attempts(2, "2026-01-01T00:00:00.000Z"), { output: {} }, { output: {} }, accepted()],
+  },
+  {
+    name: "upsert/stale-related",
+    description:
+      "A copy a later upsert of the audit put already (a later revision) is left as it is, and the upsert carries on",
+    operation: "upsertItem",
+    args: [
+      upsertInput({
+        status: "fail",
+        resources: [
+          { app: "TestApp", type: "User", id: "user-1" },
+          { app: "App1", type: "Unknown", id: 7 },
+        ],
+      }),
+    ],
+    replies: [
+      attempts(2, "2026-01-01T00:00:00.000Z"),
+      { output: {} },
+      {
+        error: {
+          name: "ConditionalCheckFailedException",
+          message: "The conditional request failed",
+        },
+      },
+      { output: {} },
+      accepted(),
+    ],
   },
   {
     name: "upsert/retry-kept-fields",

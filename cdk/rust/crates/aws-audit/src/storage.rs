@@ -4,13 +4,11 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use aws_sdk_dynamodb::Client;
-use aws_sdk_dynamodb::types::{AttributeValue, PutRequest, ReturnValue, WriteRequest};
+use aws_sdk_dynamodb::types::{AttributeValue, ReturnValue};
 use lambda_kit::clock::{Clock, SystemClock};
 use lambda_kit::logging::ErrorChain;
-use lambda_kit::retry::{Backoff, Jitter, RandomJitter};
 use serde_json::{Map, Value};
 
 use crate::attribute::{Item, marshall_map, unmarshall, unmarshall_map};
@@ -23,12 +21,6 @@ use crate::model::{Attempt, Audit, AuditSummary, ResourceReference, Status, Tier
 use crate::pagination::{self, InvalidNextToken, Page, PageInfo, Pagination};
 use crate::table::{Index, SUMMARY_PROJECTION, attributes, keys, kinds};
 use crate::upsert::{StoredAudit, UpsertAudit};
-
-/// Items per `BatchWriteItem` request (DynamoDB's limit).
-const WRITE_BATCH_SIZE: usize = 25;
-
-/// Retries of a batch's unprocessed part before giving up.
-const BATCH_RETRIES: u32 = 8;
 
 /// A storage failure.
 #[derive(Debug, thiserror::Error)]
@@ -51,16 +43,6 @@ pub enum StorageError {
     /// A listing names the tenant id reserved for audits without a tenant.
     #[error(transparent)]
     ReservedTenant(#[from] ReservedTenant),
-    /// A batch still had unprocessed items after every retry.
-    #[error("{operation} failed: unprocessed {noun} after {retries} retries")]
-    Unprocessed {
-        /// `BatchWriteItem`.
-        operation: &'static str,
-        /// What was left: `items`.
-        noun: &'static str,
-        /// The retries made.
-        retries: u32,
-    },
     /// `UpdateItem` returned no attributes.
     #[error("UpdateItem did not return attributes")]
     MissingAttributes,
@@ -145,8 +127,6 @@ pub struct AuditRepository {
     table: String,
     ttl_seconds: u64,
     clock: Arc<dyn Clock>,
-    jitter: Arc<dyn Jitter>,
-    backoff: Backoff,
 }
 
 impl AuditRepository {
@@ -157,24 +137,12 @@ impl AuditRepository {
             table: table.into(),
             ttl_seconds: config.ttl_seconds,
             clock: Arc::new(SystemClock),
-            jitter: Arc::new(RandomJitter),
-            backoff: Backoff {
-                attempts: BATCH_RETRIES + 1,
-                base: Duration::from_millis(100),
-                max_delay: Duration::from_secs(30),
-            },
         }
     }
 
     /// Uses `clock` for timestamps and TTLs.
     pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
         self.clock = clock;
-        self
-    }
-
-    /// Uses `jitter` for retry delays.
-    pub fn with_jitter(mut self, jitter: Arc<dyn Jitter>) -> Self {
-        self.jitter = jitter;
         self
     }
 
@@ -351,7 +319,7 @@ impl AuditRepository {
     }
 
     /// Writes the copy of `audit` that lists it under each of the `related`
-    /// resources with an id, 25 per `BatchWriteItem`, retrying unprocessed items.
+    /// resources with an id.
     ///
     /// A copy holds the audit's summary, with the resource as `target` and the
     /// audit's target as `source`, in the audit's partition (`SK`
@@ -362,13 +330,16 @@ impl AuditRepository {
     /// except its own target, under which the audit lists already; a copy under a
     /// resource a retry no longer lists stays, as do that resource's `scopes` on
     /// the audit.
+    ///
+    /// Each copy is put in turn, as its `revision`, the audit's attempt count, and
+    /// only over a copy of the same or an earlier revision: when upserts of the
+    /// audit overlap, the copy is the latest one's, whichever writes its copies last.
     pub async fn upsert_related<'a>(
         &self,
         audit: &Audit,
         related: impl IntoIterator<Item = &'a ResourceReference>,
     ) -> Result<(), StorageError> {
-        // One copy per resource: a BatchWriteItem can't put the same key twice. The
-        // last listing of a resource wins, as it would have if each were written in turn
+        // One copy per resource, from its last listing
         let own =
             has_resource_id(audit.target.id.as_ref()).then(|| related_sort_key(&audit.target));
         let mut resources: Vec<(String, &ResourceReference)> = Vec::new();
@@ -407,8 +378,9 @@ impl AuditRepository {
             .collect();
         let source = serde_json::to_value(&audit.target)?;
         let rerunable = audit.rerunable.unwrap_or(audit.event.is_some());
+        let revision = audit.attempts.as_ref().map_or(0, Vec::len);
 
-        let mut requests = Vec::new();
+        // In turn, so a throttled table isn't hit harder
         for (sort_key, resource) in resources {
             let mut item = Map::from_iter([
                 (
@@ -429,21 +401,28 @@ impl AuditRepository {
                 kinds::RELATED,
             )?);
             item.insert(attributes::TTL.to_owned(), Value::from(self.ttl(now)));
+            item.insert(attributes::REVISION.to_owned(), Value::from(revision));
 
-            requests.push(
-                WriteRequest::builder()
-                    .put_request(
-                        PutRequest::builder()
-                            .set_item(Some(marshall_map(&item)))
-                            .build()?,
-                    )
-                    .build(),
-            );
-        }
-
-        // Sequentially, so a throttled table isn't hit harder
-        for chunk in requests.chunks(WRITE_BATCH_SIZE) {
-            self.write_batch(chunk.to_vec()).await?;
+            let put = self
+                .client
+                .put_item()
+                .table_name(&self.table)
+                .set_item(Some(marshall_map(&item)))
+                .condition_expression("attribute_not_exists(#revision) OR #revision <= :revision")
+                .expression_attribute_names("#revision", attributes::REVISION)
+                .expression_attribute_values(":revision", AttributeValue::N(revision.to_string()))
+                .send()
+                .await;
+            match put {
+                // A later upsert of the audit wrote its copy already
+                Err(error)
+                    if error
+                        .as_service_error()
+                        .is_some_and(|error| error.is_conditional_check_failed_exception()) => {}
+                result => {
+                    result?;
+                }
+            }
         }
 
         Ok(())
@@ -454,50 +433,6 @@ impl AuditRepository {
         now.timestamp_millis()
             .div_euclid(1000)
             .saturating_add_unsigned(self.ttl_seconds)
-    }
-
-    async fn write_batch(&self, requests: Vec<WriteRequest>) -> Result<(), StorageError> {
-        let mut pending = HashMap::from([(self.table.clone(), requests)]);
-        let mut attempt = 0;
-
-        loop {
-            let output = self
-                .client
-                .batch_write_item()
-                .set_request_items(Some(pending))
-                .send()
-                .await?;
-
-            let Some(unprocessed) = output.unprocessed_items.filter(|items| !items.is_empty())
-            else {
-                return Ok(());
-            };
-            let count: usize = unprocessed.values().map(Vec::len).sum();
-
-            attempt += 1;
-            if attempt > BATCH_RETRIES {
-                tracing::error!(
-                    count,
-                    attempt,
-                    "BatchWriteItem: unprocessed items remain after max retries"
-                );
-                return Err(StorageError::Unprocessed {
-                    operation: "BatchWriteItem",
-                    noun: "items",
-                    retries: BATCH_RETRIES,
-                });
-            }
-
-            let delay = self.backoff.delay(attempt, self.jitter.sample());
-            tracing::warn!(
-                count,
-                attempt,
-                delayMs = delay.as_millis() as u64,
-                "BatchWriteItem: retrying unprocessed items"
-            );
-            tokio::time::sleep(delay).await;
-            pending = unprocessed;
-        }
     }
 
     /// Summaries of a resource type's audits, newest first. Audits that name a

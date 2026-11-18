@@ -239,9 +239,7 @@ pub fn contract_service(recorder: &Arc<Recorder>) -> AuditService {
             .with_timezone(&Utc),
     ));
 
-    let storage = AuditRepository::new(dynamodb, TABLE_NAME, &config)
-        .with_clock(clock.clone())
-        .with_jitter(contract_jitter());
+    let storage = AuditRepository::new(dynamodb, TABLE_NAME, &config).with_clock(clock.clone());
 
     AuditService::new(
         Arc::new(config),

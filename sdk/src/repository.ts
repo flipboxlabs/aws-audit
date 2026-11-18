@@ -1,11 +1,10 @@
 import type { Logger } from "@aws-lambda-powertools/logger";
 import {
-  BatchWriteItemCommand,
   DynamoDBClient,
   GetItemCommand,
+  PutItemCommand,
   QueryCommand,
   UpdateItemCommand,
-  type WriteRequest,
 } from "@aws-sdk/client-dynamodb";
 import type { NativeAttributeValue } from "@aws-sdk/util-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
@@ -29,7 +28,6 @@ import { type Pagination, PaginationCollectionSchema } from "./schema/model.js";
 import type { UpsertAuditInput } from "./schema/service.js";
 import { type AuditStorage, AuditStorageSchema } from "./schema/storage.js";
 import type { AnyApp, AnyResourceType, InferApp, InferResourceType } from "./types.js";
-import { backoffDelay } from "./retry.js";
 import { getTraceParts, hasResourceId } from "./utils.js";
 
 const { Attributes, Indexes, Keys } = DynamoDB;
@@ -704,12 +702,14 @@ export class AuditRepository<C extends AuditConfig> {
    * `createdAt`. Each upsert rewrites the copies of the resources it
    * lists, once per resource, except its own target, under which the audit lists
    * already; a copy under a resource a retry no longer lists stays,
-   * as do that resource's `scopes` on the audit. Items are written with
-   * BatchWriteItem, 25 at a time.
+   * as do that resource's `scopes` on the audit.
+   *
+   * Each copy is put in turn, as its `revision`, the audit's attempt count, and
+   * only over a copy of the same or an earlier revision: when upserts of the audit
+   * overlap, the copy is the latest one's, whichever writes its copies last.
    *
    * @param audit - The audit as stored, from {@link upsertItem}
    * @param related - The resources the upsert listed in `resources`
-   * @throws Error if unprocessed items remain after the maximum retries
    *
    * @example
    * ```typescript
@@ -721,10 +721,7 @@ export class AuditRepository<C extends AuditConfig> {
     audit: AuditStorage,
     related: Iterable<ResourceReference> | undefined,
   ): Promise<void> {
-    const BATCH_SIZE = 25;
-
-    // One copy per resource: a BatchWriteItem can't put the same key twice. The last
-    // listing of a resource wins, as it would have if each were written in turn
+    // One copy per resource, from its last listing
     const resources = new Map(
       Array.from(related ?? [])
         .filter((resource) => hasResourceId(resource.id))
@@ -744,8 +741,9 @@ export class AuditRepository<C extends AuditConfig> {
     });
     const summary = AuditSummarySchema.parse(audit);
     const ttl = this.constructTTLAttribute(this.config.ttlSeconds);
+    const revision = audit.attempts?.length ?? 0;
 
-    const requests: WriteRequest[] = Array.from(resources, ([sortKey, resource]) => {
+    const items = Array.from(resources, ([sortKey, resource]) => {
       const target = { app: resource.app, type: resource.type, id: resource.id };
       const copy = {
         ...summary,
@@ -756,109 +754,32 @@ export class AuditRepository<C extends AuditConfig> {
       };
 
       return {
-        PutRequest: {
-          Item: marshall(
-            {
-              [Keys.PARTITION_KEY]: primaryKey.PK,
-              [Keys.SORT_KEY]: sortKey,
-              ...copy,
-              ...constructIndexAttributes(copy, DynamoDB.Kinds.RELATED),
-              ...ttl,
-            },
-            MARSHALL_OPTIONS,
-          ),
-        },
+        [Keys.PARTITION_KEY]: primaryKey.PK,
+        [Keys.SORT_KEY]: sortKey,
+        ...copy,
+        ...constructIndexAttributes(copy, DynamoDB.Kinds.RELATED),
+        ...ttl,
+        [Attributes.REVISION]: revision,
       };
     });
 
-    // Sequentially, to reduce the risk of triggering more throttling
-    for (let i = 0; i < requests.length; i += BATCH_SIZE) {
-      await this.writeBatchWithRetry(requests.slice(i, i + BATCH_SIZE), DynamoDB.Table.Name());
-    }
-  }
-
-  /**
-   * Sends a batch request, resending its unprocessed part with exponential backoff.
-   *
-   * DynamoDB's batch operations can return unprocessed items when throttled or under
-   * transient errors without throwing an exception. This method retries them automatically.
-   *
-   * @param label - Operation and item noun for logs and errors (e.g. `BatchWriteItem`, `items`)
-   * @param request - The first request to send
-   * @param send - Sends a request and returns its unprocessed part with its size, or
-   *   undefined when everything was processed
-   * @param maxRetries - Maximum number of retry attempts (default: 8)
-   * @param baseDelayMs - Delay ceiling in milliseconds before the first retry, doubling after
-   *   each; the delay is jittered (see {@link backoffDelay}) (default: 100)
-   * @throws Error if unprocessed items remain after maxRetries attempts
-   * @internal
-   */
-  private async sendBatchWithRetry<R>(
-    label: { operation: string; noun: string },
-    request: R,
-    send: (request: R) => Promise<{ unprocessed: R; count: number } | undefined>,
-    maxRetries = 8,
-    baseDelayMs = 100,
-  ): Promise<void> {
-    let attempt = 0;
-
-    for (;;) {
-      const remaining = await send(request);
-      if (!remaining) {
-        return; // all items processed
+    // In turn, so a throttled table isn't hit harder
+    for (const item of items) {
+      try {
+        await this.client.send(
+          new PutItemCommand({
+            TableName: DynamoDB.Table.Name(),
+            Item: marshall(item, MARSHALL_OPTIONS),
+            ConditionExpression: "attribute_not_exists(#revision) OR #revision <= :revision",
+            ExpressionAttributeNames: { "#revision": Attributes.REVISION },
+            ExpressionAttributeValues: marshall({ ":revision": revision }),
+          }),
+        );
+      } catch (error) {
+        // A later upsert of the audit wrote its copy already
+        if ((error as Error | undefined)?.name !== "ConditionalCheckFailedException") throw error;
       }
-
-      attempt++;
-      if (attempt > maxRetries) {
-        this.logger.error(
-          `${label.operation}: unprocessed ${label.noun} remain after max retries`,
-          {
-            unprocessed: remaining.unprocessed,
-            attempt,
-          },
-        );
-        throw new Error(
-          `${label.operation} failed: unprocessed ${label.noun} after ${maxRetries} retries`,
-        );
-      }
-
-      const delayMs = backoffDelay(attempt, baseDelayMs);
-      this.logger.warn(`${label.operation}: retrying unprocessed ${label.noun}`, {
-        count: remaining.count,
-        attempt,
-        delayMs,
-      });
-
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-      request = remaining.unprocessed;
     }
-  }
-
-  /**
-   * Writes a batch of items to DynamoDB, retrying unprocessed items with exponential backoff.
-   *
-   * @param items - Array of WriteRequests to send
-   * @param tableName - Target DynamoDB table name
-   * @throws Error if unprocessed items remain after the maximum retries
-   * @internal
-   */
-  private async writeBatchWithRetry(items: WriteRequest[], tableName: string): Promise<void> {
-    await this.sendBatchWithRetry(
-      { operation: "BatchWriteItem", noun: "items" },
-      { [tableName]: items },
-      async (RequestItems) => {
-        const { UnprocessedItems: unprocessed } = await this.client.send(
-          new BatchWriteItemCommand({ RequestItems }),
-        );
-
-        return unprocessed && Object.keys(unprocessed).length > 0
-          ? {
-              unprocessed: unprocessed as Record<string, WriteRequest[]>,
-              count: Object.values(unprocessed).flat().length,
-            }
-          : undefined;
-      },
-    );
   }
 
   /**

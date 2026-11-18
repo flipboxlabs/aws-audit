@@ -85,6 +85,12 @@ const Attributes = {
    * later run leaves it alone; not projected or returned
    */
   MIGRATED: "migrated",
+  /**
+   * On a related resource's copy, its audit's attempt count when the copy was
+   * written: a copy is put only over one of the same or an earlier revision, so
+   * overlapping upserts leave the latest one's; not projected or returned
+   */
+  REVISION: "revision",
   STATUS: "status",
   CREATED_AT: "createdAt",
   ID: "id",

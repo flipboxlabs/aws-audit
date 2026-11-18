@@ -1,8 +1,9 @@
 import type { Logger } from "@aws-lambda-powertools/logger";
 import {
-  BatchWriteItemCommand,
+  ConditionalCheckFailedException,
   type DynamoDBClient,
   GetItemCommand,
+  type PutItemCommand,
   QueryCommand,
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
@@ -563,10 +564,9 @@ describe("AuditRepository", () => {
   });
 
   describe("upsertRelated", () => {
-    const putItems = (call = 0) =>
-      (mockClient.send.mock.calls[call][0] as BatchWriteItemCommand).input.RequestItems?.[
-        TABLE
-      ]?.map((request) => unmarshall(request.PutRequest?.Item ?? {}));
+    const puts = () =>
+      mockClient.send.mock.calls.map(([command]) => (command as PutItemCommand).input);
+    const putItems = () => puts().map(({ Item }) => unmarshall(Item ?? {}));
     const STORED = { createdAt: CREATED_AT, updatedAt: CREATED_AT };
 
     /** Writes the copies of `input` as upsertItem stored it */
@@ -620,6 +620,7 @@ describe("AuditRepository", () => {
         resourceType: "User",
         resourceId: "7",
         ttl: expect.any(Number),
+        revision: 0,
       });
     });
 
@@ -694,8 +695,7 @@ describe("AuditRepository", () => {
         STORED,
       );
 
-      expect(mockClient.send).toHaveBeenCalledTimes(1);
-      expect(putItems()?.map(({ SK, target }) => ({ SK, target }))).toEqual([
+      expect(putItems().map(({ SK, target }) => ({ SK, target }))).toEqual([
         { SK: "related#TestApp#User#1", target: { app: "TestApp", type: "User", id: "1" } },
         { SK: "related#TestApp#Order#o", target: { app: "TestApp", type: "Order", id: "o" } },
       ]);
@@ -722,72 +722,59 @@ describe("AuditRepository", () => {
       expect(putItems()?.map(({ SK }) => SK)).toEqual(["related#TestApp#User#u"]);
     });
 
-    it("should write 25 copies at a time", async () => {
-      mockClient.send.mockResolvedValue({});
-
-      await upsertRelated(
-        upsertInput({
-          resources: Array.from({ length: 26 }, (_, id) => ({
-            app: App.TestApp,
-            type: ResourceType.USER,
-            id,
-          })),
-        }),
-        STORED,
-      );
-
-      expect(putItems(0)).toHaveLength(25);
-      expect(putItems(1)).toHaveLength(1);
-    });
-
-    describe("unprocessed items", () => {
-      const resources = [{ app: App.TestApp, type: ResourceType.USER, id: "u" }];
-      const unprocessed = { [TABLE]: [{ PutRequest: { Item: marshall({ id: "x" }) } }] };
-
-      it("should resend them with a warning", async () => {
-        vi.useFakeTimers();
-        mockClient.send
-          .mockResolvedValueOnce({ UnprocessedItems: unprocessed })
-          .mockResolvedValueOnce({ UnprocessedItems: {} });
-
-        try {
-          const promise = upsertRelated(upsertInput({ resources }), STORED);
-          await vi.runAllTimersAsync();
-          await promise;
-        } finally {
-          vi.useRealTimers();
-        }
-
-        expect(mockClient.send).toHaveBeenCalledTimes(2);
-        expect(
-          (mockClient.send.mock.calls[1][0] as BatchWriteItemCommand).input.RequestItems,
-        ).toEqual(unprocessed);
-        expect(mockLogger.warn).toHaveBeenCalledWith(
-          "BatchWriteItem: retrying unprocessed items",
-          expect.objectContaining({ attempt: 1, count: 1 }),
+    describe("revisions", () => {
+      const resources = [
+        { app: App.TestApp, type: ResourceType.USER, id: "u" },
+        { app: App.TestApp, type: ResourceType.ORDER, id: "o" },
+      ];
+      /** The audit after its second attempt */
+      const retried = () =>
+        repository.upsertRelated(
+          AuditStorageSchema.parse({
+            ...upsertInput(),
+            ...STORED,
+            attempts: [attempt, { ...attempt, number: 2 }],
+          }),
+          resources,
         );
+
+      it("should put each copy as its audit's attempt count, over none of a later one", async () => {
+        mockClient.send.mockResolvedValue({});
+
+        await retried();
+
+        expect(puts()).toHaveLength(2);
+        for (const put of puts()) {
+          expect(put.TableName).toBe(TABLE);
+          expect(unmarshall(put.Item ?? {}).revision).toBe(2);
+          expect(put.ConditionExpression).toBe(
+            "attribute_not_exists(#revision) OR #revision <= :revision",
+          );
+          expect(put.ExpressionAttributeNames).toEqual({ "#revision": "revision" });
+          expect(unmarshall(put.ExpressionAttributeValues ?? {})).toEqual({ ":revision": 2 });
+        }
       });
 
-      it("should throw and log when they remain after the maximum retries", async () => {
-        vi.useFakeTimers();
-        mockClient.send.mockResolvedValue({ UnprocessedItems: unprocessed });
+      it("should leave a copy a later upsert wrote, and put the rest", async () => {
+        mockClient.send
+          .mockRejectedValueOnce(
+            new ConditionalCheckFailedException({ message: "Condition failed", $metadata: {} }),
+          )
+          .mockResolvedValueOnce({});
 
-        try {
-          const promise = upsertRelated(upsertInput({ resources }), STORED);
-          const rejection = expect(promise).rejects.toThrow(
-            "BatchWriteItem failed: unprocessed items after 8 retries",
-          );
-          await vi.runAllTimersAsync();
-          await rejection;
-        } finally {
-          vi.useRealTimers();
-        }
+        await expect(retried()).resolves.toBeUndefined();
 
-        expect(mockLogger.warn).toHaveBeenCalledTimes(8);
-        expect(mockLogger.error).toHaveBeenCalledWith(
-          "BatchWriteItem: unprocessed items remain after max retries",
-          expect.objectContaining({ attempt: 9, unprocessed }),
-        );
+        expect(putItems().map(({ SK }) => SK)).toEqual([
+          "related#TestApp#User#u",
+          "related#TestApp#Order#o",
+        ]);
+      });
+
+      it("should throw any other failure", async () => {
+        mockClient.send.mockRejectedValue(new Error("Throttled"));
+
+        await expect(retried()).rejects.toThrow("Throttled");
+        expect(mockClient.send).toHaveBeenCalledTimes(1);
       });
     });
   });

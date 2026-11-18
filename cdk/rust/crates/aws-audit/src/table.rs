@@ -68,6 +68,10 @@ pub mod attributes {
     /// `true` on an audit the migration from the earlier table wrote or merged, so
     /// a later run leaves it alone; not projected or returned.
     pub const MIGRATED: &str = "migrated";
+    /// On a related resource's copy, its audit's attempt count when the copy was
+    /// written: a copy is put only over one of the same or an earlier revision, so
+    /// overlapping upserts leave the latest one's; not projected or returned.
+    pub const REVISION: &str = "revision";
     /// The latest outcome.
     pub const STATUS: &str = "status";
     /// When the audit was created.

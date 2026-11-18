@@ -201,91 +201,96 @@
     },
     {
       "service": "DynamoDB",
-      "command": "BatchWriteItem",
+      "command": "PutItem",
       "input": {
-        "RequestItems": {
-          "TEST-Contract-Audit-v2": [
-            {
-              "PutRequest": {
-                "Item": {
-                  "PK": {
-                    "S": "tenant%231#App1#Order#audit%231%25%2A"
-                  },
-                  "SK": {
-                    "S": "related#TestApp#User#user%231"
-                  },
-                  "id": {
-                    "S": "audit#1%*"
-                  },
-                  "tenantId": {
-                    "S": "tenant#1"
-                  },
-                  "status": {
-                    "S": "success"
-                  },
-                  "tier": {
-                    "N": "2"
-                  },
-                  "operation": {
-                    "S": "createOrder"
-                  },
-                  "target": {
-                    "M": {
-                      "app": {
-                        "S": "TestApp"
-                      },
-                      "type": {
-                        "S": "User"
-                      },
-                      "id": {
-                        "S": "user#1"
-                      }
-                    }
-                  },
-                  "createdAt": {
-                    "S": "2026-01-02T03:04:05.678Z"
-                  },
-                  "updatedAt": {
-                    "S": "2026-01-02T03:04:05.678Z"
-                  },
-                  "source": {
-                    "M": {
-                      "app": {
-                        "S": "App1"
-                      },
-                      "id": {
-                        "S": "order#1"
-                      },
-                      "type": {
-                        "S": "Order"
-                      }
-                    }
-                  },
-                  "rerunable": {
-                    "BOOL": false
-                  },
-                  "related": {
-                    "BOOL": true
-                  },
-                  "tenantKey": {
-                    "S": "tenant#1"
-                  },
-                  "app": {
-                    "S": "TestApp"
-                  },
-                  "resourceType": {
-                    "S": "User"
-                  },
-                  "resourceId": {
-                    "S": "user#1"
-                  },
-                  "ttl": {
-                    "N": "1775099045"
-                  }
-                }
+        "TableName": "TEST-Contract-Audit-v2",
+        "Item": {
+          "PK": {
+            "S": "tenant%231#App1#Order#audit%231%25%2A"
+          },
+          "SK": {
+            "S": "related#TestApp#User#user%231"
+          },
+          "id": {
+            "S": "audit#1%*"
+          },
+          "tenantId": {
+            "S": "tenant#1"
+          },
+          "status": {
+            "S": "success"
+          },
+          "tier": {
+            "N": "2"
+          },
+          "operation": {
+            "S": "createOrder"
+          },
+          "target": {
+            "M": {
+              "app": {
+                "S": "TestApp"
+              },
+              "type": {
+                "S": "User"
+              },
+              "id": {
+                "S": "user#1"
               }
             }
-          ]
+          },
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "source": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "id": {
+                "S": "order#1"
+              },
+              "type": {
+                "S": "Order"
+              }
+            }
+          },
+          "rerunable": {
+            "BOOL": false
+          },
+          "related": {
+            "BOOL": true
+          },
+          "tenantKey": {
+            "S": "tenant#1"
+          },
+          "app": {
+            "S": "TestApp"
+          },
+          "resourceType": {
+            "S": "User"
+          },
+          "resourceId": {
+            "S": "user#1"
+          },
+          "ttl": {
+            "N": "1775099045"
+          },
+          "revision": {
+            "N": "1"
+          }
+        },
+        "ConditionExpression": "attribute_not_exists(#revision) OR #revision <= :revision",
+        "ExpressionAttributeNames": {
+          "#revision": "revision"
+        },
+        "ExpressionAttributeValues": {
+          ":revision": {
+            "N": "1"
+          }
         }
       },
       "output": {}

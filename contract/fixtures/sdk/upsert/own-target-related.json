@@ -1,5 +1,5 @@
 {
-  "description": "No copy under the audit's own target, which it lists under already; with no other resource, no BatchWriteItem",
+  "description": "No copy under the audit's own target, which it lists under already; with no other resource, no PutItem",
   "operation": "upsertItem",
   "args": [
     {
