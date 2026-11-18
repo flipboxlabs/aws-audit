@@ -142,6 +142,7 @@ fn error_name(error: &ServiceError) -> String {
         ServiceError::Storage(StorageError::IncompleteResourceFilter(_)) => {
             "InvalidResourceFilterError".into()
         }
+        ServiceError::Storage(StorageError::ReservedTenant(_)) => "ReservedTenantError".into(),
         other => format!("{other:?}"),
     }
 }

@@ -93,7 +93,10 @@
             "type": "string"
           },
           "createdAt": {},
-          "updatedAt": {}
+          "updatedAt": {},
+          "related": {
+            "type": "boolean"
+          }
         },
         "required": [
           "id",

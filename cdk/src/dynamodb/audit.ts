@@ -9,9 +9,9 @@ const ATTRIBUTE_TYPES = {
   number: dynamodb.AttributeType.NUMBER,
 } as const;
 
-type KeyAttribute = (typeof DynamoDB.Indexes)[keyof typeof DynamoDB.Indexes]["sortKeys"][number];
+const INDEXES: readonly IndexDefinition[] = Object.values(DynamoDB.Indexes);
 
-const attributes = (keys: readonly KeyAttribute[]): dynamodb.Attribute[] =>
+const attributes = (keys: IndexDefinition["sortKeys"]): dynamodb.Attribute[] =>
   keys.map(({ name, type }) => ({ name, type: ATTRIBUTE_TYPES[type] }));
 
 export default class extends Construct {
@@ -51,7 +51,7 @@ export default class extends Construct {
 
     // Multi-attribute keys on top-level attributes; each index projects the audit
     // summary a listing returns, and what it filters on, less its own keys
-    for (const index of Object.values(DynamoDB.Indexes) as IndexDefinition[]) {
+    for (const index of INDEXES) {
       const keys = new Set([...index.partitionKeys, ...index.sortKeys].map(({ name }) => name));
 
       this.table.addGlobalSecondaryIndex({

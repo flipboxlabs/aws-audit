@@ -16,8 +16,8 @@ use serde_json::{Map, Value};
 use crate::attribute::{Item, Marshall, unmarshall, unmarshall_map};
 use crate::config::AuditConfig;
 use crate::keys::{
-    IncompleteResourceFilter, audit_scopes, filter_scope, has_resource_id, index_attributes,
-    primary_key, related_sort_key, tenant_key,
+    IncompleteResourceFilter, ReservedTenant, audit_scopes, filter_scope, has_resource_id,
+    index_attributes, primary_key, related_sort_key, tenant_key,
 };
 use crate::model::{Attempt, Audit, AuditSummary, ResourceReference, Status, Tier, Timestamp};
 use crate::pagination::{self, InvalidNextToken, Page, PageInfo, Pagination};
@@ -48,6 +48,9 @@ pub enum StorageError {
     /// A listing's resource filter names an id without its app and type.
     #[error(transparent)]
     IncompleteResourceFilter(#[from] IncompleteResourceFilter),
+    /// A listing names the tenant id reserved for audits without a tenant.
+    #[error(transparent)]
+    ReservedTenant(#[from] ReservedTenant),
     /// A batch still had unprocessed items after every retry.
     #[error("{operation} failed: unprocessed {noun} after {retries} retries")]
     Unprocessed {
@@ -132,6 +135,8 @@ pub struct Upserted {
     pub attempt_number: u32,
     /// The audit's stored `createdAt`; a retry keeps the first one.
     pub created_at: Timestamp,
+    /// The audit's `updatedAt`: when this upsert stored it.
+    pub updated_at: Timestamp,
 }
 
 /// Reads and writes audits.
@@ -256,7 +261,7 @@ impl AuditRepository {
                 &stored.target,
                 stored.trace.as_deref(),
                 kinds::AUDIT,
-            ))
+            )?)
             .chain([(attributes::TTL.to_owned(), Value::from(self.ttl(now)))]);
         for (name, value) in fields {
             // The list_append clause owns attempts; createdAt's clause is above
@@ -323,6 +328,7 @@ impl AuditRepository {
         Ok(Upserted {
             attempt_number: number,
             created_at,
+            updated_at: stored.updated_at,
         })
     }
 
@@ -331,9 +337,9 @@ impl AuditRepository {
     ///
     /// A copy holds the audit's summary, with the resource as `target` and the
     /// audit's target as `source`, in the audit's partition (`SK`
-    /// `related#{app}.{type}#{resourceId}`). It takes the audit's stored
-    /// `created_at` (from [`upsert_item`](Self::upsert_item)), so it sorts with the
-    /// audit. Each upsert rewrites the copies of the resources it lists, once per
+    /// `related#{app}.{type}#{resourceId}`), marked `related`. It takes the audit's
+    /// stored `createdAt` and `updatedAt` (from [`upsert_item`](Self::upsert_item)),
+    /// so it sorts with the audit. Each upsert rewrites the copies of the resources it lists, once per
     /// resource, except its own target, under which the audit lists already; a copy
     /// under a resource a retry no longer lists stays, as do that resource's
     /// `scopes` on the audit.
@@ -341,7 +347,7 @@ impl AuditRepository {
         &self,
         audit: &UpsertAudit,
         id: &str,
-        created_at: &Timestamp,
+        upserted: &Upserted,
     ) -> Result<(), StorageError> {
         // One copy per resource: a BatchWriteItem can't put the same key twice. The
         // last listing of a resource wins, as it would have if each were written in turn
@@ -369,8 +375,8 @@ impl AuditRepository {
         }
 
         let now = self.clock.now();
-        let mut stored = StoredAudit::new(audit, id.to_owned(), &Timestamp::from(now));
-        stored.created_at = created_at.clone();
+        let mut stored = StoredAudit::new(audit, id.to_owned(), &upserted.updated_at);
+        stored.created_at = upserted.created_at.clone();
         let key = primary_key(
             stored.tenant_id.as_deref(),
             &stored.target.app,
@@ -401,12 +407,13 @@ impl AuditRepository {
             item.insert("target".to_owned(), serde_json::to_value(resource)?);
             item.insert("source".to_owned(), source.clone());
             item.insert("rerunable".to_owned(), Value::Bool(rerunable));
+            item.insert("related".to_owned(), Value::Bool(true));
             item.extend(index_attributes(
                 stored.tenant_id.as_deref(),
                 resource,
                 None,
                 kinds::RELATED,
-            ));
+            )?);
             item.insert(attributes::TTL.to_owned(), Value::from(self.ttl(now)));
 
             requests.push(
@@ -491,7 +498,7 @@ impl AuditRepository {
         pagination: &Pagination,
     ) -> Result<Page<AuditSummary>, StorageError> {
         let partition = vec![
-            (attributes::TENANT_KEY, tenant_key(tenant_id).to_owned()),
+            (attributes::TENANT_KEY, tenant_key(tenant_id)?.to_owned()),
             (attributes::APP, app.to_owned()),
             (attributes::RESOURCE_TYPE, resource_type.to_owned()),
         ];
@@ -512,7 +519,7 @@ impl AuditRepository {
         pagination: &Pagination,
     ) -> Result<Page<AuditSummary>, StorageError> {
         let partition = vec![
-            (attributes::TENANT_KEY, tenant_key(tenant_id).to_owned()),
+            (attributes::TENANT_KEY, tenant_key(tenant_id)?.to_owned()),
             (attributes::APP, app.to_owned()),
             (attributes::RESOURCE_TYPE, resource_type.to_owned()),
             (attributes::RESOURCE_ID, resource_id.to_owned()),
@@ -540,7 +547,7 @@ impl AuditRepository {
         pagination: &Pagination,
     ) -> Result<Page<AuditSummary>, StorageError> {
         let partition = vec![
-            (attributes::TENANT_KEY, tenant_key(tenant_id).to_owned()),
+            (attributes::TENANT_KEY, tenant_key(tenant_id)?.to_owned()),
             (attributes::TRACE_ID, trace.to_owned()),
         ];
 
@@ -567,7 +574,7 @@ impl AuditRepository {
         pagination: &Pagination,
     ) -> Result<Page<AuditSummary>, StorageError> {
         let partition = vec![
-            (attributes::TENANT_KEY, tenant_key(tenant_id).to_owned()),
+            (attributes::TENANT_KEY, tenant_key(tenant_id)?.to_owned()),
             (attributes::STATUS, status.as_str().to_owned()),
             (attributes::KIND, kinds::AUDIT.to_owned()),
         ];

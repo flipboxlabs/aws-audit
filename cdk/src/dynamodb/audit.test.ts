@@ -57,6 +57,7 @@ describe("AuditTable", () => {
         "target",
         "source",
         "rerunable",
+        "related",
         "trace",
         "createdAt",
         "updatedAt",

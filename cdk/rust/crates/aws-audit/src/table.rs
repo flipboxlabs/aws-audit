@@ -72,7 +72,7 @@ pub use crate::model::NO_TENANT;
 
 /// The summary attributes a listing returns (`AuditSummarySchema`). Each index
 /// projects those that aren't its keys.
-pub const SUMMARY_PROJECTION: [&str; 12] = [
+pub const SUMMARY_PROJECTION: [&str; 13] = [
     "id",
     "tenantId",
     "status",
@@ -82,6 +82,7 @@ pub const SUMMARY_PROJECTION: [&str; 12] = [
     "target",
     "source",
     "rerunable",
+    "related",
     "trace",
     "createdAt",
     "updatedAt",

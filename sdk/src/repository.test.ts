@@ -9,7 +9,11 @@ import {
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { DynamoDB } from "./constants.js";
-import { InvalidNextTokenError, InvalidResourceFilterError } from "./errors.js";
+import {
+  InvalidNextTokenError,
+  InvalidResourceFilterError,
+  ReservedTenantError,
+} from "./errors.js";
 import {
   AuditRepository,
   filterScope,
@@ -196,12 +200,12 @@ describe("AuditRepository", () => {
       });
     });
 
-    it("should omit a trace stored as NULL", async () => {
-      mockClient.send.mockResolvedValue({ Item: marshall(storedAudit({ trace: null })) });
+    it.each(["trace", "tenantId"])("should omit a %s stored as NULL", async (name) => {
+      mockClient.send.mockResolvedValue({ Item: marshall(storedAudit({ [name]: null })) });
 
       const audit = await repository.getItem(identifiers);
 
-      expect(audit).not.toHaveProperty("trace");
+      expect(audit).not.toHaveProperty(name);
     });
 
     it("should log and rethrow DynamoDB errors", async () => {
@@ -234,7 +238,14 @@ describe("AuditRepository", () => {
 
       const result = await repository.upsertItem(upsertInput(), attempt);
 
-      expect(result).toEqual({ attemptNumber: 1, createdAt: "2025-12-31T00:00:00.000Z" });
+      expect(result).toEqual({
+        attemptNumber: 1,
+        createdAt: "2025-12-31T00:00:00.000Z",
+        updatedAt: expect.any(String),
+      });
+      expect(result.updatedAt).toBe(
+        setValues(mockClient.send.mock.calls[0][0] as UpdateItemCommand).updatedAt,
+      );
       const command = mockClient.send.mock.calls[0][0] as UpdateItemCommand;
       expect(command).toBeInstanceOf(UpdateItemCommand);
       expect(command.input.TableName).toBe(TABLE);
@@ -299,6 +310,17 @@ describe("AuditRepository", () => {
           "App1.User",
         ]),
       });
+    });
+
+    it("should store an empty tenant id as none", async () => {
+      mockClient.send.mockResolvedValue(updated());
+
+      await repository.upsertItem(upsertInput({ tenantId: "" }), attempt);
+
+      const command = mockClient.send.mock.calls[0][0] as UpdateItemCommand;
+      expect(command.input.Key).toEqual(marshall({ PK: "App1.Order#audit-123", SK: "audit" }));
+      expect(setValues(command)).not.toHaveProperty("tenantId");
+      expect(setValues(command)).toMatchObject({ tenantKey: "-" });
     });
 
     it("should key a tenant's audit by its tenant", async () => {
@@ -482,6 +504,7 @@ describe("AuditRepository", () => {
       (mockClient.send.mock.calls[call][0] as BatchWriteItemCommand).input.RequestItems?.[
         TABLE
       ]?.map((request) => unmarshall(request.PutRequest?.Item ?? {}));
+    const STORED = { createdAt: CREATED_AT, updatedAt: CREATED_AT };
 
     it("should write a summary copy per related resource with an id", async () => {
       mockClient.send.mockResolvedValue({});
@@ -498,7 +521,7 @@ describe("AuditRepository", () => {
             { app: App.App1, type: ResourceType.USER },
           ],
         }),
-        "2025-12-31T00:00:00.000Z",
+        { createdAt: "2025-12-31T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
       );
 
       expect(mockClient.send).toHaveBeenCalledTimes(1);
@@ -516,8 +539,9 @@ describe("AuditRepository", () => {
         target: { app: "TestApp", type: "User", id: 7 },
         source: { app: "App1", type: "Order", id: "order-1" },
         rerunable: true,
+        related: true,
         createdAt: "2025-12-31T00:00:00.000Z",
-        updatedAt: expect.any(String),
+        updatedAt: "2026-01-01T00:00:00.000Z",
         tenantKey: "-",
         app: "TestApp",
         resourceType: "User",
@@ -534,7 +558,7 @@ describe("AuditRepository", () => {
           tenantId: "tenant-a",
           resources: [{ app: App.TestApp, type: ResourceType.USER, id: "u" }],
         }),
-        CREATED_AT,
+        STORED,
       );
 
       expect(putItems()?.[0]).toMatchObject({
@@ -553,7 +577,7 @@ describe("AuditRepository", () => {
           event: { source: "orders", "detail-type": "OrderCreated", detail: {} },
           resources: [{ app: App.TestApp, type: ResourceType.USER, id: "u" }],
         }),
-        CREATED_AT,
+        STORED,
       );
 
       expect(putItems()?.[0].rerunable).toBe(false);
@@ -562,9 +586,9 @@ describe("AuditRepository", () => {
     it("should write nothing without related resources that have an id", async () => {
       await repository.upsertRelated(
         upsertInput({ resources: [{ app: App.TestApp, type: ResourceType.USER }] }),
-        CREATED_AT,
+        STORED,
       );
-      await repository.upsertRelated(upsertInput(), CREATED_AT);
+      await repository.upsertRelated(upsertInput(), STORED);
 
       expect(mockClient.send).not.toHaveBeenCalled();
     });
@@ -580,7 +604,7 @@ describe("AuditRepository", () => {
             { app: App.TestApp, type: ResourceType.USER, id: "1" },
           ],
         }),
-        CREATED_AT,
+        STORED,
       );
 
       expect(mockClient.send).toHaveBeenCalledTimes(1);
@@ -600,11 +624,11 @@ describe("AuditRepository", () => {
             { app: App.TestApp, type: ResourceType.USER, id: "u" },
           ],
         }),
-        CREATED_AT,
+        STORED,
       );
       await repository.upsertRelated(
         upsertInput({ resources: [{ app: App.App1, type: ResourceType.ORDER, id: "order-1" }] }),
-        CREATED_AT,
+        STORED,
       );
 
       expect(mockClient.send).toHaveBeenCalledTimes(1);
@@ -622,7 +646,7 @@ describe("AuditRepository", () => {
             id,
           })),
         }),
-        CREATED_AT,
+        STORED,
       );
 
       expect(putItems(0)).toHaveLength(25);
@@ -640,7 +664,7 @@ describe("AuditRepository", () => {
           .mockResolvedValueOnce({ UnprocessedItems: {} });
 
         try {
-          const promise = repository.upsertRelated(upsertInput({ resources }), CREATED_AT);
+          const promise = repository.upsertRelated(upsertInput({ resources }), STORED);
           await vi.runAllTimersAsync();
           await promise;
         } finally {
@@ -662,7 +686,7 @@ describe("AuditRepository", () => {
         mockClient.send.mockResolvedValue({ UnprocessedItems: unprocessed });
 
         try {
-          const promise = repository.upsertRelated(upsertInput({ resources }), CREATED_AT);
+          const promise = repository.upsertRelated(upsertInput({ resources }), STORED);
           const rejection = expect(promise).rejects.toThrow(
             "BatchWriteItem failed: unprocessed items after 8 retries",
           );
@@ -802,7 +826,7 @@ describe("AuditRepository", () => {
 
       it("should refuse the tenant id of audits without a tenant", async () => {
         await expect(listing.list(repository, { tenantId: "-" })).rejects.toThrow(
-          'Tenant id "-" is reserved for audits without a tenant',
+          new ReservedTenantError(),
         );
         expect(mockClient.send).not.toHaveBeenCalled();
       });
@@ -831,12 +855,12 @@ describe("AuditRepository", () => {
         });
       });
 
-      it("should omit a trace stored as NULL", async () => {
-        mockClient.send.mockResolvedValue({ Items: [marshall(indexRow({ trace: null }))] });
+      it.each(["trace", "tenantId"])("should omit a %s stored as NULL", async (name) => {
+        mockClient.send.mockResolvedValue({ Items: [marshall(indexRow({ [name]: null }))] });
 
         const { items } = (await listing.list(repository)) as { items: object[] };
 
-        expect(items[0]).not.toHaveProperty("trace");
+        expect(items[0]).not.toHaveProperty(name);
       });
 
       it("should resume from a nextToken with the page size", async () => {

@@ -253,10 +253,11 @@ impl<'de> Deserialize<'de> for Context {
     }
 }
 
-/// An ISO 8601 UTC timestamp, kept as given (`2026-01-02T03:04:05.678Z`).
+/// An ISO 8601 UTC timestamp, always with milliseconds
+/// (`2026-01-02T03:04:05.678Z`), whatever the precision it was given in.
 ///
-/// Stored timestamps are strings and `createdAt` sorts every listing index, so the
-/// text is kept exactly rather than reformatted.
+/// Stored timestamps are strings and `createdAt` sorts every listing index, so
+/// they're compared as text: `03:04:05Z` would sort after `03:04:05.500Z`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct Timestamp(String);
 
@@ -474,6 +475,10 @@ pub struct AuditSummary {
     /// Whether the recorded event can be re-sent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rerunable: Option<bool>,
+    /// `true` on a related resource's copy of an audit, which has the audit's id and
+    /// lists under that resource: fetch or rerun the audit by its `source`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub related: Option<bool>,
     /// The trace, `{id}:{stage}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<String>,

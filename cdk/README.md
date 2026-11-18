@@ -88,7 +88,7 @@ The subscription Lambda is a Rust binary (`provided.al2023`, arm64) that ships p
 
 ### DynamoDBConstruct
 
-The audit table, `{ENV}-{service}-Audit-v2`, retained when removed. Each audit is one item, keyed by its target and id; a copy of its summary sits in the same partition for each related resource with an id, so it lists under that resource too. Four global secondary indexes on multi-attribute keys serve the listings, each projecting the audit summary: by resource type, by resource, by status and by trace. The status and trace indexes hold audits only, and also project the `scopes` their resource filters match.
+The audit table, `{ENV}-{service}-Audit-v2`, retained when removed. Each audit is one item, keyed by its target and id; a copy of its summary, marked `related: true`, sits in the same partition for each related resource with an id, so it lists under that resource too. Four global secondary indexes on multi-attribute keys serve the listings, each projecting the audit summary: by resource type, by resource, by status and by trace. The status and trace indexes hold audits only, and also project the `scopes` their resource filters match.
 
 `table` grants cover the indexes. Upgrading from 1.x replaces the table; see [Upgrading from 1.x](#upgrading-from-1x).
 
@@ -156,11 +156,11 @@ type CDKConfig = {
      --from PROD-Orders-Audit --to PROD-Orders-Audit-v2
    ```
 
-   It prints a JSON report: audits and related-resource copies written, those already in the new table (left alone), copies under their audit's own target (left out, as the audit lists there already), and any items that weren't valid audits. Writes are conditional, so it can be run again.
+   It prints a JSON report: audits and related-resource copies written, those already in the new table (left alone), audits retried since the deploy (merged), copies under their audit's own target (left out, as the audit lists there already), and any items that weren't valid audits. Writes are conditional, so it can be run again.
 
 3. Once the listings look right, delete the 1.x table yourself.
 
-Run the migration soon after deploying: until it finishes, listings hold only the audits written since. A retry of a 1.x audit in that window starts a new audit in the new table, which the migration then leaves as it is.
+Run the migration soon after deploying: until it finishes, listings hold only the audits written since. A retry of a 1.x audit in that window starts a new audit in the new table; the migration merges the 1.x audit into it, putting the 1.x attempts first and restoring the 1.x `createdAt` on the audit and its copies.
 
 ## License
 

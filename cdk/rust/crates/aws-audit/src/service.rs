@@ -108,9 +108,7 @@ impl AuditService {
             at: Timestamp::from(self.clock.now()),
         };
         let upserted = self.storage.upsert_item(&audit, &id, &attempt).await?;
-        self.storage
-            .upsert_related(&audit, &id, &upserted.created_at)
-            .await?;
+        self.storage.upsert_related(&audit, &id, &upserted).await?;
 
         if let Some(events) = &self.events
             && let Err(error) = events.upserted(std::slice::from_ref(&audit)).await
@@ -198,13 +196,15 @@ impl AuditService {
     }
 }
 
-/// Logs a listing's storage failure. A bad `nextToken` or filter is the caller's
-/// mistake, so it isn't logged.
+/// Logs a listing's storage failure. A bad `nextToken`, filter or tenant is the
+/// caller's mistake, so it isn't logged.
 fn logged<T>(listing: &str, result: Result<T, StorageError>) -> Result<T, ServiceError> {
     if let Err(error) = &result
         && !matches!(
             error,
-            StorageError::InvalidNextToken(_) | StorageError::IncompleteResourceFilter(_)
+            StorageError::InvalidNextToken(_)
+                | StorageError::IncompleteResourceFilter(_)
+                | StorageError::ReservedTenant(_)
         )
     {
         tracing::error!(error = %ErrorChain(error), "An error occurred while trying to {listing}");

@@ -72,6 +72,11 @@ export type AuditPayload = z.output<typeof AuditPayloadSchema>;
  * without its `context`, `event`, `error` or `attempts`. Fetch the audit itself
  * for those.
  *
+ * A listing of a resource or resource type also returns the copies of audits that
+ * name it as a related resource. A copy has its audit's id, the resource as
+ * `target`, the audit's target as `source`, and `related: true`: fetch or rerun
+ * the audit by its `source`.
+ *
  * Every listing index projects these attributes (`DynamoDB.Projections.SUMMARY`).
  */
 export const AuditSummarySchema = AuditPayloadSchema.pick({
@@ -87,6 +92,9 @@ export const AuditSummarySchema = AuditPayloadSchema.pick({
   trace: true,
   createdAt: true,
   updatedAt: true,
+}).extend({
+  /** `true` on a related resource's copy of an audit; absent on the audit itself */
+  related: z.boolean().optional(),
 });
 
 /**

@@ -16,11 +16,19 @@ pub fn partition(tenant_id: Option<&str>, base: &str) -> String {
     }
 }
 
-/// The tenant part of every index key: the tenant, or [`NO_TENANT`].
-pub fn tenant_key(tenant_id: Option<&str>) -> &str {
-    tenant_id
-        .filter(|tenant| !tenant.is_empty())
-        .unwrap_or(NO_TENANT)
+/// The tenant id [`NO_TENANT`], the key of audits without a tenant, which a listing
+/// would otherwise return as that tenant's (`ReservedTenantError` in the TypeScript
+/// SDK).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("Tenant id \"{NO_TENANT}\" is reserved for audits without a tenant")]
+pub struct ReservedTenant;
+
+/// The tenant part of every index key: the tenant, or [`NO_TENANT`] without one.
+pub fn tenant_key(tenant_id: Option<&str>) -> Result<&str, ReservedTenant> {
+    match tenant_id.filter(|tenant| !tenant.is_empty()) {
+        Some(NO_TENANT) => Err(ReservedTenant),
+        tenant => Ok(tenant.unwrap_or(NO_TENANT)),
+    }
 }
 
 /// An audit's table key: `PK` `[{tenantId}#]{app}.{type}#{id}`, `SK` `audit`.
@@ -79,11 +87,11 @@ pub fn index_attributes(
     target: &ResourceReference,
     trace: Option<&str>,
     kind: &str,
-) -> Vec<(String, Value)> {
+) -> Result<Vec<(String, Value)>, ReservedTenant> {
     let mut fields = vec![
         (
             attributes::TENANT_KEY.to_owned(),
-            Value::String(tenant_key(tenant_id).to_owned()),
+            Value::String(tenant_key(tenant_id)?.to_owned()),
         ),
         (
             attributes::APP.to_owned(),
@@ -117,7 +125,7 @@ pub fn index_attributes(
         fields.push((attributes::TRACE_STAGE.to_owned(), Value::from(stage)));
     }
 
-    fields
+    Ok(fields)
 }
 
 /// What an audit's `scopes` attribute holds for one of its resources: everything a
@@ -208,11 +216,20 @@ mod tests {
     }
 
     #[test]
+    fn reserves_the_no_tenant_key() {
+        assert_eq!(tenant_key(None), Ok("-"));
+        assert_eq!(tenant_key(Some("")), Ok("-"));
+        assert_eq!(tenant_key(Some("tenant-1")), Ok("tenant-1"));
+        assert_eq!(tenant_key(Some("-")), Err(ReservedTenant));
+    }
+
+    #[test]
     fn leaves_kind_and_trace_attributes_off_copies() {
         let target = resource(json!({ "app": "App1", "type": "Order", "id": 0 }));
 
-        let audit = index_attributes(None, &target, Some("trace-1:2"), "audit");
-        let copy = index_attributes(Some("tenant-1"), &target, Some("trace-1:2"), "related");
+        let audit = index_attributes(None, &target, Some("trace-1:2"), "audit").unwrap();
+        let copy =
+            index_attributes(Some("tenant-1"), &target, Some("trace-1:2"), "related").unwrap();
 
         assert_eq!(
             Value::Object(audit.into_iter().collect()),

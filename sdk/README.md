@@ -102,6 +102,11 @@ Each takes `operation` and `tier` filters; the status and trace listings also ta
 `app` and `resource` (`type`, and `id` together with both), which match an
 audit's target or any of its related resources.
 
+The resource and resource type listings also hold a copy of each audit that names
+the resource as a related resource. A copy has the audit's id, the resource as
+`target`, the audit's target as `source`, and `related: true`: fetch or rerun the
+audit by its `source`.
+
 ```typescript
 const { items, pagination } = await service.listByStatus(
   { status: "fail", app: "Orders", resource: { type: "Order" }, tier: 1 },
@@ -113,7 +118,8 @@ Filters apply after a page is read, so a filtered page can hold fewer items than
 its size, or none, while `pagination.nextToken` continues the listing.
 
 The tenant id `-` is reserved: it keys the audits without a tenant. An audit with
-it fails validation, and a listing for it throws.
+it fails validation, and a listing for it throws `ReservedTenantError`. An empty
+tenant id is no tenant.
 
 ## Migrating from 1.x
 

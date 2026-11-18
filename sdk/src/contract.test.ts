@@ -336,6 +336,13 @@ const CASES: Case[] = [
     replies: [attempts(1), accepted()],
   },
   {
+    name: "upsert/empty-tenant",
+    description: "An empty tenant id is none: it's neither stored nor in the keys",
+    operation: "upsertItem",
+    args: [upsertInput({ tenantId: "" })],
+    replies: [attempts(1), accepted()],
+  },
+  {
     name: "upsert/related-resources",
     description:
       "Each related resource with an id gets a summary copy in the audit's partition, written with BatchWriteItem",
@@ -496,10 +503,27 @@ const CASES: Case[] = [
   // listItems
   {
     name: "list-items/basic",
-    description: "Summaries of one resource's audits, newest first",
+    description:
+      "Summaries of one resource's audits, newest first, with the copies of audits naming it as a related resource",
     operation: "listItems",
     args: [{ app: "App1", resource: { type: "Order", id: "order-1" } }],
-    replies: [{ output: { Items: [indexRow(BY_RESOURCE, traced)] } }],
+    replies: [
+      {
+        output: {
+          Items: [
+            indexRow(BY_RESOURCE, traced),
+            indexRow(BY_RESOURCE, {
+              PK: "App1.User#audit-2#user-1",
+              SK: "related#App1.Order#order-1",
+              id: "audit-2",
+              source: { app: "App1", type: "User", id: "user-1" },
+              rerunable: false,
+              related: true,
+            }),
+          ],
+        },
+      },
+    ],
   },
   {
     name: "list-items/numeric-id",
@@ -560,6 +584,14 @@ const CASES: Case[] = [
         },
       },
     ],
+  },
+
+  {
+    name: "list-status/reserved-tenant",
+    description: "The tenant id of audits without a tenant is refused before any query",
+    operation: "listByStatus",
+    args: [{ tenantId: "-", status: "fail" }],
+    replies: [],
   },
 
   // nextToken validation: refused before any query

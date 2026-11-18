@@ -1,6 +1,11 @@
 import type { Logger } from "@aws-lambda-powertools/logger";
 import type { AuditConfig } from "./config.js";
-import { AuditNotFoundError, InvalidNextTokenError, InvalidResourceFilterError } from "./errors.js";
+import {
+  AuditNotFoundError,
+  InvalidNextTokenError,
+  InvalidResourceFilterError,
+  ReservedTenantError,
+} from "./errors.js";
 import { PutEventsError } from "./events/batch-handler.js";
 import { AuditEventBus } from "./events/bus.js";
 import {
@@ -174,11 +179,11 @@ export class AuditService<C extends AuditConfig> {
 
     // Upsert main item with atomic attempt tracking
     // This handles both new items and retries in a single atomic operation
-    const { attemptNumber, createdAt } = await this.storage.upsertItem(item, currentAttempt);
+    const { attemptNumber, ...stored } = await this.storage.upsertItem(item, currentAttempt);
     currentAttempt.number = attemptNumber;
 
     // A copy per related resource, sorted with the audit by its stored createdAt
-    await this.storage.upsertRelated(item, createdAt);
+    await this.storage.upsertRelated(item, stored);
 
     try {
       await this.events?.upsertedOrThrow([item]);
@@ -206,6 +211,7 @@ export class AuditService<C extends AuditConfig> {
    * @param pagination - Optional pagination settings
    * @returns Paginated collection of audit records
    * @throws {InvalidNextTokenError} if `pagination.nextToken` isn't one this listing returned
+   * @throws {ReservedTenantError} if the tenant id is `-`
    * @throws Re-throws any storage errors after logging
    *
    * @example
@@ -220,8 +226,8 @@ export class AuditService<C extends AuditConfig> {
     try {
       return await this.storage.listObjects(params, pagination);
     } catch (error) {
-      // A bad nextToken is the caller's mistake, not a storage failure.
-      if (!(error instanceof InvalidNextTokenError)) {
+      // A bad nextToken or tenant is the caller's mistake, not a storage failure.
+      if (!isListingInputError(error)) {
         this.logger.error("An error occurred while trying to list objects", {
           error,
         });
@@ -240,6 +246,7 @@ export class AuditService<C extends AuditConfig> {
    * @param pagination - Optional pagination settings
    * @returns Paginated collection of audit records
    * @throws {InvalidNextTokenError} if `pagination.nextToken` isn't one this listing returned
+   * @throws {ReservedTenantError} if the tenant id is `-`
    * @throws Re-throws any storage errors after logging
    *
    * @example
@@ -254,8 +261,8 @@ export class AuditService<C extends AuditConfig> {
     try {
       return await this.storage.listItems(params, pagination);
     } catch (error) {
-      // A bad nextToken is the caller's mistake, not a storage failure.
-      if (!(error instanceof InvalidNextTokenError)) {
+      // A bad nextToken or tenant is the caller's mistake, not a storage failure.
+      if (!isListingInputError(error)) {
         this.logger.error("An error occurred while trying to list items", {
           error,
         });
@@ -275,6 +282,7 @@ export class AuditService<C extends AuditConfig> {
    * @param pagination - Optional pagination settings
    * @returns Paginated collection of trace-related audit records
    * @throws {InvalidNextTokenError} if `pagination.nextToken` isn't one this listing returned
+   * @throws {ReservedTenantError} if the tenant id is `-`
    * @throws {InvalidResourceFilterError} if a resource id filter lacks its app and type
    * @throws Re-throws any storage errors after logging
    *
@@ -289,10 +297,8 @@ export class AuditService<C extends AuditConfig> {
     try {
       return await this.storage.listTraceItems(params, pagination);
     } catch (error) {
-      // A bad nextToken or filter is the caller's mistake, not a storage failure.
-      if (
-        !(error instanceof InvalidNextTokenError || error instanceof InvalidResourceFilterError)
-      ) {
+      // A bad nextToken, filter or tenant is the caller's mistake, not a storage failure.
+      if (!isListingInputError(error)) {
         this.logger.error("An error occurred while trying to list trace items", {
           error,
         });
@@ -313,6 +319,7 @@ export class AuditService<C extends AuditConfig> {
    * @param pagination - Optional pagination settings
    * @returns Paginated collection of status-filtered audit records
    * @throws {InvalidNextTokenError} if `pagination.nextToken` isn't one this listing returned
+   * @throws {ReservedTenantError} if the tenant id is `-`
    * @throws {InvalidResourceFilterError} if a resource id filter lacks its app and type
    * @throws Re-throws any storage errors after logging
    */
@@ -320,10 +327,8 @@ export class AuditService<C extends AuditConfig> {
     try {
       return await this.storage.listByStatus(params, pagination);
     } catch (error) {
-      // A bad nextToken or filter is the caller's mistake, not a storage failure.
-      if (
-        !(error instanceof InvalidNextTokenError || error instanceof InvalidResourceFilterError)
-      ) {
+      // A bad nextToken, filter or tenant is the caller's mistake, not a storage failure.
+      if (!isListingInputError(error)) {
         this.logger.error("An error occurred while trying to list items by status", {
           error,
         });
@@ -332,4 +337,13 @@ export class AuditService<C extends AuditConfig> {
       throw error;
     }
   }
+}
+
+/** Whether a listing failed on its input: a bad nextToken, resource filter or tenant. */
+function isListingInputError(error: unknown): boolean {
+  return (
+    error instanceof InvalidNextTokenError ||
+    error instanceof InvalidResourceFilterError ||
+    error instanceof ReservedTenantError
+  );
 }

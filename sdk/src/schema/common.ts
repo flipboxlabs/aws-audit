@@ -150,8 +150,15 @@ export type Attempt = z.output<typeof AttemptSchema>;
 export const BaseSchema = z.object({
   /** Unique identifier for the audit record */
   id: z.string(),
-  /** Tenant identifier for multi-tenancy support (optional) */
-  tenantId: TenantIdSchema.optional(),
+  /**
+   * Tenant identifier for multi-tenancy support (optional). An empty one is none,
+   * and a null one (an empty one stored as NULL) is dropped.
+   */
+  tenantId: z
+    .union([TenantIdSchema, z.null()])
+    .optional()
+    .transform((tenantId) => tenantId || undefined)
+    .pipe(z.string().optional()),
   /** Current status of the audited operation */
   status: StatusSchema,
   /** Escalation tier for visibility (defaults to INFO) */

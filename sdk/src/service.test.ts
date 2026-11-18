@@ -60,9 +60,11 @@ describe("AuditService", () => {
 
     mockStorage = {
       getItem: vi.fn(),
-      upsertItem: vi
-        .fn()
-        .mockResolvedValue({ attemptNumber: 1, createdAt: "2026-01-02T03:04:05.678Z" }),
+      upsertItem: vi.fn().mockResolvedValue({
+        attemptNumber: 1,
+        createdAt: "2026-01-02T03:04:05.678Z",
+        updatedAt: "2026-01-02T03:04:05.678Z",
+      }),
       upsertRelated: vi.fn(),
       listObjects: vi.fn(),
       listItems: vi.fn(),
@@ -237,7 +239,7 @@ describe("AuditService", () => {
       );
       expect(mockStorage.upsertRelated).toHaveBeenCalledWith(
         mockStorage.upsertItem.mock.calls[0][0],
-        "2026-01-02T03:04:05.678Z",
+        { createdAt: "2026-01-02T03:04:05.678Z", updatedAt: "2026-01-02T03:04:05.678Z" },
       );
       expect(mockEvents.upsertedOrThrow).toHaveBeenCalledWith([
         expect.objectContaining({
@@ -252,10 +254,11 @@ describe("AuditService", () => {
       );
     });
 
-    it("should give the related copies the audit's stored createdAt", async () => {
+    it("should give the related copies the audit's stored timestamps", async () => {
       mockStorage.upsertItem.mockResolvedValue({
         attemptNumber: 2,
         createdAt: "2025-12-31T00:00:00.000Z",
+        updatedAt: "2026-01-02T03:04:05.678Z",
       });
       const input: UpsertAuditInput = {
         ...baseInput,
@@ -267,7 +270,7 @@ describe("AuditService", () => {
 
       expect(mockStorage.upsertRelated).toHaveBeenCalledWith(
         expect.objectContaining({ id: "parent-id", resources: input.resources }),
-        "2025-12-31T00:00:00.000Z",
+        { createdAt: "2025-12-31T00:00:00.000Z", updatedAt: "2026-01-02T03:04:05.678Z" },
       );
     });
 

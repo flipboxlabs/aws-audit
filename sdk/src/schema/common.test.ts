@@ -105,6 +105,19 @@ describe("BaseSchema", () => {
     ]);
   });
 
+  it.each(["", null])("should read a tenantId of %j as none", (tenantId) => {
+    const result = BaseSchema.parse({
+      id: "audit-123",
+      tenantId,
+      operation: "testOp",
+      status: "success",
+      tier: 2,
+      target: createValidTarget(),
+    });
+
+    expect(result.tenantId).toBeUndefined();
+  });
+
   it("should allow tenantId to be undefined", () => {
     const result = BaseSchema.parse({
       id: "audit-123",

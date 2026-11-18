@@ -250,6 +250,9 @@
                   "rerunable": {
                     "BOOL": false
                   },
+                  "related": {
+                    "BOOL": true
+                  },
                   "tenantKey": {
                     "S": "-"
                   },

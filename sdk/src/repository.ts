@@ -11,7 +11,11 @@ import type { NativeAttributeValue } from "@aws-sdk/util-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { DEFAULT_TTL_SECONDS, type AuditConfig } from "./config.js";
 import { DynamoDB, type IndexDefinition } from "./constants.js";
-import { InvalidNextTokenError, InvalidResourceFilterError } from "./errors.js";
+import {
+  InvalidNextTokenError,
+  InvalidResourceFilterError,
+  ReservedTenantError,
+} from "./errors.js";
 import {
   decodeNextPageToken,
   encodeNextPageToken,
@@ -307,12 +311,12 @@ function buildFilter(filters: ListFilters & { scope?: string }) {
 /**
  * The tenant part of every index key.
  *
- * @throws Error for the tenant id `-`, the key of audits without a tenant, which a
- *   listing would otherwise return as that tenant's
+ * @throws {ReservedTenantError} For the tenant id `-`, the key of audits without a
+ *   tenant, which a listing would otherwise return as that tenant's
  */
 function tenantKey(tenantId?: string): string {
   if (tenantId === DynamoDB.NO_TENANT) {
-    throw new Error(`Tenant id "${DynamoDB.NO_TENANT}" is reserved for audits without a tenant`);
+    throw new ReservedTenantError();
   }
   return tenantId || DynamoDB.NO_TENANT;
 }
@@ -465,7 +469,7 @@ export class AuditRepository<C extends AuditConfig> {
         }),
       );
 
-      return item ? AuditSchema.parse(withoutNullTrace(unmarshall(item))) : undefined;
+      return item ? AuditSchema.parse(withoutNulls(unmarshall(item))) : undefined;
     } catch (error) {
       this.logger.error("Failed to read audit item", {
         identifiers,
@@ -492,12 +496,12 @@ export class AuditRepository<C extends AuditConfig> {
    *
    * @param item - The audit record to upsert (its `attempts`, if any, are ignored)
    * @param currentAttempt - The current attempt to append
-   * @returns The attempt number (1 for new items, incremented for existing) and the
-   *   stored `createdAt`
+   * @returns The attempt number (1 for new items, incremented for existing), the
+   *   stored `createdAt`, and the `updatedAt` this upsert stored
    *
    * @example
    * ```typescript
-   * const { attemptNumber, createdAt } = await repository.upsertItem(
+   * const { attemptNumber, createdAt, updatedAt } = await repository.upsertItem(
    *   { operation: 'processPayment', status: 'success', ... },
    *   { number: 1, status: 'success', at: '2024-01-01T00:00:00Z' }
    * );
@@ -511,7 +515,7 @@ export class AuditRepository<C extends AuditConfig> {
       error?: unknown;
       at: string;
     },
-  ): Promise<{ attemptNumber: number; createdAt: string }> {
+  ): Promise<{ attemptNumber: number; createdAt: string; updatedAt: string }> {
     const now = new Date();
 
     const payload = AuditStorageSchema.parse({
@@ -605,34 +609,34 @@ export class AuditRepository<C extends AuditConfig> {
       );
     }
 
-    return { attemptNumber, createdAt: updated.createdAt };
+    return { attemptNumber, createdAt: updated.createdAt, updatedAt: payload.updatedAt };
   }
 
   /**
    * Writes the copy of an audit that lists it under each related resource with an id.
    *
-   * A copy holds the audit's summary, with the resource as `target` and the audit's
-   * target as `source`, in the audit's partition (`SK`
-   * `related#{app}.{type}#{resourceId}`). It takes the audit's stored `createdAt`, so
-   * it sorts with the audit. Each upsert rewrites the copies of the resources it
+   * A copy holds the audit's summary, with the resource as `target`, the audit's
+   * target as `source` and `related: true`, in the audit's partition (`SK`
+   * `related#{app}.{type}#{resourceId}`). It takes the audit's stored `createdAt` and
+   * `updatedAt`, so it sorts with the audit. Each upsert rewrites the copies of the resources it
    * lists, once per resource, except its own target, under which the audit lists
    * already; a copy under a resource a retry no longer lists stays,
    * as do that resource's `scopes` on the audit. Items are written with
    * BatchWriteItem, 25 at a time.
    *
    * @param item - The audit, with its id
-   * @param createdAt - The audit's stored `createdAt`, from {@link upsertItem}
+   * @param stored - The audit's stored `createdAt` and `updatedAt`, from {@link upsertItem}
    * @throws Error if unprocessed items remain after the maximum retries
    *
    * @example
    * ```typescript
-   * const { createdAt } = await repository.upsertItem(item, attempt);
-   * await repository.upsertRelated(item, createdAt);
+   * const stored = await repository.upsertItem(item, attempt);
+   * await repository.upsertRelated(item, stored);
    * ```
    */
   public async upsertRelated(
     item: UpsertAuditInput & { id: string },
-    createdAt: string,
+    stored: { createdAt: string; updatedAt: string },
   ): Promise<void> {
     const BATCH_SIZE = 25;
 
@@ -649,7 +653,11 @@ export class AuditRepository<C extends AuditConfig> {
     }
     if (resources.size === 0) return;
 
-    const payload = AuditStorageSchema.parse({ ...item, createdAt, updatedAt: new Date() });
+    const payload = AuditStorageSchema.parse({
+      ...item,
+      createdAt: stored.createdAt,
+      updatedAt: stored.updatedAt,
+    });
     const primaryKey = constructPrimaryKey({
       tenantId: payload.tenantId,
       id: payload.id,
@@ -666,6 +674,7 @@ export class AuditRepository<C extends AuditConfig> {
         target,
         source: payload.target,
         rerunable: payload.rerunable ?? !!payload.event,
+        related: true,
       };
 
       return {
@@ -785,6 +794,7 @@ export class AuditRepository<C extends AuditConfig> {
    * @param pagination - Optional pagination settings (pageSize, nextToken)
    * @returns Paginated collection of audit summaries
    * @throws {InvalidNextTokenError} if `pagination.nextToken` isn't one this listing returned
+   * @throws {ReservedTenantError} if the tenant id is `-`
    */
   public async listObjects(params: TypedListObjectsOptions<C>, pagination?: Pagination) {
     return this.listIndex(
@@ -808,6 +818,7 @@ export class AuditRepository<C extends AuditConfig> {
    * @param pagination - Optional pagination settings (pageSize, nextToken)
    * @returns Paginated collection of audit summaries
    * @throws {InvalidNextTokenError} if `pagination.nextToken` isn't one this listing returned
+   * @throws {ReservedTenantError} if the tenant id is `-`
    *
    * @example
    * ```typescript
@@ -848,6 +859,7 @@ export class AuditRepository<C extends AuditConfig> {
    * @param pagination - Optional pagination settings (pageSize, nextToken)
    * @returns Paginated collection of audit summaries in trace order
    * @throws {InvalidNextTokenError} if `pagination.nextToken` isn't one this listing returned
+   * @throws {ReservedTenantError} if the tenant id is `-`
    * @throws {InvalidResourceFilterError} if a resource id filter is given without its app and type
    *
    * @example
@@ -886,6 +898,7 @@ export class AuditRepository<C extends AuditConfig> {
    * @param pagination - Optional pagination settings (pageSize, nextToken)
    * @returns Paginated collection of audit summaries
    * @throws {InvalidNextTokenError} if `pagination.nextToken` isn't one this listing returned
+   * @throws {ReservedTenantError} if the tenant id is `-`
    * @throws {InvalidResourceFilterError} if a resource id filter is given without its app and type
    */
   public async listByStatus(params: TypedListByStatusOptions<C>, pagination?: Pagination) {
@@ -943,7 +956,7 @@ export class AuditRepository<C extends AuditConfig> {
     );
 
     return PaginationCollectionSchema(AuditSummarySchema).parse({
-      items: (items ?? []).map((item) => withoutNullTrace(unmarshall(item))),
+      items: (items ?? []).map((item) => withoutNulls(unmarshall(item))),
       pagination: {
         nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
       },
@@ -971,16 +984,11 @@ export class AuditRepository<C extends AuditConfig> {
 }
 
 /**
- * Drops a `trace` that isn't a string. An empty trace is written as NULL
- * (`convertEmptyValues`), which the schemas don't accept.
+ * Drops the attributes stored as NULL: an empty string is written as NULL
+ * (`convertEmptyValues`), and a field such as `trace` doesn't accept it.
  *
  * @internal
  */
-function withoutNullTrace(item: UnmarshalledAttributes): UnmarshalledAttributes {
-  if (typeof item.trace === "string") {
-    return item;
-  }
-
-  const { trace: _, ...rest } = item;
-  return rest;
+function withoutNulls(item: UnmarshalledAttributes): UnmarshalledAttributes {
+  return Object.fromEntries(Object.entries(item).filter(([, value]) => value !== null));
 }

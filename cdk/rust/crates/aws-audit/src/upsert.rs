@@ -212,7 +212,8 @@ impl StoredAudit {
     pub fn new(audit: &UpsertAudit, id: String, now: &Timestamp) -> Self {
         StoredAudit {
             id,
-            tenant_id: audit.tenant_id.clone(),
+            // An empty tenant is none, as in the keys
+            tenant_id: audit.tenant_id.clone().filter(|tenant| !tenant.is_empty()),
             status: audit.status,
             tier: audit.tier,
             target: audit.target.clone(),

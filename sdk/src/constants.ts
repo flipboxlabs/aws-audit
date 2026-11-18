@@ -201,6 +201,7 @@ export const DynamoDB = {
       "target",
       "source",
       "rerunable",
+      "related",
       "trace",
       "createdAt",
       "updatedAt",
