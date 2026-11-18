@@ -81,8 +81,12 @@ export type MigrationReport = {
 
 type Key = { PK: string; SK: string };
 
-/** An item to write; a copy names its audit's key in the earlier table */
-type Write = { kind: "audits" | "copies"; item: UnmarshalledAttributes; audit?: Key };
+/** An item to write; a copy names its audit's key in the earlier table and in the v2 table */
+type Write = {
+  kind: "audits" | "copies";
+  item: UnmarshalledAttributes;
+  audit?: { from: Key; to: Key };
+};
 
 /**
  * Copies every audit of the earlier table into the v2 table.
@@ -90,12 +94,14 @@ type Write = { kind: "audits" | "copies"; item: UnmarshalledAttributes; audit?: 
  * - An audit (`SK` its id) is written under its v2 key with its index
  *   attributes, keeping its fields, `createdAt` and `ttl`. A trace the earlier
  *   table kept only in its index keys is rebuilt from them.
- * - A related resource's copy (`SK` `{auditId}#{app}.{type}#{id}`, its target) is
- *   written as a summary copy in its audit's partition, marked `related`, with its
- *   audit's `createdAt` so it sorts with the audit (the earlier table gave a copy
- *   the time of the audit's latest upsert). Its resource is added to the audit's
- *   `scopes`, so status and trace filters match it. A copy under the audit's own
- *   target is left out, as the audit lists there already.
+ * - A related resource's copy (`SK` `{auditId}#{app}.{type}#{id}`, see
+ *   {@link copyOf}) is written as a summary copy in its audit's partition, marked
+ *   `related`, with its audit's `createdAt` so it sorts with the audit (the
+ *   earlier table gave a copy the time of the audit's latest upsert): the earlier
+ *   of the earlier audit's and, when an upsert wrote one since the deploy, the v2
+ *   audit's, which is what merging gives the audit. Its resource is added to the
+ *   audit's `scopes`, so status and trace filters match it. A copy under the
+ *   audit's own target is left out, as the audit lists there already.
  *
  * `createdAt` and `updatedAt` are written with milliseconds, as the SDK writes
  * them: the earlier table kept a caller's text, and listings compare them as text.
@@ -106,8 +112,9 @@ type Write = { kind: "audits" | "copies"; item: UnmarshalledAttributes; audit?: 
  * Writes are conditional, so a run can be repeated and never replaces what the
  * new version has written since the deploy. Deploy first, then migrate. An audit
  * retried since the deploy has a v2 audit of its own: the earlier attempts are
- * put before its attempts, renumbered, and it and its copies take the earlier
- * `createdAt`. Each audit written or merged is marked `migrated`
+ * put before its attempts, renumbered, it and its copies take the earlier
+ * `createdAt`, and it gets the earlier audit's fields the retries left out (such
+ * as the `event` a rerun sends). Each audit written or merged is marked `migrated`
  * (`DynamoDB.Attributes.MIGRATED`), which is how a later run knows to leave it.
  *
  * @returns What was copied, skipped and refused
@@ -168,8 +175,8 @@ export async function migrate(options: MigrationOptions): Promise<MigrationRepor
     for (const raw of items) {
       report.scanned++;
       const item = unmarshall(raw);
-      const auditId = copyAuditId(item);
-      const result = auditId === undefined ? toAudit(item) : toCopy(item, auditId);
+      const copy = copyOf(item);
+      const result = !copy ? toAudit(item) : "reason" in copy ? copy : toCopy(item, copy);
 
       if ("reason" in result) {
         report.invalid.push({ PK: item.PK, SK: item.SK, reason: result.reason });
@@ -189,7 +196,7 @@ export async function migrate(options: MigrationOptions): Promise<MigrationRepor
     }
 
     // Per page, as copies of an audit are spread across the earlier table
-    const createdAt = auditCreatedAt(client, from);
+    const createdAt = auditCreatedAt(client, from, to);
     await inBatches(writes, concurrency, (write) => put(write, createdAt));
     startKey = lastKey;
     onProgress?.(report);
@@ -230,52 +237,93 @@ type Transformed =
   | { reason: string }
   | { ownTarget: true };
 
-/** Reads an earlier audit's `createdAt`, once per audit */
-type CreatedAt = (audit: Key) => Promise<string | undefined>;
+/**
+ * Reads the `createdAt` an audit's copies take, once per audit: the earlier of the
+ * earlier audit's and the v2 audit's. A merge gives the audit the earlier of the
+ * two, whether it runs before or after, so a copy written on a later page agrees.
+ */
+type CreatedAt = (audit: { from: Key; to: Key }) => Promise<string | undefined>;
 
-function auditCreatedAt(client: DynamoDBClient, table: string): CreatedAt {
+function auditCreatedAt(client: DynamoDBClient, from: string, to: string): CreatedAt {
   const read = new Map<string, Promise<string | undefined>>();
+  const createdAt = (table: string, key: Key) =>
+    client
+      .send(
+        new GetItemCommand({
+          TableName: table,
+          Key: marshall(key),
+          // The v2 audit as merged so far
+          ConsistentRead: table === to,
+          ProjectionExpression: "#createdAt",
+          ExpressionAttributeNames: { "#createdAt": "createdAt" },
+        }),
+      )
+      .then(({ Item }) => DateTimeStringSchema.safeParse(Item && unmarshall(Item).createdAt).data);
 
   return (audit) => {
-    const name = JSON.stringify([audit.PK, audit.SK]);
-    let createdAt = read.get(name);
-    if (!createdAt) {
-      createdAt = client
-        .send(
-          new GetItemCommand({
-            TableName: table,
-            Key: marshall(audit),
-            ProjectionExpression: "#createdAt",
-            ExpressionAttributeNames: { "#createdAt": "createdAt" },
-          }),
-        )
-        .then(
-          ({ Item }) => DateTimeStringSchema.safeParse(Item && unmarshall(Item).createdAt).data,
-        );
-      read.set(name, createdAt);
+    const name = JSON.stringify([audit.from.PK, audit.from.SK]);
+    let earliest = read.get(name);
+    if (!earliest) {
+      earliest = Promise.all([createdAt(from, audit.from), createdAt(to, audit.to)]).then(
+        (times) =>
+          times
+            .filter((time) => time !== undefined)
+            .sort((a, b) => Date.parse(a) - Date.parse(b))[0],
+      );
+      read.set(name, earliest);
     }
-    return createdAt;
+    return earliest;
   };
 }
 
+/** An earlier related resource's copy: its audit's id and its resource */
+type Copy = { auditId: string; target: ResourceReference };
+
 /**
- * The audit id of an earlier related resource's copy, whose `SK` is
- * `{auditId}#{app}.{type}#{id}` for its target; undefined for an audit, whose `SK`
- * is its id, which may hold a `#` too, even ending as a copy's would. An audit has
- * attempts (the earlier SDK appended one on each upsert) and a copy has none, so
- * only an item without attempts is read as a copy.
+ * The audit id and resource of an earlier related resource's copy, whose `SK` is
+ * `{auditId}#{app}.{type}#{id}` for its resource; undefined for an audit, whose
+ * `SK` is its id, which may hold a `#` too, even ending as a copy's would. Every
+ * earlier SDK appended an attempt on each upsert of an audit and gave a copy none,
+ * so only an item without attempts is a copy.
+ *
+ * From SDK 1.4.2 on, a copy's `target` is its resource. Before, a copy kept its
+ * audit's `target` (and `resources`), and only its `SK` named its resource: it's
+ * found among the copy's `resources`. A copy whose `SK` names no such resource, or
+ * more than one, is refused with the reason, to be reconciled by hand.
  */
-function copyAuditId(item: UnmarshalledAttributes): string | undefined {
+function copyOf(item: UnmarshalledAttributes): Copy | { reason: string } | undefined {
   if (Array.isArray(item.attempts) && item.attempts.length > 0) return undefined;
 
   const sortKey = String(item.SK ?? "");
-  const target = item.target as Partial<ResourceReference> | undefined;
-  if (!target?.app || !target.type || !hasResourceId(target.id)) return undefined;
+  const auditId = (resource: Partial<ResourceReference> | undefined) => {
+    if (!resource?.app || !resource.type || !hasResourceId(resource.id)) return undefined;
+    const suffix = `#${resource.app}.${resource.type}#${resource.id}`;
+    return sortKey.length > suffix.length && sortKey.endsWith(suffix)
+      ? sortKey.slice(0, -suffix.length)
+      : undefined;
+  };
 
-  const suffix = `#${target.app}.${target.type}#${target.id}`;
-  return sortKey.length > suffix.length && sortKey.endsWith(suffix)
-    ? sortKey.slice(0, -suffix.length)
-    : undefined;
+  const target = item.target as ResourceReference | undefined;
+  const id = auditId(target);
+  if (id !== undefined && target) return { auditId: id, target };
+
+  // Before 1.4.2: one of its resources, each once however its id was typed
+  const copies = new Map<string, Copy>();
+  for (const resource of Array.isArray(item.resources) ? item.resources : []) {
+    const id = auditId(resource as Partial<ResourceReference>);
+    if (id === undefined) continue;
+    const { app, type, id: resourceId } = resource as ResourceReference;
+    const copy = { auditId: id, target: { app, type, id: resourceId } };
+    copies.set(JSON.stringify([id, relatedSortKey(copy.target)]), copy);
+  }
+  if (copies.size === 1) return [...copies.values()][0];
+
+  return {
+    reason:
+      copies.size > 1
+        ? "A related resource's copy whose SK names more than one of its resources"
+        : "An item without attempts, which isn't an audit, whose SK names neither its target nor one of its resources",
+  };
 }
 
 /**
@@ -325,8 +373,7 @@ function toAudit(item: UnmarshalledAttributes): Transformed {
  * An earlier related resource's copy as a v2 summary copy, and the scopes it adds
  * to its audit.
  */
-function toCopy(item: UnmarshalledAttributes, auditId: string): Transformed {
-  const target = item.target as ResourceReference;
+function toCopy(item: UnmarshalledAttributes, { auditId, target }: Copy): Transformed {
   const source = item.source as ResourceReference | undefined;
 
   if (!source?.app || !source.type) {
@@ -342,7 +389,7 @@ function toCopy(item: UnmarshalledAttributes, auditId: string): Transformed {
     return { reason: "A related resource's copy needs a createdAt or updatedAt" };
   }
 
-  const summary = AuditSummarySchema.safeParse({ ...fields, id: auditId, createdAt });
+  const summary = AuditSummarySchema.safeParse({ ...fields, target, id: auditId, createdAt });
   if (!summary.success) {
     return { reason: summary.error.issues.map((issue) => issue.message).join("; ") };
   }
@@ -364,13 +411,19 @@ function toCopy(item: UnmarshalledAttributes, auditId: string): Transformed {
   return {
     write: {
       kind: "copies",
-      // The earlier table's key of the audit
+      // The audit's key in the earlier table and in the v2 table
       audit: {
-        PK: tenantId ? `${tenantId}#${source.app}.${source.type}` : `${source.app}.${source.type}`,
-        SK: auditId,
+        from: {
+          PK: tenantId
+            ? `${tenantId}#${source.app}.${source.type}`
+            : `${source.app}.${source.type}`,
+          SK: auditId,
+        },
+        to: { PK: partition, SK: DynamoDB.SortKeys.AUDIT },
       },
       item: {
         ...copy,
+        target,
         id: auditId,
         createdAt: summary.data.createdAt,
         updatedAt: summary.data.updatedAt,
@@ -450,10 +503,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const MERGE_ATTEMPTS = 5;
 
 /**
+ * What a merge leaves to the v2 audit, or sets itself: its keys, the attributes
+ * built from its fields, and its expiry.
+ */
+const NOT_FILLED = new Set<string>([
+  Keys.PARTITION_KEY,
+  Keys.SORT_KEY,
+  "attempts",
+  "createdAt",
+  Attributes.TTL,
+  Attributes.TENANT_KEY,
+  Attributes.APP,
+  Attributes.RESOURCE_TYPE,
+  Attributes.RESOURCE_ID,
+  Attributes.KIND,
+  Attributes.TRACE_ID,
+  Attributes.TRACE_STAGE,
+  Attributes.SCOPES,
+  Attributes.MIGRATED,
+]);
+
+/**
  * Merges an earlier audit into the v2 audit an upsert wrote since the deploy: its
  * attempts go first, every attempt is renumbered by its position, the audit and
  * its copies take the earlier of the two `createdAt`s, and the audit is marked
- * `migrated`.
+ * `migrated`. The audit also gets the earlier audit's fields its upserts left out,
+ * as an upsert keeps the fields it doesn't give (a rerun needs the `event`), with
+ * the index attributes they add (a trace's).
  *
  * @returns False when the v2 audit is marked `migrated` already, by an earlier run
  * @throws Error when upserts kept changing the audit while merging
@@ -464,21 +540,10 @@ async function mergeAudit(
   audit: UnmarshalledAttributes,
 ): Promise<boolean> {
   const key = marshall({ [Keys.PARTITION_KEY]: audit.PK, [Keys.SORT_KEY]: audit.SK });
-  const names = {
-    "#attempts": "attempts",
-    "#createdAt": "createdAt",
-    "#migrated": Attributes.MIGRATED,
-  };
 
   for (let attempt = 0; attempt < MERGE_ATTEMPTS; attempt++) {
     const { Item } = await client.send(
-      new GetItemCommand({
-        TableName: table,
-        Key: key,
-        ConsistentRead: true,
-        ProjectionExpression: "#attempts, #createdAt, #migrated",
-        ExpressionAttributeNames: names,
-      }),
+      new GetItemCommand({ TableName: table, Key: key, ConsistentRead: true }),
     );
     const current = Item ? unmarshall(Item) : undefined;
     if (!current || current[Attributes.MIGRATED]) {
@@ -494,6 +559,21 @@ async function mergeAudit(
       ...(audit.attempts ?? []),
       ...(current.attempts ?? []),
     ];
+    // The earlier audit's fields the upserts left out, and the index attributes they add
+    const fields = Object.entries(audit).filter(
+      ([name, value]) =>
+        !NOT_FILLED.has(name) && current[name] === undefined && value !== undefined,
+    );
+    const merged = { ...current, ...Object.fromEntries(fields) } as Parameters<
+      typeof constructIndexAttributes
+    >[0];
+    const filled = [
+      ...fields,
+      ...Object.entries(constructIndexAttributes(merged, DynamoDB.Kinds.AUDIT)).filter(
+        ([name]) => current[name] === undefined,
+      ),
+    ];
+
     // First too: an interrupted run merges again, finding the audit unmerged
     await moveCopies(client, table, audit.PK, createdAt);
     try {
@@ -501,12 +581,19 @@ async function mergeAudit(
         new UpdateItemCommand({
           TableName: table,
           Key: key,
-          UpdateExpression:
+          UpdateExpression: [
             "SET #attempts = :attempts, #createdAt = :createdAt, #migrated = :migrated",
+            ...filled.map((_, i) => `#f${i} = :f${i}`),
+          ].join(", "),
           // Unmerged and unchanged since the read: an upsert in between appended an attempt
           ConditionExpression:
             "attribute_not_exists(#migrated) AND #createdAt = :current AND size(#attempts) = :count",
-          ExpressionAttributeNames: names,
+          ExpressionAttributeNames: {
+            "#attempts": "attempts",
+            "#createdAt": "createdAt",
+            "#migrated": Attributes.MIGRATED,
+            ...Object.fromEntries(filled.map(([name], i) => [`#f${i}`, name])),
+          },
           ExpressionAttributeValues: marshall(
             {
               ":attempts": attempts.map((item, i) => ({ ...item, number: i + 1 })),
@@ -514,6 +601,7 @@ async function mergeAudit(
               ":migrated": true,
               ":current": current.createdAt,
               ":count": current.attempts?.length ?? 0,
+              ...Object.fromEntries(filled.map(([, value], i) => [`:f${i}`, value])),
             },
             MARSHALL_OPTIONS,
           ),

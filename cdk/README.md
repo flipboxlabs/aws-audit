@@ -158,11 +158,11 @@ The config lists each app's resource types, replacing the separate `apps` and `r
      --from PROD-Orders-Audit --to PROD-Orders-Audit-v2
    ```
 
-   It prints a JSON report: audits and related-resource copies written, those already in the new table (left alone), audits retried since the deploy (merged), copies under their audit's own target (left out, as the audit lists there already), and any items that weren't valid audits. Writes are conditional, and each audit it writes or merges is marked `migrated: true`, so it can be run again.
+   It prints a JSON report: audits and related-resource copies written, those already in the new table (left alone), audits retried since the deploy (merged), copies under their audit's own target (left out, as the audit lists there already), and any items that weren't valid audits or copies, with the reason. Copies written before SDK 1.4.2, which kept their audit's target and named their resource only in their key, are written under that resource; one whose key names none of its audit's resources, or more than one, is reported to reconcile by hand. Writes are conditional, and each audit it writes or merges is marked `migrated: true`, so it can be run again.
 
 3. Once the listings look right, delete the 1.x table yourself.
 
-Run the migration soon after deploying: until it finishes, listings hold only the audits written since. A retry of a 1.x audit in that window starts a new audit in the new table; the migration merges the 1.x audit into it, putting the 1.x attempts first and restoring the earlier `createdAt` on the audit and its copies.
+Run the migration soon after deploying: until it finishes, listings hold only the audits written since. A retry of a 1.x audit in that window starts a new audit in the new table; the migration merges the 1.x audit into it, putting the 1.x attempts first, restoring the earlier `createdAt` on the audit and its copies, and filling in the 1.x fields the retries left out, such as the `event` a rerun sends.
 
 ## License
 

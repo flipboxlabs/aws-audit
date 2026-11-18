@@ -263,14 +263,124 @@ describe("migrate", () => {
       // Without its audit, a copy keeps its own
       ["-#App1#Order#audit-2", NOW],
     ]);
-    // Read from the earlier table, once per audit
+    // Read from both tables, once per audit
     expect(
       commands(send, GetItemCommand).map(({ input }) => [input.TableName, unmarshall(input.Key!)]),
     ).toEqual([
       [FROM, { PK: "App1.Order", SK: "audit-1" }],
+      [TO, { PK: "-#App1#Order#audit-1", SK: "audit" }],
       [FROM, { PK: "tenant-a#App1.Order", SK: "audit-1" }],
+      [TO, { PK: "tenant-a#App1#Order#audit-1", SK: "audit" }],
       [FROM, { PK: "App1.Order", SK: "audit-2" }],
+      [TO, { PK: "-#App1#Order#audit-2", SK: "audit" }],
     ]);
+  });
+
+  it("gives a copy the v2 audit's createdAt when an upsert since the deploy gave it the earlier", async () => {
+    const EARLIER = "2026-01-01T00:00:00.000Z";
+    // The copy is on the page after its audit, which a merge gave the v2 createdAt
+    const { client, send } = stubClient(
+      [[v1Audit({ createdAt: NOW })], [v1Copy({ createdAt: NOW })]],
+      () => false,
+      [{ PK: "-#App1#Order#audit-1", SK: "audit", createdAt: EARLIER }],
+    );
+
+    await migrate({ client, from: FROM, to: TO });
+
+    const copy = putItems(send).find(({ SK }) => SK !== "audit");
+    expect(copy?.createdAt).toBe(EARLIER);
+    const reads = commands(send, GetItemCommand).filter(({ input }) => input.TableName === TO);
+    expect(reads.map(({ input }) => input.ConsistentRead)).toEqual([true]);
+  });
+
+  describe("a copy written before SDK 1.4.2", () => {
+    /** It kept its audit's target and resources; only its SK names its resource */
+    const v1LegacyCopy = (overrides: Record<string, unknown> = {}) =>
+      v1Copy({
+        PK: "App1.Order",
+        target: { app: "App1", type: "Order", id: "order-1" },
+        source: { app: "App1", type: "Order", id: "order-1" },
+        resources: [
+          { app: "TestApp", type: "User", id: "user-1" },
+          { app: "TestApp", type: "Order", id: 7 },
+        ],
+        GSI1_SS_PK: "App1.Order#order-1",
+        ...overrides,
+      });
+
+    it("is written as a copy under the resource its SK names", async () => {
+      const { client, send } = stubClient([[v1Audit(), v1LegacyCopy()]]);
+
+      const report = await migrate({ client, from: FROM, to: TO });
+
+      expect(report).toMatchObject({
+        audits: { written: 1 },
+        copies: { written: 1 },
+        invalid: [],
+      });
+      const copy = putItems(send).find(({ SK }) => SK !== "audit");
+      expect(copy).toMatchObject({
+        PK: "-#App1#Order#audit-1",
+        SK: "related#TestApp#User#user-1",
+        id: "audit-1",
+        target: { app: "TestApp", type: "User", id: "user-1" },
+        source: { app: "App1", type: "Order", id: "order-1" },
+        related: true,
+        app: "TestApp",
+        resourceType: "User",
+        resourceId: "user-1",
+      });
+      expect(copy).not.toHaveProperty("resources");
+      const scopes = commands(send, UpdateItemCommand).map(({ input }) =>
+        unmarshall(input.ExpressionAttributeValues!),
+      );
+      expect(scopes).toEqual([
+        { ":scopes": new Set(["TestApp", "TestApp#User", "*#User", "TestApp#User#user-1"]) },
+      ]);
+    });
+
+    it("keeps a numeric resource id", async () => {
+      const { client, send } = stubClient([[v1LegacyCopy({ SK: "audit-1#TestApp.Order#7" })]]);
+
+      await migrate({ client, from: FROM, to: TO });
+
+      expect(putItems(send)[0]).toMatchObject({
+        SK: "related#TestApp#Order#7",
+        target: { app: "TestApp", type: "Order", id: 7 },
+      });
+    });
+
+    it("is reported when its SK names none of its resources, or more than one", async () => {
+      const { client, send } = stubClient([
+        [
+          v1LegacyCopy({ SK: "audit-1#TestApp.User#user-9" }),
+          v1LegacyCopy({
+            SK: "audit-1#TestApp.User#x#TestApp.User#1",
+            resources: [
+              { app: "TestApp", type: "User", id: "1" },
+              { app: "TestApp", type: "User", id: "x#TestApp.User#1" },
+            ],
+          }),
+        ],
+      ]);
+
+      const report = await migrate({ client, from: FROM, to: TO });
+
+      expect(report.invalid).toEqual([
+        {
+          PK: "App1.Order",
+          SK: "audit-1#TestApp.User#user-9",
+          reason:
+            "An item without attempts, which isn't an audit, whose SK names neither its target nor one of its resources",
+        },
+        {
+          PK: "App1.Order",
+          SK: "audit-1#TestApp.User#x#TestApp.User#1",
+          reason: "A related resource's copy whose SK names more than one of its resources",
+        },
+      ]);
+      expect(putItems(send)).toEqual([]);
+    });
   });
 
   it("writes createdAt and updatedAt with milliseconds, and leaves out NULLs", async () => {
@@ -324,20 +434,43 @@ describe("migrate", () => {
 
   describe("an audit retried since the deploy", () => {
     const EARLIER = "2026-01-01T00:00:00.000Z";
+    /** The audit as a retry since the deploy upserted it, without the earlier fields it left out */
     const v2Audit = (overrides: Record<string, unknown> = {}) => ({
       PK: "-#App1#Order#audit-1",
       SK: "audit",
+      id: "audit-1",
+      operation: "createOrder",
+      status: "success",
+      tier: 2,
+      target: { app: "App1", type: "Order", id: "order-1" },
       attempts: [{ number: 1, status: "success", at: NOW }],
       createdAt: NOW,
+      updatedAt: NOW,
+      tenantKey: "-",
+      app: "App1",
+      resourceType: "Order",
+      resourceId: "order-1",
+      kind: "audit",
+      scopes: new Set(["App1", "App1#Order", "*#Order", "App1#Order#order-1"]),
+      ttl: 1775999999,
       ...overrides,
     });
+    /** The earlier audit's fields, which the retry gave too */
+    const given = {
+      context: { attempt: 3 },
+      event: { source: "orders", "detail-type": "OrderCreated", detail: "{}" },
+      error: "Boom",
+      trace: "trace-1:2",
+      traceId: "trace-1",
+      traceStage: 2,
+    };
     const v2Copy = { PK: "-#App1#Order#audit-1", SK: "related#TestApp#User#user-1" };
     const isAuditPut = (command: PutItemCommand | UpdateItemCommand) =>
       command instanceof PutItemCommand && unmarshall(command.input.Item!).SK === "audit";
 
     it("gets the earlier attempts first and the earlier createdAt, as do its copies", async () => {
       const { client, send } = stubClient([[v1Audit({ createdAt: EARLIER })]], isAuditPut, [
-        v2Audit(),
+        v2Audit(given),
         v2Copy,
       ]);
 
@@ -376,6 +509,52 @@ describe("migrate", () => {
         moved,
       ]);
       expect(report.audits).toEqual({ written: 0, existing: 0, merged: 1 });
+    });
+
+    it("gets the earlier fields the retries left out, with the index attributes they add", async () => {
+      const { client, send } = stubClient([[v1Audit({ message: "Order failed" })]], isAuditPut, [
+        v2Audit({ context: { attempt: 3 }, error: "Still failing" }),
+      ]);
+
+      await migrate({ client, from: FROM, to: TO });
+
+      const [merge] = commands(send, UpdateItemCommand);
+      const names = merge.input.ExpressionAttributeNames!;
+      const values = unmarshall(merge.input.ExpressionAttributeValues!);
+      const set = Object.fromEntries(
+        Object.entries(names)
+          .filter(([token]) => token.startsWith("#f"))
+          .map(([token, name]) => [name, values[`:${token.slice(1)}`]]),
+      );
+      // Not the context or error the retry gave, nor the keys and attributes it set
+      expect(set).toEqual({
+        event: { source: "orders", "detail-type": "OrderCreated", detail: "{}" },
+        message: "Order failed",
+        trace: "trace-1:2",
+        traceId: "trace-1",
+        traceStage: 2,
+      });
+      expect(merge.input.UpdateExpression).toBe(
+        "SET #attempts = :attempts, #createdAt = :createdAt, #migrated = :migrated, " +
+          "#f0 = :f0, #f1 = :f1, #f2 = :f2, #f3 = :f3, #f4 = :f4",
+      );
+    });
+
+    it("keeps a retry's target, without the earlier target's resourceId", async () => {
+      const { client, send } = stubClient([[v1Audit()]], isAuditPut, [
+        v2Audit({
+          ...given,
+          target: { app: "App1", type: "Order" },
+          resourceId: undefined,
+          scopes: new Set(["App1", "App1#Order", "*#Order"]),
+        }),
+      ]);
+
+      await migrate({ client, from: FROM, to: TO });
+
+      const [merge] = commands(send, UpdateItemCommand);
+      expect(Object.values(merge.input.ExpressionAttributeNames!)).not.toContain("resourceId");
+      expect(Object.values(merge.input.ExpressionAttributeNames!)).not.toContain("target");
     });
 
     it("merges again when an upsert changed it meanwhile", async () => {
