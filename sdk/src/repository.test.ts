@@ -1,6 +1,7 @@
 import type { Logger } from "@aws-lambda-powertools/logger";
 import {
   ConditionalCheckFailedException,
+  DeleteItemCommand,
   type DynamoDBClient,
   GetItemCommand,
   PutItemCommand,
@@ -814,7 +815,11 @@ describe("AuditRepository", () => {
 
         await retried();
 
-        const [, , read] = mockClient.send.mock.calls.map(([command]) => command);
+        const calls = mockClient.send.mock.calls.map(([command]) => command);
+        const read = calls.at(-1);
+        expect(calls.slice(-3, -1).every((command) => command instanceof PutItemCommand)).toBe(
+          true,
+        );
         expect(read).toBeInstanceOf(GetItemCommand);
         expect((read as GetItemCommand).input).toEqual({
           TableName: TABLE,
@@ -862,6 +867,70 @@ describe("AuditRepository", () => {
           },
         ]);
         expect(unmarshall(puts()[2].ExpressionAttributeValues ?? {})).toEqual({ ":revision": 3 });
+      });
+
+      const deletes = () =>
+        mockClient.send.mock.calls
+          .map(([command]) => command)
+          .filter((command) => command instanceof DeleteItemCommand)
+          .map(({ input }) => ({
+            key: unmarshall(input.Key!),
+            condition: input.ConditionExpression,
+            names: input.ExpressionAttributeNames,
+            values: unmarshall(input.ExpressionAttributeValues!),
+          }));
+
+      it("should delete a copy under a retry's target, which an earlier attempt listed", async () => {
+        readBack(undefined);
+
+        await retried();
+        // A first attempt has no earlier copy
+        await upsertRelated(upsertInput({ resources }), STORED);
+
+        expect(mockClient.send.mock.calls[0][0]).toBeInstanceOf(DeleteItemCommand);
+        expect(deletes()).toEqual([
+          {
+            key: { PK: "-#App1#Order#audit-123", SK: "related#App1#Order#order-1" },
+            // Not one a later upsert put
+            condition: "attribute_not_exists(#revision) OR #revision <= :revision",
+            names: { "#revision": "revision" },
+            values: { ":revision": 2 },
+          },
+        ]);
+      });
+
+      it("should delete the copy it put under the target an overlapping upsert gave the audit", async () => {
+        readBack(
+          storedAudit({
+            attempts: threeAttempts,
+            target: { app: App.TestApp, type: ResourceType.ORDER, id: "o" },
+          }),
+        );
+
+        await retried();
+
+        expect(mockClient.send.mock.calls.at(-1)?.[0]).toBeInstanceOf(DeleteItemCommand);
+        expect(deletes().map(({ key, values }) => ({ key, values }))).toEqual([
+          {
+            key: { PK: "-#App1#Order#audit-123", SK: "related#App1#Order#order-1" },
+            values: { ":revision": 2 },
+          },
+          {
+            key: { PK: "-#App1#Order#audit-123", SK: "related#TestApp#Order#o" },
+            values: { ":revision": 2 },
+          },
+        ]);
+      });
+
+      it("should leave a copy under the retry's target that a later upsert put", async () => {
+        readBack(undefined);
+        // The delete
+        mockClient.send.mockRejectedValueOnce(
+          new ConditionalCheckFailedException({ message: "Condition failed", $metadata: {} }),
+        );
+
+        await expect(retried()).resolves.toBeUndefined();
+        expect(puts()).toHaveLength(2);
       });
 
       it("should leave the copies when the audit was merged before its upsert, or is gone", async () => {

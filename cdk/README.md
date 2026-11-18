@@ -144,7 +144,7 @@ type CDKConfig = {
 
 ## Upgrading from 1.x
 
-2.0 stores audits in a new table, `{ENV}-{service}-Audit-v2`: the 1.x table's local secondary indexes can't be removed, and its listings couldn't sort by creation time. Upgrade `@flipboxlabs/aws-audit-cdk` and `@flipboxlabs/aws-audit-sdk` together, in every app that uses the SDK, since 2.0 reads and writes only the new table. An app that upserts audits with related resources also needs `dynamodb:GetItem` on the new table, as 2.0 reads an audit back once its copies are written (`table.grantReadWriteData` covers it).
+2.0 stores audits in a new table, `{ENV}-{service}-Audit-v2`: the 1.x table's local secondary indexes can't be removed, and its listings couldn't sort by creation time. Upgrade `@flipboxlabs/aws-audit-cdk` and `@flipboxlabs/aws-audit-sdk` together, in every app that uses the SDK, since 2.0 reads and writes only the new table. An app that upserts audits also needs `dynamodb:GetItem` and `dynamodb:DeleteItem` on the new table: 2.0 reads an audit back once its copies are written, and a retry deletes any copy under its own target. `table.grantReadWriteData` covers both.
 
 The config lists each app's resource types, replacing the separate `apps` and `resourceTypes` lists: `defineAuditConfig({ apps: { Orders: ["Order"] } })`, and the same `apps` for `ConfigLayerConstruct`. Names may hold only letters, digits, `-` and `_`. `GET /config` answers `apps` as that map, without `resourceTypes`.
 

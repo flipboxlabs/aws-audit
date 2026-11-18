@@ -110,7 +110,10 @@ writes shows the audit as stored, with them; a retry whose target has no id no
 longer lists under the earlier target's resource, and one with an empty `trace` no
 longer lists under the earlier trace. Once it writes the copies, `upsertItem`
 reads the audit back (`dynamodb:GetItem`, as well as `UpdateItem` and `PutItem`),
-in case the migration from 1.x merged it in the meantime.
+in case the migration from 1.x merged it in the meantime. A retry whose target
+has an id also deletes any copy under that target (`dynamodb:DeleteItem`), since
+an earlier attempt may have listed the resource as related and the audit now
+lists there itself.
 
 ```typescript
 const { items, pagination } = await service.listByStatus(

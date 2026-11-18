@@ -55,7 +55,7 @@ describe("CloudWatchConstruct", () => {
     });
   });
 
-  it("should let the subscription read an audit back, as well as write it", () => {
+  it("should let the subscription read an audit back and delete a stale copy, as well as write", () => {
     synth().hasResourceProperties("AWS::IAM::Policy", {
       PolicyDocument: {
         Statement: Match.arrayWith([
@@ -64,6 +64,7 @@ describe("CloudWatchConstruct", () => {
               "dynamodb:GetItem",
               "dynamodb:PutItem",
               "dynamodb:UpdateItem",
+              "dynamodb:DeleteItem",
             ]),
           }),
         ]),

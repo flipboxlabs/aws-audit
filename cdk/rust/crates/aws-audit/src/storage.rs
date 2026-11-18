@@ -9,6 +9,7 @@ use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::types::{AttributeValue, ReturnValue};
 use lambda_kit::clock::{Clock, SystemClock};
 use lambda_kit::logging::ErrorChain;
+use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::attribute::{Item, marshall_map, unmarshall, unmarshall_map};
@@ -353,14 +354,33 @@ impl AuditRepository {
     /// a 1.x audit into it since it was upserted, its copies are put again from the
     /// merged audit, at its revision. A merge rewrites the copies it finds, so a
     /// copy written after it, from the audit before it, would stay otherwise.
+    ///
+    /// A retry whose target is a resource an earlier attempt listed deletes that
+    /// copy, as the audit lists under its target itself; so does an upsert that put
+    /// a copy under the target a later, overlapping upsert gave the audit. Each
+    /// delete leaves a copy a later upsert put.
     pub async fn upsert_related<'a>(
         &self,
         audit: &Audit,
         related: impl IntoIterator<Item = &'a ResourceReference>,
     ) -> Result<(), StorageError> {
-        // One copy per resource, from its last listing
+        let key = primary_key(
+            audit.tenant_id.as_deref(),
+            &audit.target.app,
+            &audit.target.resource_type,
+            &audit.id,
+        )?;
+        let revision = audit.attempts.as_ref().map_or(0, Vec::len);
         let own =
             has_resource_id(audit.target.id.as_ref()).then(|| related_sort_key(&audit.target));
+
+        // A retry's target may be a resource an earlier attempt listed: the audit
+        // lists there itself now, so that copy goes
+        if let Some(own) = own.as_deref().filter(|_| revision > 1) {
+            self.delete_related(&key, own, revision).await?;
+        }
+
+        // One copy per resource, from its last listing
         let mut resources: Vec<(String, &ResourceReference)> = Vec::new();
         for resource in related
             .into_iter()
@@ -380,13 +400,6 @@ impl AuditRepository {
             return Ok(());
         }
 
-        let key = primary_key(
-            audit.tenant_id.as_deref(),
-            &audit.target.app,
-            &audit.target.resource_type,
-            &audit.id,
-        )?;
-        let revision = audit.attempts.as_ref().map_or(0, Vec::len);
         self.put_related(audit, &key, &resources, revision).await?;
 
         let output = self
@@ -400,21 +413,75 @@ impl AuditRepository {
         let Some(item) = output.item() else {
             return Ok(());
         };
-        let migrated = item
+        let current = unmarshall_map(item);
+        let target = current
+            .get("target")
+            .and_then(|target| ResourceReference::deserialize(target).ok())
+            .filter(|target| has_resource_id(target.id.as_ref()))
+            .map(|target| related_sort_key(&target));
+
+        let migrated = current
             .get(attributes::MIGRATED)
-            .and_then(|migrated| migrated.as_bool().ok())
-            .is_some_and(|migrated| *migrated);
-        let attempts = item
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let attempts = current
             .get("attempts")
-            .and_then(|attempts| attempts.as_l().ok())
+            .and_then(Value::as_array)
             .map_or(0, Vec::len);
         if migrated && attempts != revision {
-            let merged = parse_item(unmarshall_map(item))?;
-            self.put_related(&merged, &key, &resources, attempts)
-                .await?;
+            let current = parse_item(current)?;
+            let others: Vec<(String, &ResourceReference)> = resources
+                .iter()
+                .filter(|(sort_key, _)| target.as_ref() != Some(sort_key))
+                .cloned()
+                .collect();
+            self.put_related(&current, &key, &others, attempts).await?;
+        }
+        // An upsert since made one of these resources its target: the copy just put goes
+        if let Some(target) = target
+            .filter(|target| own.as_ref() != Some(target))
+            .filter(|target| resources.iter().any(|(sort_key, _)| sort_key == target))
+        {
+            self.delete_related(&key, &target, revision).await?;
         }
 
         Ok(())
+    }
+
+    /// Deletes the copy keyed `sort_key` in the audit's partition (`key`), under a
+    /// resource the audit now targets, unless a later upsert than `revision` put it.
+    async fn delete_related(
+        &self,
+        key: &Map<String, Value>,
+        sort_key: &str,
+        revision: usize,
+    ) -> Result<(), StorageError> {
+        let mut copy = key.clone();
+        copy.insert(
+            keys::SORT_KEY.to_owned(),
+            Value::String(sort_key.to_owned()),
+        );
+        let delete = self
+            .client
+            .delete_item()
+            .table_name(&self.table)
+            .set_key(Some(marshall_map(&copy)))
+            .condition_expression("attribute_not_exists(#revision) OR #revision <= :revision")
+            .expression_attribute_names("#revision", attributes::REVISION)
+            .expression_attribute_values(":revision", AttributeValue::N(revision.to_string()))
+            .send()
+            .await;
+        match delete {
+            // A later upsert put it
+            Err(error)
+                if error
+                    .as_service_error()
+                    .is_some_and(|error| error.is_conditional_check_failed_exception()) =>
+            {
+                Ok(())
+            }
+            result => result.map(|_| ()).map_err(Into::into),
+        }
     }
 
     /// Puts the copies of `audit`, keyed `key`, under `resources` (each with its

@@ -108,7 +108,13 @@ type StoredReply = {
  * The GetItem reply that reads an upsert's audit back once its copies are put: the
  * audit as stored, `migrated` when a migration merged a 1.x audit into it meanwhile
  */
-type ReadBackReply = { readBack: StoredReply["stored"] & { migrated?: true } };
+type ReadBackReply = {
+  readBack: StoredReply["stored"] & {
+    migrated?: true;
+    /** Fields an overlapping upsert changed since */
+    since?: Record<string, unknown>;
+  };
+};
 
 type Case = {
   name: string;
@@ -152,11 +158,13 @@ const storedReply = (
 /** What GetItem returns for the audit of an upsert of `input` (see {@link ReadBackReply}) */
 const readBackReply = (
   input: Record<string, unknown>,
-  { migrated, ...stored }: ReadBackReply["readBack"],
+  { migrated, since = {}, ...stored }: ReadBackReply["readBack"],
 ): Reply => {
   const { output } = storedReply(input, stored) as { output: { Attributes: object } };
   return {
-    output: { Item: { ...output.Attributes, ...(migrated ? marshall({ migrated }) : {}) } },
+    output: {
+      Item: { ...output.Attributes, ...marshall({ ...since, ...(migrated ? { migrated } : {}) }) },
+    },
   };
 };
 
@@ -380,10 +388,11 @@ const CASES: Case[] = [
   },
   {
     name: "upsert/retry",
-    description: "A second write of the same audit numbers its attempt with a follow-up UpdateItem",
+    description:
+      "A second write of the same audit numbers its attempt with a follow-up UpdateItem, and deletes any copy under its target, which an earlier attempt may have listed",
     operation: "upsertItem",
     args: [upsertInput({ status: "fail", error: "Still failing" })],
-    replies: [attempts(2, "2026-01-01T00:00:00.000Z"), { output: {} }, accepted()],
+    replies: [attempts(2, "2026-01-01T00:00:00.000Z"), { output: {} }, { output: {} }, accepted()],
   },
   {
     name: "upsert/tenant",
@@ -497,6 +506,7 @@ const CASES: Case[] = [
       attempts(2, "2026-01-01T00:00:00.000Z"),
       { output: {} },
       { output: {} },
+      { output: {} },
       { readBack: { count: 2, createdAt: "2026-01-01T00:00:00.000Z" } },
       accepted(),
     ],
@@ -517,6 +527,7 @@ const CASES: Case[] = [
     ],
     replies: [
       attempts(2, "2026-01-01T00:00:00.000Z"),
+      { output: {} },
       { output: {} },
       {
         error: {
@@ -548,6 +559,7 @@ const CASES: Case[] = [
       }),
       { output: {} },
       { output: {} },
+      { output: {} },
       {
         readBack: {
           count: 2,
@@ -573,12 +585,40 @@ const CASES: Case[] = [
       attempts(2, "2026-01-01T00:00:00.000Z"),
       { output: {} },
       { output: {} },
+      { output: {} },
       {
         readBack: {
           count: 3,
           createdAt: "2025-10-01T00:00:00.000Z",
           kept: { message: "From 1.x" },
           migrated: true,
+        },
+      },
+      { output: {} },
+      accepted(),
+    ],
+  },
+  {
+    name: "upsert/target-since",
+    description:
+      "When an overlapping upsert made one of its resources the audit's target (read back), the copy it put there is deleted, unless a later upsert put it",
+    operation: "upsertItem",
+    args: [
+      upsertInput({
+        status: "fail",
+        resources: [{ app: "App1", type: "Order", id: "order-2" }],
+      }),
+    ],
+    replies: [
+      attempts(2, "2026-01-01T00:00:00.000Z"),
+      { output: {} },
+      { output: {} },
+      { output: {} },
+      {
+        readBack: {
+          count: 3,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          since: { target: { app: "App1", type: "Order", id: "order-2" } },
         },
       },
       { output: {} },
@@ -599,7 +639,12 @@ const CASES: Case[] = [
       "A retry with an empty trace removes traceId and traceStage, so the audit lists under its earlier trace no more",
     operation: "upsertItem",
     args: [upsertInput({ trace: "" })],
-    replies: [attempts(2, "2026-01-01T00:00:00.000Z", { trace: "" }), { output: {} }, accepted()],
+    replies: [
+      attempts(2, "2026-01-01T00:00:00.000Z", { trace: "" }),
+      { output: {} },
+      { output: {} },
+      accepted(),
+    ],
   },
   {
     name: "upsert/edge-ids",

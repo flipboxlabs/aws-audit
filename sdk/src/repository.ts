@@ -1,5 +1,6 @@
 import type { Logger } from "@aws-lambda-powertools/logger";
 import {
+  DeleteItemCommand,
   DynamoDBClient,
   GetItemCommand,
   PutItemCommand,
@@ -773,6 +774,11 @@ export class AuditRepository<C extends AuditConfig> {
    * merged audit, at its revision. A merge rewrites the copies it finds, so a copy
    * written after it, from the audit before it, would stay otherwise.
    *
+   * A retry whose target is a resource an earlier attempt listed deletes that
+   * copy, as the audit lists under its target itself; so does an upsert that put
+   * a copy under the target a later, overlapping upsert gave the audit. Each
+   * delete leaves a copy a later upsert put.
+   *
    * @param audit - The audit as stored, from {@link upsertItem}
    * @param related - The resources the upsert listed in `resources`
    *
@@ -786,6 +792,21 @@ export class AuditRepository<C extends AuditConfig> {
     audit: AuditStorage,
     related: Iterable<ResourceReference> | undefined,
   ): Promise<void> {
+    const key = constructPrimaryKey({
+      tenantId: audit.tenantId,
+      id: audit.id,
+      resourceType: audit.target.type,
+      app: audit.target.app,
+    });
+    const revision = audit.attempts?.length ?? 0;
+    const own = hasResourceId(audit.target.id) ? relatedSortKey(audit.target) : undefined;
+
+    // A retry's target may be a resource an earlier attempt listed: the audit lists
+    // there itself now, so that copy goes
+    if (own && revision > 1) {
+      await this.deleteRelated(key, own, revision);
+    }
+
     // One copy per resource, from its last listing
     const resources = new Map(
       Array.from(related ?? [])
@@ -793,37 +814,56 @@ export class AuditRepository<C extends AuditConfig> {
         .map((resource) => [relatedSortKey(resource), resource]),
     );
     // The audit lists under its own target already
-    if (hasResourceId(audit.target.id)) {
-      resources.delete(relatedSortKey(audit.target));
-    }
+    if (own) resources.delete(own);
     if (resources.size === 0) return;
 
-    const revision = audit.attempts?.length ?? 0;
     await this.putRelated(audit, resources.values(), revision);
 
     const { Item: item } = await this.client.send(
       new GetItemCommand({
         TableName: DynamoDB.Table.Name(),
-        Key: marshall(
-          constructPrimaryKey({
-            tenantId: audit.tenantId,
-            id: audit.id,
-            resourceType: audit.target.type,
-            app: audit.target.app,
-          }),
-          MARSHALL_OPTIONS,
-        ),
+        Key: marshall(key, MARSHALL_OPTIONS),
         ConsistentRead: true,
       }),
     );
-    const current = item && unmarshall(item);
-    const attempts = (current?.attempts as unknown[] | undefined)?.length ?? 0;
-    if (current?.[Attributes.MIGRATED] && attempts !== revision) {
+    if (!item) return;
+    const current = unmarshall(item);
+    const target = current.target as ResourceReference;
+    const targetKey = hasResourceId(target.id) ? relatedSortKey(target) : undefined;
+
+    const attempts = (current.attempts as unknown[] | undefined)?.length ?? 0;
+    if (current[Attributes.MIGRATED] && attempts !== revision) {
       await this.putRelated(
         AuditStorageSchema.parse(withoutNulls(current)),
-        resources.values(),
+        Array.from(resources).flatMap(([sortKey, resource]) =>
+          sortKey === targetKey ? [] : [resource],
+        ),
         attempts,
       );
+    }
+    // An upsert since made one of these resources its target: the copy just put goes
+    if (targetKey && targetKey !== own && resources.has(targetKey)) {
+      await this.deleteRelated(key, targetKey, revision);
+    }
+  }
+
+  /**
+   * Deletes the copy under a resource the audit keyed `key` now targets, unless a
+   * later upsert than `revision` put it.
+   */
+  private async deleteRelated(key: DynamoDBPrimaryKey, sortKey: string, revision: number) {
+    try {
+      await this.client.send(
+        new DeleteItemCommand({
+          TableName: DynamoDB.Table.Name(),
+          Key: marshall({ ...key, [Keys.SORT_KEY]: sortKey }, MARSHALL_OPTIONS),
+          ConditionExpression: "attribute_not_exists(#revision) OR #revision <= :revision",
+          ExpressionAttributeNames: { "#revision": Attributes.REVISION },
+          ExpressionAttributeValues: marshall({ ":revision": revision }),
+        }),
+      );
+    } catch (error) {
+      if ((error as Error | undefined)?.name !== "ConditionalCheckFailedException") throw error;
     }
   }
 
