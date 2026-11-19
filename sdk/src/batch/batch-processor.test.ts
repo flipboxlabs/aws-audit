@@ -237,6 +237,30 @@ describe("AuditBatchProcessor", () => {
       });
     });
 
+    it("should record the configured event bus with the event", () => {
+      const onBus = new AuditBatchProcessor(EventType.SQS, mockAudits, createAuditItem, {
+        eventBusName: "PROD-Global",
+      });
+      const record = createMockSQSRecord({
+        detail: { orderId: "12345" },
+        "detail-type": "OrderEvent",
+        source: "orders.service",
+      });
+
+      onBus.failureHandler(record, new Error("Order processing failed"));
+
+      expect(createAuditItem).toHaveBeenCalledWith(record, {
+        status: Status.FAIL,
+        event: {
+          detail: { orderId: "12345" },
+          "detail-type": "OrderEvent",
+          source: "orders.service",
+          eventBusName: "PROD-Global",
+        },
+        message: "Order processing failed",
+      });
+    });
+
     it("should handle errors with custom properties", () => {
       const record = createMockSQSRecord();
       const error = new Error("Custom error");

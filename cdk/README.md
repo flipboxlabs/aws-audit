@@ -118,6 +118,19 @@ Every listing takes `filter[operation]` (an exact operation name) and `filter[ti
 
 Every route runs as a prebuilt Rust binary, like the subscription Lambda. Every route answers errors as `{statusCode, error, message}`, and a `422` lists each invalid input under `details.issues`, with its location as `path` (e.g. `["query", "filter[app]"]`).
 
+A rerun puts the event on the bus it recorded as `event.eventBusName`, or on the audit event bus when it recorded none. The SDK's `AuditBatchProcessor` records the bus given as its `eventBusName` option (`process_batch_from_bus` in Rust). A recorded bus must be the audit event bus or one of `rerunEventBuses`, the buses the rerun Lambda may put events on; any other is a `400`. A bus recorded by name is the one in the stack's account and region. Record a bus in another account by ARN, and give it a resource policy that lets the stack's account put events on it.
+
+```typescript
+new RestAPI(this, "RestAPI", {
+  config: props.config,
+  lambda: { layers: [auditConfigLayer.layer] },
+  table,
+  eventBus,
+  // The buses your apps' rules listen on, so a rerun reaches them
+  rerunEventBuses: [events.EventBus.fromEventBusName(this, "GlobalBus", "PROD-v1-Global")],
+});
+```
+
 `GET /config` reads the config layer only, so its Lambda has no DynamoDB or EventBridge permissions. Its `version` comes from this package's `package.json` at synth time. Deployments from before the route was added answer `GET /config` with a `403` `{"message":"Missing Authentication Token"}` (API Gateway's response for an unknown route), not a `404`.
 
 > **Upgrading:** `RestApiConstruct` always adds a `/config` resource at the API root. If your stack already adds its own `config` resource to `restApi.root`, synth fails after upgrading, with a duplicate construct or path error. Rename or remove your route before upgrading.

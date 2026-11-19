@@ -11,6 +11,11 @@ type Props = {
   config: CDKConfig;
   table: dynamodb.ITable;
   eventBus: events.IEventBus;
+  /**
+   * Buses a rerun may send an event to when the event recorded one, besides the
+   * audit event bus (an event that recorded none goes to that).
+   */
+  rerunEventBuses?: events.IEventBus[];
   /** Lambda configuration */
   lambda: {
     /** Lambda layers to attach to the function */
@@ -46,8 +51,13 @@ export default class extends Construct {
     // Audit (it reads the audit, then sends its event)
     props.table.grantReadData(lambdaFn);
 
-    // Put events
-    props.eventBus.grantPutEventsTo(lambdaFn);
+    // Put events: on the audit bus, and on any bus an event recorded, which must be
+    // one of these (the Lambda resolves a recorded bus against RERUN_EVENT_BUSES)
+    const buses = [props.eventBus, ...(props.rerunEventBuses ?? [])];
+    for (const bus of buses) {
+      bus.grantPutEventsTo(lambdaFn);
+    }
+    lambdaFn.addEnvironment("RERUN_EVENT_BUSES", buses.map((bus) => bus.eventBusArn).join(","));
 
     // Integration
     const integration = new apigateway.LambdaIntegration(lambdaFn);

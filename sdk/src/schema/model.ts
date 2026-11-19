@@ -31,6 +31,11 @@ export const EventBridgeEventSchema = z.object({
   source: z.string().optional(),
   /** The type/category of the event */
   "detail-type": z.string().optional(),
+  /**
+   * The bus the event was put on, as a name or ARN, so a rerun sends it there
+   * again. A rerun of an event without one goes to the audit event bus.
+   */
+  eventBusName: z.string().optional(),
   /** Event payload - objects are automatically JSON stringified */
   detail: z
     .union([z.string(), z.record(z.string(), z.any())])

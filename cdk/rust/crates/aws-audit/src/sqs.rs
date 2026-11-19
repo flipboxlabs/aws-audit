@@ -79,7 +79,34 @@ pub fn audit_for(message: &SqsMessage, mut audit: LogAudit) -> LogAudit {
 /// An audit without an id takes the message id, so a retried message adds an
 /// attempt to the same audit. Enable `ReportBatchItemFailures` on the event source
 /// mapping for SQS to act on the response.
+///
+/// A failure's event records no bus, so a rerun sends it to the audit event bus;
+/// [`process_batch_from_bus`] records the bus the messages came from.
 pub async fn process_batch<E: fmt::Display>(
+    audits: &mut Audits,
+    batch: &SqsEvent,
+    audit: impl Fn(&SqsMessage) -> LogAudit,
+    handler: impl AsyncFn(&SqsMessage, &mut LogAudit) -> Result<(), E>,
+) -> SqsBatchResponse {
+    process(None, audits, batch, audit, handler).await
+}
+
+/// [`process_batch`] for messages an EventBridge rule on `event_bus_name` sent: a
+/// failure's event records the bus, by name or ARN, so a rerun puts it on that bus
+/// again (`AuditBatchProcessor`'s `eventBusName` option). Name a bus in another
+/// account than the audit stack's by ARN.
+pub async fn process_batch_from_bus<E: fmt::Display>(
+    event_bus_name: &str,
+    audits: &mut Audits,
+    batch: &SqsEvent,
+    audit: impl Fn(&SqsMessage) -> LogAudit,
+    handler: impl AsyncFn(&SqsMessage, &mut LogAudit) -> Result<(), E>,
+) -> SqsBatchResponse {
+    process(Some(event_bus_name), audits, batch, audit, handler).await
+}
+
+async fn process<E: fmt::Display>(
+    event_bus_name: Option<&str>,
     audits: &mut Audits,
     batch: &SqsEvent,
     audit: impl Fn(&SqsMessage) -> LogAudit,
@@ -107,7 +134,10 @@ pub async fn process_batch<E: fmt::Display>(
             Err(error) => {
                 let error = error.to_string();
                 item.status = Status::Fail;
-                item.event = event(message);
+                item.event = event(message).map(|mut event| {
+                    event.event_bus_name = event_bus_name.map(str::to_owned);
+                    event
+                });
                 item.append_message(&error);
                 item.error = Some(error);
 
@@ -284,8 +314,44 @@ mod tests {
         assert_eq!(lines[1]["message"], "Processing Boom");
         assert_eq!(lines[1]["error"], "Boom");
         assert_eq!(lines[1]["event"]["detail-type"], "OrderCreated");
+        assert_eq!(lines[1]["event"].get("eventBusName"), None);
         assert_eq!(lines[1]["trace"], "xray");
         assert_eq!(lines[2]["status"], "skip");
+    }
+
+    #[tokio::test]
+    async fn records_the_bus_with_a_failures_event() {
+        let out = Captured::default();
+        let mut audits = Audits::new(Arc::new(AuditConfig::new([("App1", ["Order"])])))
+            .with_writer(out.clone())
+            .with_disabled(false);
+        let mut batch = SqsEvent::default();
+        batch.records = vec![
+            message("m-1", event_body(None), "1"),
+            message("m-2", event_body(None), "1"),
+        ];
+
+        process_batch_from_bus(
+            "PROD-Global",
+            &mut audits,
+            &batch,
+            |_| LogAudit::new("processOrder", ResourceReference::new("App1", "Order")),
+            async |message: &SqsMessage, _: &mut LogAudit| match message.message_id.as_deref() {
+                Some("m-2") => Err("Boom"),
+                _ => Ok(()),
+            },
+        )
+        .await;
+        audits.publish();
+
+        let lines: Vec<Value> = String::from_utf8(out.0.lock().unwrap().clone())
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap()["_audit"].clone())
+            .collect();
+        assert_eq!(lines[0].get("event"), None);
+        assert_eq!(lines[1]["event"]["eventBusName"], "PROD-Global");
+        assert_eq!(lines[1]["event"]["source"], "orders");
     }
 
     #[tokio::test]

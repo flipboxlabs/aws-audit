@@ -8,7 +8,7 @@ use aws_audit::events::AuditEventBus;
 use aws_audit::names::resource_names_from_env;
 use aws_audit::service::AuditService;
 use aws_audit::storage::AuditRepository;
-use rerun::{State, router};
+use rerun::{RerunBuses, State, router};
 
 #[tokio::main]
 async fn main() -> Result<(), lambda_kit::http::RuntimeError> {
@@ -28,6 +28,7 @@ async fn main() -> Result<(), lambda_kit::http::RuntimeError> {
         config,
         service,
         events,
+        buses: RerunBuses::from_env(),
     }))
     .await
 }

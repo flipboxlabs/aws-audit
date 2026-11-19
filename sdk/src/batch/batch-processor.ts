@@ -27,6 +27,19 @@ export type MessageWithAuditOverride = {
 };
 
 /**
+ * Options for an {@link AuditBatchProcessor}.
+ */
+export type AuditBatchProcessorOptions = {
+  /**
+   * The event bus, by name or ARN, whose rule sends the records. It's recorded
+   * with a failed record's event, so a rerun puts the event on that bus again;
+   * without it, a rerun goes to the audit event bus. A bus in another account
+   * than the audit stack's must be given by ARN.
+   */
+  eventBusName?: string;
+};
+
+/**
  * Extended batch processor that automatically creates audit log entries
  * for each record processed in a batch operation.
  *
@@ -44,24 +57,31 @@ export type MessageWithAuditOverride = {
  *     operation: 'processMessage',
  *     target: { app: 'MyApp', type: 'Message' },
  *     ...overrides,
- *   })
+ *   }),
+ *   { eventBusName: 'PROD-Global' },
  * );
  * ```
  */
 export class AuditBatchProcessor<Record extends EventSourceDataClassTypes> extends BatchProcessor {
+  /** The bus recorded with a failed record's event (see {@link AuditBatchProcessorOptions}) */
+  readonly eventBusName?: string;
+
   /**
    * Creates a new AuditBatchProcessor instance.
    *
    * @param eventType - The type of event source (SQS, Kinesis, or DynamoDB)
    * @param audit - The Audits instance used to collect and publish audit logs
    * @param createAuditItem - Factory function that creates an audit log entry from a record
+   * @param options - The event bus a rerun of a failed record goes to
    */
   public constructor(
     eventType: keyof typeof EventType,
     readonly audit: Audits<AuditConfig>,
     readonly createAuditItem: (record: Record, overrides?: Partial<LogAuditInput>) => LogAuditInput,
+    { eventBusName }: AuditBatchProcessorOptions = {},
   ) {
     super(eventType);
+    this.eventBusName = eventBusName;
   }
 
   /**
@@ -109,7 +129,8 @@ export class AuditBatchProcessor<Record extends EventSourceDataClassTypes> exten
    *
    * Called automatically by the batch processor when a record handler
    * throws an error. Creates an audit entry with FAIL status, includes
-   * the original event data for debugging, and captures the error details.
+   * the original event data for debugging and rerunning, with the configured
+   * event bus, and captures the error details.
    *
    * The audit ID is automatically set from the record's unique identifier
    * (messageId for SQS, eventID for Kinesis/DynamoDB) to enable retry correlation.
@@ -119,9 +140,11 @@ export class AuditBatchProcessor<Record extends EventSourceDataClassTypes> exten
    * @returns The failure response from the parent BatchProcessor
    */
   public failureHandler(record: Record, error: Error): FailureResponse {
+    const event = normalizeEventBridgetEventBody(this.eventType, record);
+    const { eventBusName } = this;
     const auditItem = this.createAuditItem(record, {
       status: Status.FAIL,
-      event: normalizeEventBridgetEventBody(this.eventType, record),
+      event: event && eventBusName ? { ...event, eventBusName } : event,
       message: error.message,
     });
 

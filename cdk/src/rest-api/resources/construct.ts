@@ -13,6 +13,11 @@ interface Props {
   config: CDKConfig;
   table: dynamodb.ITable;
   eventBus: events.IEventBus;
+  /**
+   * Buses a rerun may send an event to when the event recorded one, besides the
+   * audit event bus (an event that recorded none goes to that).
+   */
+  rerunEventBuses?: events.IEventBus[];
   /** Lambda configuration */
   lambda: {
     /** Lambda layers to attach to the function */

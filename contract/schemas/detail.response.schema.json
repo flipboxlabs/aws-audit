@@ -105,6 +105,9 @@
         "detail-type": {
           "type": "string"
         },
+        "eventBusName": {
+          "type": "string"
+        },
         "detail": {}
       },
       "required": [

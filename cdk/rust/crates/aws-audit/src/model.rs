@@ -313,6 +313,14 @@ pub struct EventBridgeEvent {
         skip_serializing_if = "Option::is_none"
     )]
     pub detail_type: Option<String>,
+    /// The bus the event was put on, as a name or ARN, so a rerun sends it there
+    /// again. A rerun of an event without one goes to the audit event bus.
+    #[serde(
+        rename = "eventBusName",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub event_bus_name: Option<String>,
     /// The event's detail, as a JSON string. An object is stringified; a string is
     /// kept byte for byte, since a rerun re-sends it as is.
     #[serde(
