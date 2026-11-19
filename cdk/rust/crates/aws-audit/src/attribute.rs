@@ -11,45 +11,24 @@ use crate::js;
 /// A DynamoDB item or key.
 pub type Item = HashMap<String, AttributeValue>;
 
-/// How to marshall, mirroring `marshall`'s options.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Marshall {
-    /// Write empty strings as `NULL` (`convertEmptyValues`).
-    pub convert_empty_values: bool,
+/// `marshall` for one value. An empty string stays one, so a value reads back as
+/// it was written (the SDK doesn't set `convertEmptyValues`).
+pub fn marshall(value: &Value) -> AttributeValue {
+    match value {
+        Value::Null => AttributeValue::Null(true),
+        Value::Bool(value) => AttributeValue::Bool(*value),
+        Value::Number(number) => AttributeValue::N(js::number_to_string(number)),
+        Value::String(text) => AttributeValue::S(text.clone()),
+        Value::Array(items) => AttributeValue::L(items.iter().map(marshall).collect()),
+        Value::Object(map) => AttributeValue::M(marshall_map(map)),
+    }
 }
 
-impl Marshall {
-    /// `marshall(value)` with no options.
-    pub const PLAIN: Marshall = Marshall {
-        convert_empty_values: false,
-    };
-
-    /// `marshall(value, { convertEmptyValues: true, … })`, as the SDK writes items.
-    pub const ITEM: Marshall = Marshall {
-        convert_empty_values: true,
-    };
-
-    /// One value.
-    pub fn value(self, value: &Value) -> AttributeValue {
-        match value {
-            Value::Null => AttributeValue::Null(true),
-            Value::Bool(value) => AttributeValue::Bool(*value),
-            Value::Number(number) => AttributeValue::N(js::number_to_string(number)),
-            Value::String(text) if text.is_empty() && self.convert_empty_values => {
-                AttributeValue::Null(true)
-            }
-            Value::String(text) => AttributeValue::S(text.clone()),
-            Value::Array(items) => AttributeValue::L(items.iter().map(|v| self.value(v)).collect()),
-            Value::Object(map) => AttributeValue::M(self.map(map)),
-        }
-    }
-
-    /// An object's entries.
-    pub fn map(self, map: &Map<String, Value>) -> Item {
-        map.iter()
-            .map(|(key, value)| (key.clone(), self.value(value)))
-            .collect()
-    }
+/// `marshall` for an object's entries.
+pub fn marshall_map(map: &Map<String, Value>) -> Item {
+    map.iter()
+        .map(|(key, value)| (key.clone(), marshall(value)))
+        .collect()
 }
 
 /// `unmarshall` for one value. Numbers become JavaScript numbers: integers when
@@ -110,7 +89,7 @@ mod tests {
         let Value::Object(map) = value else {
             unreachable!()
         };
-        let item = Marshall::PLAIN.map(&map);
+        let item = marshall_map(&map);
 
         assert_eq!(item["s"], AttributeValue::S("a".into()));
         assert_eq!(item["n"], AttributeValue::N("1".into()));
@@ -127,12 +106,12 @@ mod tests {
     }
 
     #[test]
-    fn converts_empty_strings_only_when_asked() {
+    fn keeps_empty_strings() {
+        assert_eq!(marshall(&json!("")), AttributeValue::S(String::new()));
         assert_eq!(
-            Marshall::PLAIN.value(&json!("")),
-            AttributeValue::S(String::new())
+            unmarshall(&marshall(&json!({ "note": "" }))),
+            json!({ "note": "" })
         );
-        assert_eq!(Marshall::ITEM.value(&json!("")), AttributeValue::Null(true));
     }
 
     #[test]

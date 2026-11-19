@@ -1,11 +1,11 @@
 {
-  "description": "Audits of a resource type, newest first by tier; LastEvaluatedKey becomes nextToken",
+  "description": "Summaries of a resource type's audits and related copies, newest first; LastEvaluatedKey becomes nextToken",
   "operation": "listObjects",
   "args": [
     {
-      "app": "App1",
+      "app": "TestApp",
       "resource": {
-        "type": "Order"
+        "type": "User"
       }
     }
   ],
@@ -14,34 +14,51 @@
       "service": "DynamoDB",
       "command": "Query",
       "input": {
+        "TableName": "TEST-Contract-Audit-v2",
+        "IndexName": "ByType",
         "ScanIndexForward": false,
-        "IndexName": "LSI1_N",
+        "KeyConditionExpression": "#k0 = :k0 AND #k1 = :k1 AND #k2 = :k2",
+        "ExpressionAttributeNames": {
+          "#k0": "tenantKey",
+          "#k1": "app",
+          "#k2": "resourceType"
+        },
         "ExpressionAttributeValues": {
-          ":PK": {
-            "S": "App1.Order"
+          ":k0": {
+            "S": "-"
+          },
+          ":k1": {
+            "S": "TestApp"
+          },
+          ":k2": {
+            "S": "User"
           }
         },
-        "ExpressionAttributeNames": {
-          "#PK": "PK"
-        },
-        "KeyConditionExpression": "#PK=:PK",
-        "TableName": "TEST-Contract-Audit",
         "Limit": 100
       },
       "output": {
         "Items": [
           {
             "PK": {
-              "S": "App1.Order"
+              "S": "-#App1#Order#audit-1"
             },
             "SK": {
-              "S": "audit-1"
+              "S": "related#TestApp#User#user-1"
+            },
+            "tenantKey": {
+              "S": "-"
+            },
+            "app": {
+              "S": "TestApp"
+            },
+            "resourceType": {
+              "S": "User"
+            },
+            "createdAt": {
+              "S": "2026-01-02T03:04:05.678Z"
             },
             "id": {
               "S": "audit-1"
-            },
-            "operation": {
-              "S": "createOrder"
             },
             "status": {
               "S": "success"
@@ -49,7 +66,23 @@
             "tier": {
               "N": "2"
             },
+            "operation": {
+              "S": "createOrder"
+            },
             "target": {
+              "M": {
+                "app": {
+                  "S": "TestApp"
+                },
+                "type": {
+                  "S": "User"
+                },
+                "id": {
+                  "S": "user-1"
+                }
+              }
+            },
+            "source": {
               "M": {
                 "app": {
                   "S": "App1"
@@ -62,29 +95,35 @@
                 }
               }
             },
-            "createdAt": {
-              "S": "2026-01-02T03:04:05.678Z"
+            "trace": {
+              "S": "trace-1:2"
             },
             "updatedAt": {
               "S": "2026-01-02T03:04:05.678Z"
-            },
-            "LSI1_N_SK": {
-              "N": "21767323445678"
-            },
-            "trace": {
-              "S": "trace-1"
             }
           }
         ],
         "LastEvaluatedKey": {
           "PK": {
-            "S": "App1.Order"
+            "S": "-#App1#Order#audit-1"
           },
           "SK": {
-            "S": "audit-1"
+            "S": "related#TestApp#User#user-1"
           },
-          "LSI1_N_SK": {
-            "N": "21767323445678"
+          "tenantKey": {
+            "S": "-"
+          },
+          "app": {
+            "S": "TestApp"
+          },
+          "resourceType": {
+            "S": "User"
+          },
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "id": {
+            "S": "audit-1"
           }
         }
       }
@@ -96,19 +135,24 @@
         "id": "audit-1",
         "status": "success",
         "tier": 2,
+        "operation": "createOrder",
         "target": {
+          "app": "TestApp",
+          "id": "user-1",
+          "type": "User"
+        },
+        "source": {
           "app": "App1",
           "id": "order-1",
           "type": "Order"
         },
-        "operation": "createOrder",
-        "trace": "trace-1",
-        "updatedAt": "2026-01-02T03:04:05.678Z",
-        "createdAt": "2026-01-02T03:04:05.678Z"
+        "trace": "trace-1:2",
+        "createdAt": "2026-01-02T03:04:05.678Z",
+        "updatedAt": "2026-01-02T03:04:05.678Z"
       }
     ],
     "pagination": {
-      "nextToken": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJMU0kxX05fU0siOjIxNzY3MzIzNDQ1Njc4fQ"
+      "nextToken": "eyJQSyI6Ii0jQXBwMSNPcmRlciNhdWRpdC0xIiwiU0siOiJyZWxhdGVkI1Rlc3RBcHAjVXNlciN1c2VyLTEiLCJ0ZW5hbnRLZXkiOiItIiwiYXBwIjoiVGVzdEFwcCIsInJlc291cmNlVHlwZSI6IlVzZXIiLCJjcmVhdGVkQXQiOiIyMDI2LTAxLTAyVDAzOjA0OjA1LjY3OFoiLCJpZCI6ImF1ZGl0LTEifQ"
     }
   }
 }

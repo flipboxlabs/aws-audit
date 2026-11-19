@@ -80,8 +80,7 @@ export type StrictLogAuditInput<C extends AuditConfig> = Omit<
  * @example
  * ```typescript
  * const config = defineAuditConfig({
- *   apps: ['Orders', 'Inventory'] as const,
- *   resourceTypes: ['Order', 'Product'] as const,
+ *   apps: { Orders: ['Order'], Inventory: ['Product'] },
  * });
  *
  * const audits = new Audits({ config });
@@ -125,10 +124,15 @@ export class Audits<C extends AuditConfig> {
   };
 
   /**
-   * X-Ray trace ID from the Lambda environment, if available.
+   * The current invocation's X-Ray trace ID, if available.
    * Automatically injected into audit entries that don't have a trace ID.
+   *
+   * Read when it's used: the runtime sets it per invocation, and an instance
+   * usually outlives one.
    */
-  readonly traceId: string | undefined;
+  get traceId(): string | undefined {
+    return getXRayTraceIdFromEnv();
+  }
 
   /**
    * Buffer of audit entries waiting to be published.
@@ -156,8 +160,6 @@ export class Audits<C extends AuditConfig> {
     this.setDisabled();
     this.logger = options.logger || this.console;
     this.config = options.config;
-
-    this.traceId = getXRayTraceIdFromEnv();
   }
 
   /**
@@ -225,10 +227,11 @@ export class Audits<C extends AuditConfig> {
   public publishStoredAudits(): void {
     if (!this.disabled) {
       const schema = createTypedLogAuditSchema(this.config.schemas.resourceReference);
+      const traceId = this.traceId;
 
       this.storedAudits.forEach((item) => {
         if (!item.trace) {
-          item.trace = this.traceId;
+          item.trace = traceId;
         }
 
         this.console.log(

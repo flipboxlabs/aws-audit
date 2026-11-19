@@ -58,3 +58,30 @@ export class InvalidNextTokenError extends Error {
     this.name = "InvalidNextTokenError";
   }
 }
+
+/**
+ * Thrown by the listings when the tenant id is `-`, the key of audits without a
+ * tenant: the listing would return those audits as that tenant's. Writes refuse
+ * the tenant id with a validation error instead.
+ *
+ * The listing is not queried. Answer it as a client error.
+ */
+export class ReservedTenantError extends TypeError {
+  public constructor(message = 'Tenant id "-" is reserved for audits without a tenant') {
+    super(message);
+    this.name = "ReservedTenantError";
+  }
+}
+
+/**
+ * Thrown by the status and trace listings when a resource id filter is given
+ * without its app and resource type: an id alone could name resources of any type.
+ *
+ * The listing is not queried. Answer it as a client error.
+ */
+export class InvalidResourceFilterError extends TypeError {
+  public constructor(message = "A resource id filter needs an app and a resource type") {
+    super(message);
+    this.name = "InvalidResourceFilterError";
+  }
+}

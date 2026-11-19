@@ -1,9 +1,12 @@
 {
-  "description": "Audits of one resource",
+  "description": "Summaries of one resource's audits, newest first; filter[tier] keeps one tier's",
   "route": "GET /apps/{app}/objects/{object}/{item}",
   "request": {
     "method": "GET",
-    "path": "/apps/App1/objects/Order/order-1"
+    "path": "/apps/App1/objects/Order/order-1",
+    "query": {
+      "filter[tier]": "2"
+    }
   },
   "calls": [
     {
@@ -11,27 +14,44 @@
       "command": "Query",
       "input": {
         "ScanIndexForward": false,
-        "IndexName": "GSI1_SS",
+        "IndexName": "ByResource",
         "ExpressionAttributeValues": {
-          ":PK": {
-            "S": "App1.Order#order-1"
+          ":k0": {
+            "S": "-"
+          },
+          ":k1": {
+            "S": "App1"
+          },
+          ":k2": {
+            "S": "Order"
+          },
+          ":k3": {
+            "S": "order-1"
+          },
+          ":tier": {
+            "N": "2"
           }
         },
         "ExpressionAttributeNames": {
-          "#PK": "GSI1_SS_PK"
+          "#k0": "tenantKey",
+          "#k1": "app",
+          "#k2": "resourceType",
+          "#k3": "resourceId",
+          "#tier": "tier"
         },
-        "KeyConditionExpression": "#PK=:PK",
-        "TableName": "TEST-Contract-Audit",
-        "Limit": 100
+        "KeyConditionExpression": "#k0 = :k0 AND #k1 = :k1 AND #k2 = :k2 AND #k3 = :k3",
+        "TableName": "TEST-Contract-Audit-v2",
+        "Limit": 100,
+        "FilterExpression": "#tier = :tier"
       },
       "output": {
         "Items": [
           {
             "PK": {
-              "S": "App1.Order"
+              "S": "-#App1#Order#audit-1"
             },
             "SK": {
-              "S": "audit-1"
+              "S": "audit"
             },
             "id": {
               "S": "audit-1"
@@ -64,11 +84,17 @@
             "updatedAt": {
               "S": "2026-01-02T03:04:05.678Z"
             },
-            "GSI1_SS_PK": {
-              "S": "App1.Order#order-1"
+            "tenantKey": {
+              "S": "-"
             },
-            "GSI1_SS_SK": {
-              "S": "audit-1"
+            "app": {
+              "S": "App1"
+            },
+            "resourceType": {
+              "S": "Order"
+            },
+            "resourceId": {
+              "S": "order-1"
             }
           }
         ]

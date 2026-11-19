@@ -1,5 +1,5 @@
 {
-  "description": "Each additional resource gets a copy written with BatchWriteItem",
+  "description": "Each related resource with an id gets a summary copy in the audit's partition, put as the audit's attempt count (revision) over none of a later one",
   "operation": "upsertItem",
   "args": [
     {
@@ -13,6 +13,7 @@
         "id": "order-1"
       },
       "trace": "trace-1",
+      "message": "Order created",
       "resources": [
         {
           "app": "TestApp",
@@ -23,6 +24,10 @@
           "app": "App1",
           "type": "Unknown",
           "id": 7
+        },
+        {
+          "app": "App1",
+          "type": "User"
         }
       ],
       "event": {
@@ -37,34 +42,36 @@
       "service": "DynamoDB",
       "command": "UpdateItem",
       "input": {
-        "TableName": "TEST-Contract-Audit",
+        "TableName": "TEST-Contract-Audit-v2",
         "Key": {
           "PK": {
-            "S": "App1.Order"
+            "S": "-#App1#Order#audit-1"
           },
           "SK": {
-            "S": "audit-1"
+            "S": "audit"
           }
         },
-        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #trace = :trace, #event = :event, #updatedAt = :updatedAt, #LSI1_N_SK = :LSI1_N_SK, #GSI1_SS_PK = :GSI1_SS_PK, #GSI1_SS_SK = :GSI1_SS_SK, #GSI1_SN_PK = :GSI1_SN_PK, #GSI1_SN_SK = :GSI1_SN_SK, #GSI2_SS_PK = :GSI2_SS_PK, #GSI2_SS_SK = :GSI2_SS_SK, #ttl = :ttl",
+        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #message = :message, #trace = :trace, #event = :event, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #traceId = :traceId, #traceStage = :traceStage, #ttl = :ttl ADD #scopes :scopes",
         "ExpressionAttributeNames": {
           "#attempts": "attempts",
           "#createdAt": "createdAt",
+          "#scopes": "scopes",
           "#id": "id",
           "#status": "status",
           "#tier": "tier",
           "#target": "target",
           "#operation": "operation",
+          "#message": "message",
           "#trace": "trace",
           "#event": "event",
           "#updatedAt": "updatedAt",
-          "#LSI1_N_SK": "LSI1_N_SK",
-          "#GSI1_SS_PK": "GSI1_SS_PK",
-          "#GSI1_SS_SK": "GSI1_SS_SK",
-          "#GSI1_SN_PK": "GSI1_SN_PK",
-          "#GSI1_SN_SK": "GSI1_SN_SK",
-          "#GSI2_SS_PK": "GSI2_SS_PK",
-          "#GSI2_SS_SK": "GSI2_SS_SK",
+          "#tenantKey": "tenantKey",
+          "#app": "app",
+          "#resourceType": "resourceType",
+          "#resourceId": "resourceId",
+          "#kind": "kind",
+          "#traceId": "traceId",
+          "#traceStage": "traceStage",
           "#ttl": "ttl"
         },
         "ExpressionAttributeValues": {
@@ -86,6 +93,22 @@
                   }
                 }
               }
+            ]
+          },
+          ":scopes": {
+            "SS": [
+              "App1",
+              "App1#Order",
+              "*#Order",
+              "App1#Order#order-1",
+              "TestApp",
+              "TestApp#User",
+              "*#User",
+              "TestApp#User#user-1",
+              "App1#Unknown",
+              "*#Unknown",
+              "App1#Unknown#7",
+              "App1#User"
             ]
           },
           ":id": {
@@ -113,6 +136,9 @@
           ":operation": {
             "S": "createOrder"
           },
+          ":message": {
+            "S": "Order created"
+          },
           ":trace": {
             "S": "trace-1"
           },
@@ -135,26 +161,26 @@
           ":createdAt": {
             "S": "2026-01-02T03:04:05.678Z"
           },
-          ":LSI1_N_SK": {
-            "N": "21767323045678"
+          ":tenantKey": {
+            "S": "-"
           },
-          ":GSI1_SS_PK": {
-            "S": "App1.Order#order-1"
+          ":app": {
+            "S": "App1"
           },
-          ":GSI1_SS_SK": {
-            "S": "audit-1"
+          ":resourceType": {
+            "S": "Order"
           },
-          ":GSI1_SN_PK": {
+          ":resourceId": {
+            "S": "order-1"
+          },
+          ":kind": {
+            "S": "audit"
+          },
+          ":traceId": {
             "S": "trace-1"
           },
-          ":GSI1_SN_SK": {
+          ":traceStage": {
             "N": "0"
-          },
-          ":GSI2_SS_PK": {
-            "S": "success"
-          },
-          ":GSI2_SS_SK": {
-            "S": "2026-01-02T03:04:05.678Z#audit-1"
           },
           ":ttl": {
             "N": "1775099045"
@@ -164,6 +190,72 @@
       },
       "output": {
         "Attributes": {
+          "status": {
+            "S": "success"
+          },
+          "tier": {
+            "N": "2"
+          },
+          "scopes": {
+            "SS": [
+              "App1",
+              "App1#Order",
+              "*#Order",
+              "App1#Order#order-1",
+              "TestApp",
+              "TestApp#User",
+              "*#User",
+              "TestApp#User#user-1",
+              "App1#Unknown",
+              "*#Unknown",
+              "App1#Unknown#7",
+              "App1#User"
+            ]
+          },
+          "id": {
+            "S": "audit-1"
+          },
+          "operation": {
+            "S": "createOrder"
+          },
+          "target": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "type": {
+                "S": "Order"
+              },
+              "id": {
+                "S": "order-1"
+              }
+            }
+          },
+          "trace": {
+            "S": "trace-1"
+          },
+          "message": {
+            "S": "Order created"
+          },
+          "event": {
+            "M": {
+              "source": {
+                "S": "orders"
+              },
+              "detail-type": {
+                "S": "OrderCreated"
+              },
+              "detail": {
+                "S": "{}"
+              }
+            }
+          },
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
           "attempts": {
             "L": [
               {
@@ -186,186 +278,304 @@
     },
     {
       "service": "DynamoDB",
-      "command": "BatchWriteItem",
+      "command": "PutItem",
       "input": {
-        "RequestItems": {
-          "TEST-Contract-Audit": [
-            {
-              "PutRequest": {
-                "Item": {
-                  "PK": {
-                    "S": "TestApp.User"
-                  },
-                  "SK": {
-                    "S": "audit-1#TestApp.User#user-1"
-                  },
-                  "LSI1_N_SK": {
-                    "N": "21767323045678"
-                  },
-                  "GSI1_SS_PK": {
-                    "S": "TestApp.User#user-1"
-                  },
-                  "GSI1_SS_SK": {
-                    "S": "audit-1#TestApp.User#user-1"
-                  },
-                  "GSI1_SN_PK": {
-                    "S": "trace-1"
-                  },
-                  "GSI1_SN_SK": {
-                    "N": "0"
-                  },
-                  "GSI2_SS_PK": {
-                    "S": "success"
-                  },
-                  "GSI2_SS_SK": {
-                    "S": "2026-01-02T03:04:05.678Z#audit-1#TestApp.User#user-1"
-                  },
-                  "ttl": {
-                    "N": "1775099045"
-                  },
-                  "id": {
-                    "S": "audit-1#TestApp.User#user-1"
-                  },
-                  "status": {
-                    "S": "success"
-                  },
-                  "tier": {
-                    "N": "2"
-                  },
-                  "target": {
-                    "M": {
-                      "app": {
-                        "S": "TestApp"
-                      },
-                      "id": {
-                        "S": "user-1"
-                      },
-                      "type": {
-                        "S": "User"
-                      }
-                    }
-                  },
-                  "source": {
-                    "M": {
-                      "app": {
-                        "S": "App1"
-                      },
-                      "id": {
-                        "S": "order-1"
-                      },
-                      "type": {
-                        "S": "Order"
-                      }
-                    }
-                  },
-                  "operation": {
-                    "S": "createOrder"
-                  },
-                  "rerunable": {
-                    "BOOL": true
-                  },
-                  "trace": {
-                    "S": "trace-1"
-                  },
-                  "updatedAt": {
-                    "S": "2026-01-02T03:04:05.678Z"
-                  },
-                  "createdAt": {
-                    "S": "2026-01-02T03:04:05.678Z"
-                  }
-                }
-              }
-            },
-            {
-              "PutRequest": {
-                "Item": {
-                  "PK": {
-                    "S": "App1.Unknown"
-                  },
-                  "SK": {
-                    "S": "audit-1#App1.Unknown#7"
-                  },
-                  "LSI1_N_SK": {
-                    "N": "21767323045678"
-                  },
-                  "GSI1_SS_PK": {
-                    "S": "App1.Unknown#7"
-                  },
-                  "GSI1_SS_SK": {
-                    "S": "audit-1#App1.Unknown#7"
-                  },
-                  "GSI1_SN_PK": {
-                    "S": "trace-1"
-                  },
-                  "GSI1_SN_SK": {
-                    "N": "0"
-                  },
-                  "GSI2_SS_PK": {
-                    "S": "success"
-                  },
-                  "GSI2_SS_SK": {
-                    "S": "2026-01-02T03:04:05.678Z#audit-1#App1.Unknown#7"
-                  },
-                  "ttl": {
-                    "N": "1775099045"
-                  },
-                  "id": {
-                    "S": "audit-1#App1.Unknown#7"
-                  },
-                  "status": {
-                    "S": "success"
-                  },
-                  "tier": {
-                    "N": "2"
-                  },
-                  "target": {
-                    "M": {
-                      "app": {
-                        "S": "App1"
-                      },
-                      "id": {
-                        "N": "7"
-                      },
-                      "type": {
-                        "S": "Unknown"
-                      }
-                    }
-                  },
-                  "source": {
-                    "M": {
-                      "app": {
-                        "S": "App1"
-                      },
-                      "id": {
-                        "S": "order-1"
-                      },
-                      "type": {
-                        "S": "Order"
-                      }
-                    }
-                  },
-                  "operation": {
-                    "S": "createOrder"
-                  },
-                  "rerunable": {
-                    "BOOL": true
-                  },
-                  "trace": {
-                    "S": "trace-1"
-                  },
-                  "updatedAt": {
-                    "S": "2026-01-02T03:04:05.678Z"
-                  },
-                  "createdAt": {
-                    "S": "2026-01-02T03:04:05.678Z"
-                  }
-                }
+        "TableName": "TEST-Contract-Audit-v2",
+        "Item": {
+          "PK": {
+            "S": "-#App1#Order#audit-1"
+          },
+          "SK": {
+            "S": "related#TestApp#User#user-1"
+          },
+          "id": {
+            "S": "audit-1"
+          },
+          "status": {
+            "S": "success"
+          },
+          "tier": {
+            "N": "2"
+          },
+          "operation": {
+            "S": "createOrder"
+          },
+          "message": {
+            "S": "Order created"
+          },
+          "target": {
+            "M": {
+              "app": {
+                "S": "TestApp"
+              },
+              "type": {
+                "S": "User"
+              },
+              "id": {
+                "S": "user-1"
               }
             }
-          ]
+          },
+          "trace": {
+            "S": "trace-1"
+          },
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "source": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "id": {
+                "S": "order-1"
+              },
+              "type": {
+                "S": "Order"
+              }
+            }
+          },
+          "rerunable": {
+            "BOOL": true
+          },
+          "related": {
+            "BOOL": true
+          },
+          "tenantKey": {
+            "S": "-"
+          },
+          "app": {
+            "S": "TestApp"
+          },
+          "resourceType": {
+            "S": "User"
+          },
+          "resourceId": {
+            "S": "user-1"
+          },
+          "ttl": {
+            "N": "1775099045"
+          },
+          "revision": {
+            "N": "1"
+          }
+        },
+        "ConditionExpression": "attribute_not_exists(#revision) OR #revision <= :revision",
+        "ExpressionAttributeNames": {
+          "#revision": "revision"
+        },
+        "ExpressionAttributeValues": {
+          ":revision": {
+            "N": "1"
+          }
         }
       },
       "output": {}
+    },
+    {
+      "service": "DynamoDB",
+      "command": "PutItem",
+      "input": {
+        "TableName": "TEST-Contract-Audit-v2",
+        "Item": {
+          "PK": {
+            "S": "-#App1#Order#audit-1"
+          },
+          "SK": {
+            "S": "related#App1#Unknown#7"
+          },
+          "id": {
+            "S": "audit-1"
+          },
+          "status": {
+            "S": "success"
+          },
+          "tier": {
+            "N": "2"
+          },
+          "operation": {
+            "S": "createOrder"
+          },
+          "message": {
+            "S": "Order created"
+          },
+          "target": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "type": {
+                "S": "Unknown"
+              },
+              "id": {
+                "N": "7"
+              }
+            }
+          },
+          "trace": {
+            "S": "trace-1"
+          },
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "source": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "id": {
+                "S": "order-1"
+              },
+              "type": {
+                "S": "Order"
+              }
+            }
+          },
+          "rerunable": {
+            "BOOL": true
+          },
+          "related": {
+            "BOOL": true
+          },
+          "tenantKey": {
+            "S": "-"
+          },
+          "app": {
+            "S": "App1"
+          },
+          "resourceType": {
+            "S": "Unknown"
+          },
+          "resourceId": {
+            "S": "7"
+          },
+          "ttl": {
+            "N": "1775099045"
+          },
+          "revision": {
+            "N": "1"
+          }
+        },
+        "ConditionExpression": "attribute_not_exists(#revision) OR #revision <= :revision",
+        "ExpressionAttributeNames": {
+          "#revision": "revision"
+        },
+        "ExpressionAttributeValues": {
+          ":revision": {
+            "N": "1"
+          }
+        }
+      },
+      "output": {}
+    },
+    {
+      "service": "DynamoDB",
+      "command": "GetItem",
+      "input": {
+        "TableName": "TEST-Contract-Audit-v2",
+        "Key": {
+          "PK": {
+            "S": "-#App1#Order#audit-1"
+          },
+          "SK": {
+            "S": "audit"
+          }
+        },
+        "ConsistentRead": true
+      },
+      "output": {
+        "Item": {
+          "status": {
+            "S": "success"
+          },
+          "tier": {
+            "N": "2"
+          },
+          "scopes": {
+            "SS": [
+              "App1",
+              "App1#Order",
+              "*#Order",
+              "App1#Order#order-1",
+              "TestApp",
+              "TestApp#User",
+              "*#User",
+              "TestApp#User#user-1",
+              "App1#Unknown",
+              "*#Unknown",
+              "App1#Unknown#7",
+              "App1#User"
+            ]
+          },
+          "id": {
+            "S": "audit-1"
+          },
+          "operation": {
+            "S": "createOrder"
+          },
+          "target": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "type": {
+                "S": "Order"
+              },
+              "id": {
+                "S": "order-1"
+              }
+            }
+          },
+          "trace": {
+            "S": "trace-1"
+          },
+          "message": {
+            "S": "Order created"
+          },
+          "event": {
+            "M": {
+              "source": {
+                "S": "orders"
+              },
+              "detail-type": {
+                "S": "OrderCreated"
+              },
+              "detail": {
+                "S": "{}"
+              }
+            }
+          },
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "attempts": {
+            "L": [
+              {
+                "M": {
+                  "number": {
+                    "N": "1"
+                  },
+                  "status": {
+                    "S": "success"
+                  },
+                  "at": {
+                    "S": "2026-01-02T03:04:05.678Z"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
     },
     {
       "service": "EventBridge",
@@ -374,7 +584,7 @@
         "Entries": [
           {
             "EventBusName": "TEST-Contract-Audit",
-            "Detail": "{\"audit\":{\"id\":\"audit-1\",\"operation\":\"createOrder\",\"tier\":2,\"status\":\"success\",\"target\":{\"app\":\"App1\",\"type\":\"Order\",\"id\":\"order-1\"},\"resources\":[{\"app\":\"TestApp\",\"type\":\"User\",\"id\":\"user-1\"},{\"app\":\"App1\",\"type\":\"Unknown\",\"id\":7}],\"trace\":\"trace-1\",\"event\":{\"source\":\"orders\",\"detail-type\":\"OrderCreated\",\"detail\":\"{}\"}}}",
+            "Detail": "{\"audit\":{\"id\":\"audit-1\",\"operation\":\"createOrder\",\"tier\":2,\"status\":\"success\",\"target\":{\"app\":\"App1\",\"type\":\"Order\",\"id\":\"order-1\"},\"resources\":[{\"app\":\"TestApp\",\"type\":\"User\",\"id\":\"user-1\"},{\"app\":\"App1\",\"type\":\"Unknown\",\"id\":7},{\"app\":\"App1\",\"type\":\"User\"}],\"message\":\"Order created\",\"trace\":\"trace-1\",\"event\":{\"source\":\"orders\",\"detail-type\":\"OrderCreated\",\"detail\":\"{}\"}}}",
             "DetailType": "Upserted",
             "Source": "Audit"
           }

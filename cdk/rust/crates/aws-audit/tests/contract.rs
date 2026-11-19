@@ -4,7 +4,7 @@
 use aws_audit::pagination::{self, InvalidNextToken};
 use aws_audit::table::Index;
 use aws_audit::testing::{contract_dir, fixtures};
-use aws_audit::{Audit, AuditConfig, Page};
+use aws_audit::{Audit, AuditConfig, AuditSummary, Page};
 use serde_json::Value;
 
 fn fixture(path: &str) -> Value {
@@ -19,8 +19,8 @@ fn loads_the_config_the_layer_writes() {
     let config =
         AuditConfig::from_file(&contract_dir().join("fixtures/layer/audit-config.json")).unwrap();
 
-    assert_eq!(config.apps, ["App1", "TestApp"]);
-    assert_eq!(config.resource_types, ["Unknown", "User", "Order"]);
+    assert_eq!(config, aws_audit::testing::contract_config());
+    assert_eq!(config.apps.keys().collect::<Vec<_>>(), ["App1", "TestApp"]);
 }
 
 #[test]
@@ -43,24 +43,40 @@ fn encodes_and_decodes_tokens_like_the_sdk() {
 }
 
 /// The listing's index and the partition its arguments query.
-fn listing(operation: &str, params: &Value) -> (Index, String) {
-    let tenant = params["tenantId"]
-        .as_str()
-        .map(|tenant| format!("{tenant}#"))
-        .unwrap_or_default();
+fn listing(operation: &str, params: &Value) -> (Index, Vec<(&'static str, String)>) {
+    let text = |value: &Value| match value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    };
+    let tenant = (
+        "tenantKey",
+        params["tenantId"].as_str().unwrap_or("-").to_owned(),
+    );
+    let app = ("app", text(&params["app"]));
+    let resource_type = ("resourceType", text(&params["resource"]["type"]));
 
     match operation {
-        "listObjects" => (
-            Index::Lsi1N,
-            format!(
-                "{tenant}{}.{}",
-                params["app"].as_str().unwrap(),
-                params["resource"]["type"].as_str().unwrap()
-            ),
+        "listObjects" => (Index::ByType, vec![tenant, app, resource_type]),
+        "listItems" => (
+            Index::ByResource,
+            vec![
+                tenant,
+                app,
+                resource_type,
+                ("resourceId", text(&params["resource"]["id"])),
+            ],
         ),
         "listByStatus" => (
-            Index::Gsi2Ss,
-            format!("{tenant}{}", params["status"].as_str().unwrap()),
+            Index::ByStatus,
+            vec![
+                tenant,
+                ("status", text(&params["status"])),
+                ("kind", "audit".to_owned()),
+            ],
+        ),
+        "listTraceItems" => (
+            Index::ByTrace,
+            vec![tenant, ("traceId", text(&params["trace"]))],
         ),
         other => panic!("no index mapping for {other}"),
     }
@@ -92,10 +108,10 @@ fn accepts_the_tokens_the_sdk_sends() {
     let accepted: Vec<_> = fixtures("sdk")
         .into_iter()
         .filter(|(_, case)| {
-            matches!(
-                case["operation"].as_str(),
-                Some("listObjects" | "listByStatus")
-            ) && case["args"][1]["nextToken"].is_string()
+            case["operation"]
+                .as_str()
+                .is_some_and(|operation| operation.starts_with("list"))
+                && case["args"][1]["nextToken"].is_string()
                 && case.get("error").is_none()
         })
         .collect();
@@ -137,7 +153,7 @@ fn round_trips_every_audit_the_api_returns() {
         let body = response["body"].clone();
 
         let reserialized = if body.get("items").is_some() {
-            let page: Page<Audit> = serde_json::from_value(body.clone())
+            let page: Page<AuditSummary> = serde_json::from_value(body.clone())
                 .unwrap_or_else(|error| panic!("{name}: {error}"));
             serde_json::to_value(page).unwrap()
         } else if body.get("operation").is_some() {

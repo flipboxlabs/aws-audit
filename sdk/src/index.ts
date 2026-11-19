@@ -6,6 +6,7 @@ export {
   AUDIT_LOG_IDENTIFIER,
   DynamoDB,
   EventBridge,
+  type IndexDefinition,
 } from "./constants.js";
 export * from "./events/index.js";
 export * from "./schema/index.js";

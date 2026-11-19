@@ -1,6 +1,6 @@
 //! What the audit REST Lambdas share on top of [`lambda_kit::http`]: the
-//! pagination query, checks against the configured apps, resource types and
-//! statuses, and audit errors as HTTP errors.
+//! pagination and filter queries, checks against the configured apps, resource
+//! types and statuses, and audit errors as HTTP errors.
 //!
 //! Issue messages are zod's, so a 422 answers the same body as the TypeScript
 //! handlers did.
@@ -8,10 +8,10 @@
 use std::fmt;
 
 use aws_audit::AuditConfig;
-use aws_audit::model::{Audit, Status};
+use aws_audit::model::{Audit, Status, Tier};
 use aws_audit::pagination::Pagination;
 use aws_audit::service::{AuditService, ServiceError};
-use aws_audit::storage::{Identifiers, StorageError};
+use aws_audit::storage::{Identifiers, ListFilter, ResourceFilter, StorageError};
 use lambda_kit::http::{self, HttpError, HttpRequest, Issue, Issues};
 
 #[cfg(feature = "testing")]
@@ -25,6 +25,18 @@ pub const NEXT_TOKEN: &str = "pagination[nextToken]";
 
 /// The largest page a listing returns.
 pub const MAX_PAGE_SIZE: u32 = 1000;
+
+/// The operation filter query parameter.
+pub const FILTER_OPERATION: &str = "filter[operation]";
+
+/// The tier filter query parameter.
+pub const FILTER_TIER: &str = "filter[tier]";
+
+/// The app filter query parameter (status and trace listings).
+pub const FILTER_APP: &str = "filter[app]";
+
+/// The resource type filter query parameter (status and trace listings).
+pub const FILTER_RESOURCE_TYPE: &str = "filter[resourceType]";
 
 /// A value that isn't one of the options it must be.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -54,12 +66,27 @@ fn one_of<'a>(
 
 /// The app, if the config lists it.
 pub fn app(config: &AuditConfig, value: &str) -> Result<String, InvalidOption> {
-    one_of(value, config.apps.iter().map(String::as_str))
+    one_of(value, config.apps.keys().map(String::as_str))
 }
 
-/// The resource type, if the config lists it.
-pub fn resource_type(config: &AuditConfig, value: &str) -> Result<String, InvalidOption> {
-    one_of(value, config.resource_types.iter().map(String::as_str))
+/// The resource type, if it's one of `app`'s, or without an app, one of any
+/// app's.
+pub fn resource_type(
+    config: &AuditConfig,
+    app: Option<&str>,
+    value: &str,
+) -> Result<String, InvalidOption> {
+    match app {
+        Some(app) => one_of(
+            value,
+            config
+                .resource_types_of(app)
+                .unwrap_or_default()
+                .iter()
+                .map(String::as_str),
+        ),
+        None => one_of(value, config.resource_types()),
+    }
 }
 
 /// The status, if it is one.
@@ -78,6 +105,63 @@ pub fn page_size(value: &str) -> Result<u32, &'static str> {
     match value.parse::<u32>() {
         Ok(size @ 1..=MAX_PAGE_SIZE) if digits => Ok(size),
         _ => Err(MESSAGE),
+    }
+}
+
+/// A `filter[tier]`: `1`, `2` or `3`.
+pub fn tier(value: &str) -> Result<Tier, InvalidOption> {
+    let value = one_of(value, ["1", "2", "3"])?;
+    Ok(Tier::try_from(value.parse::<u8>().expect("a digit")).expect("a tier from 1 to 3"))
+}
+
+/// A `filter[operation]`: any operation name, but not an empty one.
+pub fn operation(value: &str) -> Result<String, &'static str> {
+    if value.is_empty() {
+        Err("Too small: expected string to have >=1 characters")
+    } else {
+        Ok(value.to_owned())
+    }
+}
+
+/// The filters every listing takes: `filter[operation]` and `filter[tier]`.
+/// Invalid ones are recorded in `issues`.
+pub fn list_filter(request: &HttpRequest, issues: &mut Issues) -> ListFilter {
+    ListFilter {
+        operation: request
+            .query(FILTER_OPERATION)
+            .and_then(|value| issues.check(["query", FILTER_OPERATION], operation(value))),
+        tier: request
+            .query(FILTER_TIER)
+            .and_then(|value| issues.check(["query", FILTER_TIER], tier(value))),
+    }
+}
+
+/// The status and trace listings' resource filters: `filter[app]`, which must be
+/// configured, and `filter[resourceType]`, which must be one of that app's types,
+/// or without an app, one of any app's (matching it under every app that has it).
+/// A type isn't checked when the app isn't one. Invalid ones are recorded in
+/// `issues`.
+pub fn resource_filter(
+    config: &AuditConfig,
+    request: &HttpRequest,
+    issues: &mut Issues,
+) -> ResourceFilter {
+    let app_value = request.query(FILTER_APP);
+    let app = app_value.and_then(|value| issues.check(["query", FILTER_APP], app(config, value)));
+    let resource_type = request
+        .query(FILTER_RESOURCE_TYPE)
+        .filter(|_| app_value.is_none() || app.is_some())
+        .and_then(|value| {
+            issues.check(
+                ["query", FILTER_RESOURCE_TYPE],
+                resource_type(config, app.as_deref(), value),
+            )
+        });
+
+    ResourceFilter {
+        app,
+        resource_type,
+        resource_id: None,
     }
 }
 
@@ -111,10 +195,13 @@ impl ObjectPath {
         issues: &mut Issues,
     ) -> Option<Self> {
         let app = issues.check(["path", "app"], app(config, request.param("app")));
-        let resource_type = issues.check(
-            ["path", "object"],
-            resource_type(config, request.param("object")),
-        );
+        // One of the app's types; unchecked when the app isn't one
+        let resource_type = app.as_deref().and_then(|app| {
+            issues.check(
+                ["path", "object"],
+                resource_type(config, Some(app), request.param("object")),
+            )
+        });
 
         Some(ObjectPath {
             app: app?,
@@ -187,8 +274,32 @@ mod tests {
     #[test]
     fn accepts_configured_values() {
         assert_eq!(app(&config(), "App1"), Ok("App1".to_owned()));
-        assert_eq!(resource_type(&config(), "Order"), Ok("Order".to_owned()));
+        assert_eq!(
+            resource_type(&config(), Some("App1"), "Order"),
+            Ok("Order".to_owned())
+        );
         assert_eq!(status("fail"), Ok(Status::Fail));
+    }
+
+    #[test]
+    fn checks_a_resource_type_against_its_app_or_every_app() {
+        // TestApp has no Unknown; App1 does
+        assert_eq!(
+            resource_type(&config(), Some("TestApp"), "Unknown")
+                .unwrap_err()
+                .to_string(),
+            r#"Invalid option: expected one of "User"|"Order""#
+        );
+        assert_eq!(
+            resource_type(&config(), None, "Unknown"),
+            Ok("Unknown".to_owned())
+        );
+        assert_eq!(
+            resource_type(&config(), None, "Nope")
+                .unwrap_err()
+                .to_string(),
+            r#"Invalid option: expected one of "Unknown"|"User"|"Order""#
+        );
     }
 
     #[test]
@@ -201,6 +312,25 @@ mod tests {
             status("unknown").unwrap_err().to_string(),
             r#"Invalid option: expected one of "success"|"warn"|"fail"|"skip""#
         );
+    }
+
+    #[test]
+    fn accepts_tiers_from_1_to_3() {
+        assert_eq!(tier("1"), Ok(Tier::try_from(1).unwrap()));
+        assert_eq!(tier("3"), Ok(Tier::try_from(3).unwrap()));
+        for value in ["", "0", "4", "01", "1.0", " 2"] {
+            assert_eq!(
+                tier(value).unwrap_err().to_string(),
+                r#"Invalid option: expected one of "1"|"2"|"3""#,
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_an_empty_operation() {
+        assert_eq!(operation("createOrder"), Ok("createOrder".to_owned()));
+        assert!(operation("").is_err());
     }
 
     #[test]

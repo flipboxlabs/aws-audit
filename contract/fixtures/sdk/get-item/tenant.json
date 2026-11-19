@@ -1,5 +1,5 @@
 {
-  "description": "A tenant prefixes the partition key and is stripped from the rebuilt trace",
+  "description": "A tenant is the first part of the partition key",
   "operation": "getItem",
   "args": [
     {
@@ -14,23 +14,23 @@
       "service": "DynamoDB",
       "command": "GetItem",
       "input": {
-        "TableName": "TEST-Contract-Audit",
+        "TableName": "TEST-Contract-Audit-v2",
         "Key": {
           "PK": {
-            "S": "tenant-1#App1.Order"
+            "S": "tenant-1#App1#Order#audit-1"
           },
           "SK": {
-            "S": "audit-1"
+            "S": "audit"
           }
         }
       },
       "output": {
         "Item": {
           "PK": {
-            "S": "tenant-1#App1.Order"
+            "S": "tenant-1#App1#Order#audit-1"
           },
           "SK": {
-            "S": "audit-1"
+            "S": "audit"
           },
           "id": {
             "S": "audit-1"
@@ -63,11 +63,34 @@
           "updatedAt": {
             "S": "2026-01-02T03:04:05.678Z"
           },
-          "GSI1_SN_PK": {
-            "S": "tenant-1#trace-1"
+          "tenantKey": {
+            "S": "tenant-1"
           },
-          "GSI1_SN_SK": {
-            "N": "0"
+          "app": {
+            "S": "App1"
+          },
+          "resourceType": {
+            "S": "Order"
+          },
+          "resourceId": {
+            "S": "order-1"
+          },
+          "kind": {
+            "S": "audit"
+          },
+          "scopes": {
+            "SS": [
+              "App1",
+              "App1#Order",
+              "*#Order",
+              "App1#Order#order-1"
+            ]
+          },
+          "ttl": {
+            "N": "1775099045"
+          },
+          "tenantId": {
+            "S": "tenant-1"
           }
         }
       }
@@ -75,6 +98,7 @@
   ],
   "result": {
     "id": "audit-1",
+    "tenantId": "tenant-1",
     "status": "success",
     "tier": 2,
     "target": {
@@ -83,7 +107,6 @@
       "type": "Order"
     },
     "operation": "createOrder",
-    "trace": "tenant-1#trace-1",
     "updatedAt": "2026-01-02T03:04:05.678Z",
     "createdAt": "2026-01-02T03:04:05.678Z"
   }

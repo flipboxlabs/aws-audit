@@ -139,14 +139,22 @@ async fn skips_control_messages() {
 #[tokio::test(start_paused = true)]
 async fn stores_each_audit_independently() {
     let recorder = Recorder::answering(|call| {
-        let key = call.input["Key"]["SK"]["S"].as_str().unwrap_or_default();
+        let key = call.input["Key"]["PK"]["S"].as_str().unwrap_or_default();
         match (call.command.as_str(), key) {
-            ("UpdateItem", "audit-2") => json!({
+            ("UpdateItem", "-#App1#Order#audit-2") => json!({
                 "error": { "name": "ProvisionedThroughputExceededException", "message": "Slow down" }
             }),
-            ("UpdateItem", _) => json!({
-                "output": { "Attributes": { "attempts": { "L": [{ "M": {} }] } } }
-            }),
+            // The audit as stored, from what the upsert set
+            ("UpdateItem", _) => {
+                let values = &call.input["ExpressionAttributeValues"];
+                let attributes: Map<String, Value> =
+                    ["id", "status", "operation", "target", "createdAt"]
+                        .into_iter()
+                        .map(|name| (name.to_owned(), values[format!(":{name}")].clone()))
+                        .chain([("attempts".to_owned(), values[":newAttempt"].clone())])
+                        .collect();
+                json!({ "output": { "Attributes": attributes } })
+            }
             _ => {
                 json!({ "output": { "FailedEntryCount": 0, "Entries": [{ "EventId": "event-1" }] } })
             }

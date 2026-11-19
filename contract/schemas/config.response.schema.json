@@ -3,25 +3,35 @@
   "type": "object",
   "properties": {
     "apps": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "enum": [
-          "App1",
-          "TestApp"
-        ]
-      }
-    },
-    "resourceTypes": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "enum": [
-          "Unknown",
-          "User",
-          "Order"
-        ]
-      }
+      "type": "object",
+      "properties": {
+        "App1": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "Unknown",
+              "User",
+              "Order"
+            ]
+          }
+        },
+        "TestApp": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "User",
+              "Order"
+            ]
+          }
+        }
+      },
+      "required": [
+        "App1",
+        "TestApp"
+      ],
+      "additionalProperties": false
     },
     "statuses": {
       "type": "array",
@@ -42,7 +52,6 @@
   },
   "required": [
     "apps",
-    "resourceTypes",
     "statuses",
     "version"
   ],

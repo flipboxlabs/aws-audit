@@ -1,5 +1,5 @@
 import * as z from "zod/v4";
-import { EventBridgeEventSchema } from "./model.js";
+import { EventBridgeEventSchema, TenantIdSchema } from "./model.js";
 
 /**
  * Audit operation status values.
@@ -122,7 +122,7 @@ export const _BaseLogAuditSchema = z.object({
   /** Name of the operation being audited (required) */
   operation: z.string(),
   /** Tenant identifier for multi-tenancy support (optional) */
-  tenantId: z.string().optional(),
+  tenantId: TenantIdSchema.optional(),
   /** Escalation tier for visibility (1=internal, 2=info, 3=public). Defaults to 2. */
   tier: TierSchema.default(2),
   /** Outcome status of the operation. Defaults to 'success'. */
@@ -175,8 +175,7 @@ export type LogAuditInput = z.input<typeof _BaseLogAuditSchema>;
  * @example
  * ```typescript
  * const config = defineAuditConfig({
- *   apps: ['Orders', 'Inventory'] as const,
- *   resourceTypes: ['Order', 'Product'] as const,
+ *   apps: { Orders: ['Order'], Inventory: ['Product'] },
  * });
  *
  * const typedSchema = createTypedLogAuditSchema(config.schemas.resourceReference);
@@ -196,7 +195,7 @@ export function createTypedLogAuditSchema<
   return z.object({
     id: z.string().optional(),
     operation: z.string(),
-    tenantId: z.string().optional(),
+    tenantId: TenantIdSchema.optional(),
     tier: TierSchema.default(2),
     status: StatusSchema.default(Status.SUCCESS),
     target: resourceReferenceSchema,

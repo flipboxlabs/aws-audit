@@ -1,0 +1,17 @@
+{
+  "description": "A nextToken key with the wrong attribute type is refused",
+  "operation": "listTraceItems",
+  "args": [
+    {
+      "trace": "trace-1"
+    },
+    {
+      "nextToken": "eyJQSyI6Ii0jQXBwMSNPcmRlciNhdWRpdC0xIiwiU0siOiJhdWRpdCIsInRlbmFudEtleSI6Ii0iLCJ0cmFjZUlkIjoidHJhY2UtMSIsInRyYWNlU3RhZ2UiOiIyIiwiY3JlYXRlZEF0IjoiMjAyNi0wMS0wMlQwMzowNDowNS42NzhaIiwiaWQiOiJhdWRpdC0xIn0"
+    }
+  ],
+  "calls": [],
+  "error": {
+    "name": "InvalidNextTokenError",
+    "message": "Invalid pagination nextToken"
+  }
+}

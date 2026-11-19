@@ -1,19 +1,14 @@
-//! The `GET /trace/{trace}` Lambda (`trace/handler.ts`): the audits of a trace, in
-//! stage order, optionally only those of an app or resource type.
+//! The `GET /trace/{trace}` Lambda: summaries of a trace's audits, by stage, then
+//! oldest first. `filter[app]` and `filter[resourceType]` keep audits whose target
+//! or a related resource matches; `filter[operation]` and `filter[tier]` narrow
+//! further.
 
 use std::sync::Arc;
 
 use aws_audit::AuditConfig;
 use aws_audit::service::AuditService;
-use aws_audit::storage::TargetFilter;
 use aws_audit_http::service_error;
 use lambda_kit::http::{self, HttpRequest, Issues, Router};
-
-/// The app filter query parameter.
-pub const FILTER_APP: &str = "filter[app]";
-
-/// The resource type filter query parameter.
-pub const FILTER_RESOURCE_TYPE: &str = "filter[resourceType]";
 
 /// What the handler reads with.
 pub struct State {
@@ -33,25 +28,19 @@ async fn list(state: Arc<State>, request: HttpRequest) -> http::Result {
 
     let mut issues = Issues::default();
     let pagination = aws_audit_http::pagination(&request, &mut issues);
-    let filter = TargetFilter {
-        app: request
-            .query(FILTER_APP)
-            .and_then(|app| issues.check(["query", FILTER_APP], aws_audit_http::app(config, app))),
-        resource_type: request
-            .query(FILTER_RESOURCE_TYPE)
-            .and_then(|resource_type| {
-                issues.check(
-                    ["query", FILTER_RESOURCE_TYPE],
-                    aws_audit_http::resource_type(config, resource_type),
-                )
-            }),
-        resource_id: None,
-    };
+    let filter = aws_audit_http::list_filter(&request, &mut issues);
+    let resources = aws_audit_http::resource_filter(config, &request, &mut issues);
     issues.finish()?;
 
     let page = state
         .service
-        .list_trace_items(None, request.param("trace"), &filter, &pagination)
+        .list_trace_items(
+            None,
+            request.param("trace"),
+            &filter,
+            &resources,
+            &pagination,
+        )
         .await
         .map_err(service_error)?;
 

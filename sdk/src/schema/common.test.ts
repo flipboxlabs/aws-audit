@@ -22,6 +22,14 @@ describe("DateTimeStringSchema", () => {
     expect(result).toBe("2024-01-15T10:30:00.000Z");
   });
 
+  it("should keep milliseconds whatever the precision, so timestamps sort as text", () => {
+    expect(DateTimeStringSchema.parse("2024-01-15T10:30:00.6Z")).toBe("2024-01-15T10:30:00.600Z");
+    expect(DateTimeStringSchema.parse("2024-01-15T10:30:00Z")).toBe("2024-01-15T10:30:00.000Z");
+    expect(DateTimeStringSchema.parse("2024-01-15T10:30:00.678999Z")).toBe(
+      "2024-01-15T10:30:00.678Z",
+    );
+  });
+
   it("should accept Date object and convert to ISO string", () => {
     const date = new Date("2024-01-15T10:30:00.000Z");
     const result = DateTimeStringSchema.parse(date);
@@ -77,6 +85,37 @@ describe("BaseSchema", () => {
     });
 
     expect(result.tenantId).toBe("tenant-abc");
+  });
+
+  it("should refuse the tenant id of audits without a tenant", () => {
+    const result = BaseSchema.safeParse({
+      id: "audit-123",
+      tenantId: "-",
+      operation: "testOp",
+      status: "success",
+      tier: 2,
+      target: createValidTarget(),
+    });
+
+    expect(result.error?.issues).toEqual([
+      expect.objectContaining({
+        path: ["tenantId"],
+        message: 'Tenant id "-" is reserved for audits without a tenant',
+      }),
+    ]);
+  });
+
+  it.each(["", null])("should read a tenantId of %j as none", (tenantId) => {
+    const result = BaseSchema.parse({
+      id: "audit-123",
+      tenantId,
+      operation: "testOp",
+      status: "success",
+      tier: 2,
+      target: createValidTarget(),
+    });
+
+    expect(result.tenantId).toBeUndefined();
   });
 
   it("should allow tenantId to be undefined", () => {

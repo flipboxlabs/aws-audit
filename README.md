@@ -4,12 +4,13 @@ A comprehensive audit logging and event management system for AWS Lambda and ser
 
 ## Packages
 
-This monorepo contains two packages that work together:
+This monorepo contains two packages that work together, and a Rust crate for Rust Lambdas:
 
-| Package                               | Description                                                 |
-| ------------------------------------- | ----------------------------------------------------------- |
-| [`@flipboxlabs/aws-audit-sdk`](./sdk) | Core SDK for audit logging, data models, and business logic |
-| [`@flipboxlabs/aws-audit-cdk`](./cdk) | AWS CDK constructs for deploying audit infrastructure       |
+| Package                                                             | Description                                                 |
+| ------------------------------------------------------------------- | ----------------------------------------------------------- |
+| [`@flipboxlabs/aws-audit-sdk`](./sdk)                               | Core SDK for audit logging, data models, and business logic |
+| [`@flipboxlabs/aws-audit-cdk`](./cdk)                               | AWS CDK constructs for deploying audit infrastructure       |
+| [`aws-audit`](./cdk/rust/README.md#using-it-in-your-lambdas) (Rust) | Audit logging for Rust Lambdas, from git                    |
 
 ## Features
 
@@ -59,12 +60,16 @@ npm install @flipboxlabs/aws-audit-sdk @flipboxlabs/aws-audit-cdk
 import { defineAuditConfig } from "@flipboxlabs/aws-audit-sdk";
 
 export const auditConfig = defineAuditConfig({
-  apps: ["my-app", "my-other-app"],
-  resourceTypes: ["user", "order", "payment"],
+  apps: {
+    Orders: ["Order", "Customer"],
+    Payments: ["Payment", "Customer"],
+  },
 });
 
 export type AuditConfig = typeof auditConfig;
 ```
+
+Each app lists its own resource types: an audit's type must be one of its app's, and naming the app narrows the type in TypeScript. Two apps may share a type's name. App and type names are REST API path segments, so they may hold only letters, digits, `-` and `_`; `defineAuditConfig` and the CDK layer refuse anything else.
 
 ### 3. Deploy infrastructure with CDK
 
@@ -77,7 +82,6 @@ import { EventBridgeConstruct } from "@flipboxlabs/aws-audit-cdk/eventbridge";
 // In your CDK stack, with `config` your CDKConfig
 const { layer } = new ConfigLayerConstruct(this, "AuditConfigLayer", {
   apps: auditConfig.apps,
-  resourceTypes: auditConfig.resourceTypes,
 });
 const { table } = new DynamoDBConstruct(this, "DynamoDB", { config });
 const { eventBus } = new EventBridgeConstruct(this, "EventBridge", { config });
@@ -94,24 +98,34 @@ The Lambdas the constructs deploy are prebuilt Rust binaries shipped in the pack
 ### 4. Log audits in your Lambda functions
 
 ```typescript
-import { Audits } from "@flipboxlabs/aws-audit-sdk";
-import type { AuditConfig } from "./audit-config";
+import middy from "@middy/core";
+import { Audits, Status } from "@flipboxlabs/aws-audit-sdk";
+import { logAudits } from "@flipboxlabs/aws-audit-sdk/middleware";
+import { auditConfig } from "./audit-config";
 
-const audits = new Audits<AuditConfig>();
+const audits = new Audits({ config: auditConfig });
 
-export const handler = async (event: Event) => {
-  // Log an audit entry
-  audits.add({
-    app: "my-app",
-    resourceType: "order",
-    resourceId: "order-123",
-    operation: "created",
-    status: "SUCCESS",
-    tier: "INFO",
+export const handler = middy(async (event: Event) => {
+  // Log an audit entry; the app, and the type against the app's, are checked against the config
+  audits.addAudit({
+    operation: "createOrder",
+    target: { app: "Orders", type: "Order", id: "order-123" },
+    status: Status.SUCCESS,
   });
 
-  // Audits are automatically flushed at Lambda completion
-};
+  // logAudits writes them when the handler returns or throws
+}).use(logAudits(audits));
+```
+
+Each audit is one JSON log line, `{"_audit": {...}}`, which the account-level log subscription stores. A Rust Lambda logs the same lines with the [`aws-audit` crate](./cdk/rust/README.md#using-it-in-your-lambdas):
+
+```rust
+let mut audits = Audits::new(config.clone());
+audits.add(
+    LogAudit::new("createOrder", ResourceReference::new("Orders", "Order").with_id("order-123"))
+        .with_status(Status::Success),
+)?;
+// Written when `audits` is dropped at the end of the invocation
 ```
 
 ### 5. Query audits via REST API
@@ -141,7 +155,9 @@ GET /status/{status}
 GET /trace/{traceId}
 ```
 
-An audit's `trace` is the trace it was written with, and is omitted when it has none. `GET /apps/{app}/objects/{type}/{item}` and `GET /trace/{trace}` rebuild it from index keys, so there a trace written with stage `0` (`abc:0`) comes back as the equivalent `abc`. `GET /status/{status}` omits `trace`, because the status index doesn't project it; fetch the single audit to read it.
+Every listing returns audit summaries: `id`, `tenantId`, `status`, `tier`, `operation`, `message`, `target`, `source`, `rerunable`, `trace`, `createdAt` and `updatedAt`. Fetch the single audit for its `context`, `event`, `error` and `attempts`. Listings are newest first; `GET /trace/{trace}` lists by trace stage, then oldest first. An audit's `trace` is the trace it was written with, and is omitted when it has none.
+
+Every listing takes `filter[operation]` (an exact operation name) and `filter[tier]` (`1`, `2` or `3`). `GET /status/{status}` and `GET /trace/{trace}` also take `filter[app]` and `filter[resourceType]`, which match an audit's target or any of its additional `resources`. With `filter[app]`, the type must be one of that app's; without it, the type matches under every app that has it; the audit is returned once, with its own target. Filters apply after a page is read, so a filtered page can hold fewer items than `pagination[pageSize]`, or none, while its `nextToken` continues the listing.
 
 Getting or rerunning a single audit answers `404` when `{auditId}` doesn't exist or belongs to a resource other than `{resourceId}`. An audit that lists a resource in `resources` also appears in that resource's listing, with the audit's `id` and its target as the `source`; fetch or rerun it under the source: `/apps/{source.app}/objects/{source.type}/{source.id}/{id}`.
 
@@ -149,10 +165,9 @@ Getting or rerunning a single audit answers `404` when `{auditId}` doesn't exist
 
 ```json
 {
-  "apps": ["Orders", "Inventory"],
-  "resourceTypes": ["Order", "Product"],
+  "apps": { "Orders": ["Order", "Customer"], "Payments": ["Payment", "Customer"] },
   "statuses": ["success", "warn", "fail", "skip"],
-  "version": "1.6.0"
+  "version": "2.0.0"
 }
 ```
 
@@ -175,7 +190,7 @@ The SDK provides:
 
 The CDK package provides constructs for:
 
-- **DynamoDBConstruct** - Audit table with optimized indexes
+- **DynamoDBConstruct** - Audit table, with an index per listing (upgrading from 1.x: see [the CDK documentation](./cdk/README.md#upgrading-from-1x))
 - **EventBridgeConstruct** - Event bus for audit events
 - **CloudWatchConstruct** - Account-level log subscription
 - **RestApiConstruct** - API Gateway with audit query endpoints

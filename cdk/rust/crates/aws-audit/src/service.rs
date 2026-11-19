@@ -11,11 +11,10 @@ use serde_json::Value;
 
 use crate::config::AuditConfig;
 use crate::events::{AuditEventBus, PutEventsError};
-use crate::keys::has_resource_id;
-use crate::model::{Attempt, Audit, ResourceId, Status, Timestamp};
+use crate::model::{Attempt, Audit, AuditSummary, ResourceId, Status, Timestamp};
 use crate::pagination::{Page, Pagination};
-use crate::storage::{AuditRepository, Identifiers, StorageError, TargetFilter};
-use crate::upsert::{InvalidUpsert, UpsertAudit};
+use crate::storage::{AuditRepository, Identifiers, ListFilter, ResourceFilter, StorageError};
+use crate::upsert::{InvalidAudit, UpsertAudit};
 
 /// No audit has these identifiers.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -44,7 +43,7 @@ pub enum ServiceError {
     NotFound(#[from] AuditNotFound),
     /// The upsert names an app or resource type the config doesn't list.
     #[error(transparent)]
-    Invalid(#[from] InvalidUpsert),
+    Invalid(#[from] InvalidAudit),
     /// Reading or writing the table failed, or a `nextToken` was invalid.
     #[error(transparent)]
     Storage(#[from] StorageError),
@@ -92,8 +91,8 @@ impl AuditService {
     /// Stores an audit, or records another attempt of an existing one.
     ///
     /// The audit gets an attempt (numbered by its position in the stored list);
-    /// each related resource with an id gets a copy, so it lists under that
-    /// resource too; and an `Upserted` event is sent. The audit is stored even when
+    /// each related resource with an id gets a copy, created with the audit, so it
+    /// lists under that resource too; and an `Upserted` event is sent. The audit is stored even when
     /// the event can't be: that failure is logged, not returned.
     pub async fn upsert_item(&self, audit: UpsertAudit) -> Result<(), ServiceError> {
         audit.validate(&self.config)?;
@@ -108,38 +107,12 @@ impl AuditService {
             error: audit.error.clone().map(Value::String),
             at: Timestamp::from(self.clock.now()),
         };
-        self.storage.upsert_item(&audit, &id, &attempt).await?;
-
-        let copies: Vec<UpsertAudit> = audit
-            .resources
-            .iter()
-            .flatten()
-            .filter(|resource| has_resource_id(resource.id.as_ref()))
-            .map(|resource| UpsertAudit {
-                // Deterministic, so a retry rewrites the same copy
-                id: Some(format!(
-                    "{id}#{}.{}#{}",
-                    resource.app,
-                    resource.resource_type,
-                    resource
-                        .id
-                        .as_ref()
-                        .map(ResourceId::to_key)
-                        .unwrap_or_default()
-                )),
-                target: resource.clone(),
-                source: Some(audit.target.clone()),
-                rerunable: Some(audit.rerunable.unwrap_or(audit.event.is_some())),
-                // Only the parent keeps these
-                event: None,
-                error: None,
-                attempts: None,
-                ..audit.clone()
-            })
-            .collect();
-        if !copies.is_empty() {
-            self.storage.upsert_batch(&copies).await?;
-        }
+        let upserted = self.storage.upsert_item(&audit, &id, &attempt).await?;
+        // Copies of the audit as stored: with the fields a retry kept, sorted with
+        // the audit by its stored createdAt
+        self.storage
+            .upsert_related(&upserted.audit, audit.resources.iter().flatten())
+            .await?;
 
         if let Some(events) = &self.events
             && let Err(error) = events.upserted(std::slice::from_ref(&audit)).await
@@ -150,77 +123,93 @@ impl AuditService {
         Ok(())
     }
 
-    /// Audits of a resource type.
+    /// Summaries of a resource type's audits.
     pub async fn list_objects(
         &self,
         tenant_id: Option<&str>,
         app: &str,
         resource_type: &str,
+        filter: &ListFilter,
         pagination: &Pagination,
-    ) -> Result<Page<Audit>, ServiceError> {
+    ) -> Result<Page<AuditSummary>, ServiceError> {
         logged(
             "list objects",
             self.storage
-                .list_objects(tenant_id, app, resource_type, pagination)
+                .list_objects(tenant_id, app, resource_type, filter, pagination)
                 .await,
         )
     }
 
-    /// Audits of one resource.
+    /// Summaries of one resource's audits.
     pub async fn list_items(
         &self,
         tenant_id: Option<&str>,
         app: &str,
         resource_type: &str,
         resource_id: &str,
+        filter: &ListFilter,
         pagination: &Pagination,
-    ) -> Result<Page<Audit>, ServiceError> {
+    ) -> Result<Page<AuditSummary>, ServiceError> {
         logged(
             "list items",
             self.storage
-                .list_items(tenant_id, app, resource_type, resource_id, pagination)
+                .list_items(
+                    tenant_id,
+                    app,
+                    resource_type,
+                    resource_id,
+                    filter,
+                    pagination,
+                )
                 .await,
         )
     }
 
-    /// Audits of a trace.
+    /// Summaries of a trace's audits.
     pub async fn list_trace_items(
         &self,
         tenant_id: Option<&str>,
         trace: &str,
-        filter: &TargetFilter,
+        filter: &ListFilter,
+        resources: &ResourceFilter,
         pagination: &Pagination,
-    ) -> Result<Page<Audit>, ServiceError> {
+    ) -> Result<Page<AuditSummary>, ServiceError> {
         logged(
             "list trace items",
             self.storage
-                .list_trace_items(tenant_id, trace, filter, pagination)
+                .list_trace_items(tenant_id, trace, filter, resources, pagination)
                 .await,
         )
     }
 
-    /// Audits with a status.
+    /// Summaries of a status's audits.
     pub async fn list_by_status(
         &self,
         tenant_id: Option<&str>,
         status: Status,
-        filter: &TargetFilter,
+        filter: &ListFilter,
+        resources: &ResourceFilter,
         pagination: &Pagination,
-    ) -> Result<Page<Audit>, ServiceError> {
+    ) -> Result<Page<AuditSummary>, ServiceError> {
         logged(
             "list items by status",
             self.storage
-                .list_by_status(tenant_id, status, filter, pagination)
+                .list_by_status(tenant_id, status, filter, resources, pagination)
                 .await,
         )
     }
 }
 
-/// Logs a listing's storage failure. A bad `nextToken` is the caller's mistake, so
-/// it isn't logged.
+/// Logs a listing's storage failure. A bad `nextToken`, filter or tenant is the
+/// caller's mistake, so it isn't logged.
 fn logged<T>(listing: &str, result: Result<T, StorageError>) -> Result<T, ServiceError> {
     if let Err(error) = &result
-        && !matches!(error, StorageError::InvalidNextToken(_))
+        && !matches!(
+            error,
+            StorageError::InvalidNextToken(_)
+                | StorageError::IncompleteResourceFilter(_)
+                | StorageError::ReservedTenant(_)
+        )
     {
         tracing::error!(error = %ErrorChain(error), "An error occurred while trying to {listing}");
     }

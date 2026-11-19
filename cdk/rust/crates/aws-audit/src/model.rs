@@ -13,6 +13,10 @@ use serde_json::{Map, Number, Value};
 
 use crate::js;
 
+/// `tenantKey` of an audit without a tenant: index key attributes must be present.
+/// Reserved as a tenant id, since that tenant would list these audits as its own.
+pub const NO_TENANT: &str = "-";
+
 /// The outcome of an audited operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -158,6 +162,24 @@ impl From<&str> for ResourceId {
     }
 }
 
+impl From<String> for ResourceId {
+    fn from(id: String) -> Self {
+        ResourceId::String(id)
+    }
+}
+
+macro_rules! numeric_ids {
+    ($($int:ty),*) => {$(
+        impl From<$int> for ResourceId {
+            fn from(id: $int) -> Self {
+                ResourceId::Number(id.into())
+            }
+        }
+    )*};
+}
+
+numeric_ids!(i32, i64, u32, u64);
+
 /// A resource within an app: the target or source of an audit, or a related resource.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResourceReference {
@@ -169,6 +191,23 @@ pub struct ResourceReference {
     /// The resource type.
     #[serde(rename = "type")]
     pub resource_type: String,
+}
+
+impl ResourceReference {
+    /// A resource of `resource_type` in `app`, without an id.
+    pub fn new(app: impl Into<String>, resource_type: impl Into<String>) -> Self {
+        ResourceReference {
+            app: app.into(),
+            id: None,
+            resource_type: resource_type.into(),
+        }
+    }
+
+    /// Sets the resource's id.
+    pub fn with_id(mut self, id: impl Into<ResourceId>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
 }
 
 /// Audit metadata: string keys with string, number, boolean or nested object values.
@@ -214,10 +253,11 @@ impl<'de> Deserialize<'de> for Context {
     }
 }
 
-/// An ISO 8601 UTC timestamp, kept as given (`2026-01-02T03:04:05.678Z`).
+/// An ISO 8601 UTC timestamp, always with milliseconds
+/// (`2026-01-02T03:04:05.678Z`), whatever the precision it was given in.
 ///
-/// Stored timestamps are strings and `GSI2_SS_SK` embeds one, so the text is kept
-/// exactly rather than reformatted.
+/// Stored timestamps are strings and `createdAt` sorts every listing index, so
+/// they're compared as text: `03:04:05Z` would sort after `03:04:05.500Z`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct Timestamp(String);
 
@@ -236,19 +276,20 @@ impl fmt::Display for Timestamp {
 
 impl From<DateTime<chrono::Utc>> for Timestamp {
     fn from(time: DateTime<chrono::Utc>) -> Self {
-        Timestamp(lambda_kit::clock::to_iso_string(time))
+        Timestamp(time.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
     }
 }
 
 impl TryFrom<String> for Timestamp {
     type Error = String;
 
-    // zod's z.iso.datetime(): UTC ("Z"), any fractional precision
+    // zod's z.iso.datetime(): UTC ("Z"), any fractional precision. Kept with
+    // milliseconds, as `DateTimeStringSchema` does: `createdAt` is the sort key of
+    // every listing, compared as text
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        if value.ends_with('Z') && DateTime::parse_from_rfc3339(&value).is_ok() {
-            Ok(Timestamp(value))
-        } else {
-            Err(format!("expected an ISO 8601 UTC datetime, got {value:?}"))
+        match DateTime::parse_from_rfc3339(&value) {
+            Ok(time) if value.ends_with('Z') => Ok(Timestamp::from(time.to_utc())),
+            _ => Err(format!("expected an ISO 8601 UTC datetime, got {value:?}")),
         }
     }
 }
@@ -401,6 +442,54 @@ pub struct Audit {
     pub created_at: Option<Timestamp>,
 }
 
+/// An audit as a listing returns it (`AuditSummarySchema`): what tells audits apart,
+/// without the context, event, error or attempts. Fetch the audit for those.
+///
+/// Field order follows the TypeScript schema; other stored attributes (index keys,
+/// `scopes`) are ignored.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditSummary {
+    /// The audit's id.
+    pub id: String,
+    /// The tenant, for multi-tenant apps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
+    /// The latest outcome.
+    pub status: Status,
+    /// Who sees the audit.
+    #[serde(default)]
+    pub tier: Tier,
+    /// The operation's name.
+    pub operation: String,
+    /// A human-readable description. `null` reads as absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// The resource the operation acted on; for a related resource's copy, that
+    /// resource.
+    pub target: ResourceReference,
+    /// The resource that started the operation; for a related resource's copy, the
+    /// audit's target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<ResourceReference>,
+    /// Whether the recorded event can be re-sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerunable: Option<bool>,
+    /// `true` on a related resource's copy of an audit, which has the audit's id and
+    /// lists under that resource: fetch or rerun the audit by its `source`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub related: Option<bool>,
+    /// The trace, `{id}:{stage}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<String>,
+    /// When the audit was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<Timestamp>,
+    /// When the audit last changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<Timestamp>,
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -523,9 +612,26 @@ mod tests {
     }
 
     #[test]
-    fn validates_timestamps() {
-        assert!(Timestamp::try_from("2026-01-02T03:04:05.678Z".to_owned()).is_ok());
-        assert!(Timestamp::try_from("2026-01-02T03:04:05Z".to_owned()).is_ok());
+    fn validates_timestamps_and_keeps_milliseconds() {
+        let timestamp = |value: &str| Timestamp::try_from(value.to_owned()).map(|t| t.to_string());
+
+        // As text, every listing's sort key: `.6Z` would sort after `.678Z`
+        assert_eq!(
+            timestamp("2026-01-02T03:04:05.678Z").as_deref(),
+            Ok("2026-01-02T03:04:05.678Z")
+        );
+        assert_eq!(
+            timestamp("2026-01-02T03:04:05.6Z").as_deref(),
+            Ok("2026-01-02T03:04:05.600Z")
+        );
+        assert_eq!(
+            timestamp("2026-01-02T03:04:05Z").as_deref(),
+            Ok("2026-01-02T03:04:05.000Z")
+        );
+        assert_eq!(
+            timestamp("2026-01-02T03:04:05.678999Z").as_deref(),
+            Ok("2026-01-02T03:04:05.678Z")
+        );
         assert!(Timestamp::try_from("2026-01-02T03:04:05+01:00".to_owned()).is_err());
         assert!(Timestamp::try_from("yesterday".to_owned()).is_err());
     }

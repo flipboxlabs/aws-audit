@@ -1,5 +1,5 @@
 {
-  "description": "Audits of one resource by its id; the trace is rebuilt from index keys",
+  "description": "Summaries of one resource's audits, newest first, with the copies of audits naming it as a related resource",
   "operation": "listItems",
   "args": [
     {
@@ -15,46 +15,67 @@
       "service": "DynamoDB",
       "command": "Query",
       "input": {
+        "TableName": "TEST-Contract-Audit-v2",
+        "IndexName": "ByResource",
         "ScanIndexForward": false,
-        "IndexName": "GSI1_SS",
+        "KeyConditionExpression": "#k0 = :k0 AND #k1 = :k1 AND #k2 = :k2 AND #k3 = :k3",
+        "ExpressionAttributeNames": {
+          "#k0": "tenantKey",
+          "#k1": "app",
+          "#k2": "resourceType",
+          "#k3": "resourceId"
+        },
         "ExpressionAttributeValues": {
-          ":PK": {
-            "S": "App1.Order#order-1"
+          ":k0": {
+            "S": "-"
+          },
+          ":k1": {
+            "S": "App1"
+          },
+          ":k2": {
+            "S": "Order"
+          },
+          ":k3": {
+            "S": "order-1"
           }
         },
-        "ExpressionAttributeNames": {
-          "#PK": "GSI1_SS_PK"
-        },
-        "KeyConditionExpression": "#PK=:PK",
-        "TableName": "TEST-Contract-Audit",
         "Limit": 100
       },
       "output": {
         "Items": [
           {
             "PK": {
-              "S": "App1.Order"
+              "S": "-#App1#Order#audit-1"
             },
             "SK": {
+              "S": "audit"
+            },
+            "tenantKey": {
+              "S": "-"
+            },
+            "app": {
+              "S": "App1"
+            },
+            "resourceType": {
+              "S": "Order"
+            },
+            "resourceId": {
+              "S": "order-1"
+            },
+            "createdAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            },
+            "id": {
               "S": "audit-1"
-            },
-            "GSI1_SS_PK": {
-              "S": "App1.Order#order-1"
-            },
-            "GSI1_SS_SK": {
-              "S": "audit-1"
-            },
-            "GSI1_SN_PK": {
-              "S": "trace-1"
-            },
-            "GSI1_SN_SK": {
-              "N": "0"
-            },
-            "operation": {
-              "S": "createOrder"
             },
             "status": {
               "S": "success"
+            },
+            "tier": {
+              "N": "2"
+            },
+            "operation": {
+              "S": "createOrder"
             },
             "target": {
               "M": {
@@ -69,7 +90,80 @@
                 }
               }
             },
+            "trace": {
+              "S": "trace-1:2"
+            },
+            "updatedAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            }
+          },
+          {
+            "PK": {
+              "S": "-#App1#User#audit-2"
+            },
+            "SK": {
+              "S": "related#App1#Order#order-1"
+            },
+            "tenantKey": {
+              "S": "-"
+            },
+            "app": {
+              "S": "App1"
+            },
+            "resourceType": {
+              "S": "Order"
+            },
+            "resourceId": {
+              "S": "order-1"
+            },
             "createdAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            },
+            "id": {
+              "S": "audit-2"
+            },
+            "status": {
+              "S": "success"
+            },
+            "tier": {
+              "N": "2"
+            },
+            "operation": {
+              "S": "createOrder"
+            },
+            "target": {
+              "M": {
+                "app": {
+                  "S": "App1"
+                },
+                "type": {
+                  "S": "Order"
+                },
+                "id": {
+                  "S": "order-1"
+                }
+              }
+            },
+            "source": {
+              "M": {
+                "app": {
+                  "S": "App1"
+                },
+                "type": {
+                  "S": "User"
+                },
+                "id": {
+                  "S": "user-1"
+                }
+              }
+            },
+            "rerunable": {
+              "BOOL": false
+            },
+            "related": {
+              "BOOL": true
+            },
+            "updatedAt": {
               "S": "2026-01-02T03:04:05.678Z"
             }
           }
@@ -83,14 +177,35 @@
         "id": "audit-1",
         "status": "success",
         "tier": 2,
+        "operation": "createOrder",
         "target": {
           "app": "App1",
           "id": "order-1",
           "type": "Order"
         },
+        "trace": "trace-1:2",
+        "createdAt": "2026-01-02T03:04:05.678Z",
+        "updatedAt": "2026-01-02T03:04:05.678Z"
+      },
+      {
+        "id": "audit-2",
+        "status": "success",
+        "tier": 2,
         "operation": "createOrder",
-        "trace": "trace-1",
-        "createdAt": "2026-01-02T03:04:05.678Z"
+        "target": {
+          "app": "App1",
+          "id": "order-1",
+          "type": "Order"
+        },
+        "source": {
+          "app": "App1",
+          "id": "user-1",
+          "type": "User"
+        },
+        "rerunable": false,
+        "createdAt": "2026-01-02T03:04:05.678Z",
+        "updatedAt": "2026-01-02T03:04:05.678Z",
+        "related": true
       }
     ],
     "pagination": {}

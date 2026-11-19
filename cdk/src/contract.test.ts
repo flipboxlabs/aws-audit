@@ -4,7 +4,8 @@
  *
  * - `schemas/{detail,items,objects,status,trace}.response`: JSON Schema 2020-12 for
  *   the audits the REST API answers with, generated from the SDK's
- *   `AuditPayloadSchema`. The SDK still reads and writes the same table.
+ *   `AuditPayloadSchema` (a single audit) and `AuditSummarySchema` (listings). The
+ *   SDK still reads and writes the same table.
  * - `fixtures/layer`: the `audit-config.json` the config layer writes for the
  *   Rust Lambdas.
  *
@@ -18,7 +19,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as cdk from "aws-cdk-lib";
-import { AuditPayloadSchema, PaginationCollectionSchema } from "@flipboxlabs/aws-audit-sdk";
+import {
+  AuditPayloadSchema,
+  AuditSummarySchema,
+  PaginationCollectionSchema,
+} from "@flipboxlabs/aws-audit-sdk";
 import { z } from "zod";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import { ConfigLayerConstruct } from "./lambda/construct.js";
@@ -30,7 +35,7 @@ const LAYER = "../../contract/fixtures/layer";
 /** The fixtures' clock: an attempt's `at` defaults to the time the schema is built */
 const NOW = "2026-01-02T03:04:05.678Z";
 
-const AuditCollectionSchema = PaginationCollectionSchema(AuditPayloadSchema);
+const AuditCollectionSchema = PaginationCollectionSchema(AuditSummarySchema);
 
 /** Response schemas, by the route they answer */
 const RESPONSE_SCHEMAS = {
@@ -75,7 +80,6 @@ describe("contract", () => {
       const app = new cdk.App();
       new ConfigLayerConstruct(new cdk.Stack(app, "Contract"), "AuditConfigLayer", {
         apps: testConfig.apps,
-        resourceTypes: testConfig.resourceTypes,
       });
 
       const { directory } = app.synth();

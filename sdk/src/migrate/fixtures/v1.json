@@ -1,0 +1,1347 @@
+{
+  "1.4.1": [
+    {
+      "GSI2_SS_PK": {
+        "S": "success"
+      },
+      "GSI1_SS_PK": {
+        "S": "Jobs.Job#2"
+      },
+      "GSI1_SS_SK": {
+        "S": "3MIc2gXfqmKcp6CVb6iGyH3Geth"
+      },
+      "message": {
+        "S": "Synced"
+      },
+      "ttl": {
+        "N": "1802817316"
+      },
+      "LSI1_N_SK": {
+        "N": "21795041316938"
+      },
+      "target": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "2"
+          }
+        }
+      },
+      "createdAt": {
+        "S": "2026-11-18T22:35:16.937Z"
+      },
+      "tier": {
+        "N": "2"
+      },
+      "SK": {
+        "S": "3MIc2gXfqmKcp6CVb6iGyH3Geth"
+      },
+      "PK": {
+        "S": "Jobs.Job"
+      },
+      "id": {
+        "S": "3MIc2gXfqmKcp6CVb6iGyH3Geth"
+      },
+      "GSI2_SS_SK": {
+        "S": "2026-11-18T22:35:16.937Z#3MIc2gXfqmKcp6CVb6iGyH3Geth"
+      },
+      "operation": {
+        "S": "sync"
+      },
+      "attempts": {
+        "L": [
+          {
+            "M": {
+              "number": {
+                "N": "1"
+              },
+              "status": {
+                "S": "success"
+              },
+              "at": {
+                "S": "2026-11-18T22:35:16.937Z"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "S": "success"
+      },
+      "updatedAt": {
+        "S": "2026-11-18T22:35:16.937Z"
+      }
+    },
+    {
+      "GSI2_SS_PK": {
+        "S": "success"
+      },
+      "GSI1_SS_PK": {
+        "S": "Jobs.Job#1"
+      },
+      "GSI1_SS_SK": {
+        "S": "a"
+      },
+      "message": {
+        "S": "Synced"
+      },
+      "ttl": {
+        "N": "1802817316"
+      },
+      "LSI1_N_SK": {
+        "N": "21795041316915"
+      },
+      "target": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "1"
+          }
+        }
+      },
+      "createdAt": {
+        "S": "2026-11-18T22:35:16.915Z"
+      },
+      "tier": {
+        "N": "2"
+      },
+      "SK": {
+        "S": "a"
+      },
+      "PK": {
+        "S": "Jobs.Job"
+      },
+      "id": {
+        "S": "a"
+      },
+      "GSI2_SS_SK": {
+        "S": "2026-11-18T22:35:16.915Z#a"
+      },
+      "operation": {
+        "S": "sync"
+      },
+      "attempts": {
+        "L": [
+          {
+            "M": {
+              "number": {
+                "N": "1"
+              },
+              "status": {
+                "S": "success"
+              },
+              "at": {
+                "S": "2026-11-18T22:35:16.915Z"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "S": "success"
+      },
+      "updatedAt": {
+        "S": "2026-11-18T22:35:16.915Z"
+      }
+    },
+    {
+      "GSI2_SS_PK": {
+        "S": "success"
+      },
+      "GSI1_SS_PK": {
+        "S": "Jobs.Job#1"
+      },
+      "GSI1_SS_SK": {
+        "S": "a#CRM.Contact#7"
+      },
+      "message": {
+        "S": "Synced"
+      },
+      "ttl": {
+        "N": "1802817316"
+      },
+      "LSI1_N_SK": {
+        "N": "21795041316922"
+      },
+      "target": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "1"
+          }
+        }
+      },
+      "createdAt": {
+        "S": "2026-11-18T22:35:16.922Z"
+      },
+      "tier": {
+        "N": "2"
+      },
+      "SK": {
+        "S": "a#CRM.Contact#7"
+      },
+      "PK": {
+        "S": "Jobs.Job"
+      },
+      "id": {
+        "S": "a#CRM.Contact#7"
+      },
+      "GSI2_SS_SK": {
+        "S": "2026-11-18T22:35:16.922Z#a#CRM.Contact#7"
+      },
+      "operation": {
+        "S": "sync"
+      },
+      "attempts": {
+        "L": [
+          {
+            "M": {
+              "number": {
+                "N": "1"
+              },
+              "status": {
+                "S": "success"
+              },
+              "at": {
+                "S": "2026-11-18T22:35:16.922Z"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "S": "success"
+      },
+      "updatedAt": {
+        "S": "2026-11-18T22:35:16.922Z"
+      }
+    },
+    {
+      "GSI2_SS_PK": {
+        "S": "success"
+      },
+      "GSI1_SS_PK": {
+        "S": "Jobs.Job#1"
+      },
+      "GSI1_SS_SK": {
+        "S": "a#CRM.Contact#7#CRM.Contact#8"
+      },
+      "source": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "1"
+          }
+        }
+      },
+      "rerunable": {
+        "BOOL": false
+      },
+      "message": {
+        "S": "Synced"
+      },
+      "ttl": {
+        "N": "1802817316"
+      },
+      "LSI1_N_SK": {
+        "N": "21795041316926"
+      },
+      "target": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "1"
+          }
+        }
+      },
+      "createdAt": {
+        "S": "2026-11-18T22:35:16.926Z"
+      },
+      "tier": {
+        "N": "2"
+      },
+      "SK": {
+        "S": "a#CRM.Contact#7#CRM.Contact#8"
+      },
+      "PK": {
+        "S": "Jobs.Job"
+      },
+      "id": {
+        "S": "a#CRM.Contact#7#CRM.Contact#8"
+      },
+      "GSI2_SS_SK": {
+        "S": "2026-11-18T22:35:16.926Z#a#CRM.Contact#7#CRM.Contact#8"
+      },
+      "operation": {
+        "S": "sync"
+      },
+      "status": {
+        "S": "success"
+      },
+      "updatedAt": {
+        "S": "2026-11-18T22:35:16.926Z"
+      }
+    },
+    {
+      "GSI2_SS_PK": {
+        "S": "success"
+      },
+      "GSI1_SS_PK": {
+        "S": "Jobs.Job#1"
+      },
+      "GSI1_SS_SK": {
+        "S": "empty"
+      },
+      "message": {
+        "NULL": true
+      },
+      "ttl": {
+        "N": "1802817316"
+      },
+      "LSI1_N_SK": {
+        "N": "21795041316944"
+      },
+      "target": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "1"
+          }
+        }
+      },
+      "createdAt": {
+        "S": "2026-11-18T22:35:16.944Z"
+      },
+      "tier": {
+        "N": "2"
+      },
+      "SK": {
+        "S": "empty"
+      },
+      "context": {
+        "M": {
+          "note": {
+            "NULL": true
+          },
+          "nested": {
+            "M": {
+              "value": {
+                "NULL": true
+              }
+            }
+          }
+        }
+      },
+      "PK": {
+        "S": "Jobs.Job"
+      },
+      "id": {
+        "S": "empty"
+      },
+      "event": {
+        "M": {
+          "detail-type": {
+            "S": "Sync"
+          },
+          "source": {
+            "S": "jobs"
+          },
+          "detail": {
+            "NULL": true
+          }
+        }
+      },
+      "GSI2_SS_SK": {
+        "S": "2026-11-18T22:35:16.944Z#empty"
+      },
+      "operation": {
+        "NULL": true
+      },
+      "attempts": {
+        "L": [
+          {
+            "M": {
+              "number": {
+                "N": "1"
+              },
+              "status": {
+                "S": "success"
+              },
+              "at": {
+                "S": "2026-11-18T22:35:16.944Z"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "S": "success"
+      },
+      "updatedAt": {
+        "S": "2026-11-18T22:35:16.944Z"
+      }
+    },
+    {
+      "GSI2_SS_PK": {
+        "S": "success"
+      },
+      "GSI1_SS_PK": {
+        "S": "Jobs.Job#1"
+      },
+      "GSI1_SS_SK": {
+        "S": "job"
+      },
+      "message": {
+        "S": "Synced"
+      },
+      "ttl": {
+        "N": "1802817316"
+      },
+      "LSI1_N_SK": {
+        "N": "21795041316833"
+      },
+      "target": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "1"
+          }
+        }
+      },
+      "createdAt": {
+        "S": "2026-11-18T22:35:16.832Z"
+      },
+      "tier": {
+        "N": "2"
+      },
+      "SK": {
+        "S": "job"
+      },
+      "PK": {
+        "S": "Jobs.Job"
+      },
+      "id": {
+        "S": "job"
+      },
+      "GSI2_SS_SK": {
+        "S": "2026-11-18T22:35:16.832Z#job"
+      },
+      "operation": {
+        "S": "sync"
+      },
+      "attempts": {
+        "L": [
+          {
+            "M": {
+              "number": {
+                "N": "1"
+              },
+              "status": {
+                "S": "success"
+              },
+              "at": {
+                "S": "2026-11-18T22:35:16.832Z"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "S": "success"
+      },
+      "updatedAt": {
+        "S": "2026-11-18T22:35:16.832Z"
+      }
+    },
+    {
+      "GSI2_SS_PK": {
+        "S": "success"
+      },
+      "GSI1_SS_PK": {
+        "S": "Jobs.Job#1"
+      },
+      "GSI1_SS_SK": {
+        "S": "job#CRM.Contact#7"
+      },
+      "source": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "1"
+          }
+        }
+      },
+      "rerunable": {
+        "BOOL": false
+      },
+      "message": {
+        "S": "Synced"
+      },
+      "ttl": {
+        "N": "1802817316"
+      },
+      "LSI1_N_SK": {
+        "N": "21795041316894"
+      },
+      "target": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "1"
+          }
+        }
+      },
+      "createdAt": {
+        "S": "2026-11-18T22:35:16.894Z"
+      },
+      "tier": {
+        "N": "2"
+      },
+      "SK": {
+        "S": "job#CRM.Contact#7"
+      },
+      "PK": {
+        "S": "Jobs.Job"
+      },
+      "id": {
+        "S": "job#CRM.Contact#7"
+      },
+      "GSI2_SS_SK": {
+        "S": "2026-11-18T22:35:16.894Z#job#CRM.Contact#7"
+      },
+      "operation": {
+        "S": "sync"
+      },
+      "status": {
+        "S": "success"
+      },
+      "updatedAt": {
+        "S": "2026-11-18T22:35:16.894Z"
+      }
+    },
+    {
+      "GSI2_SS_PK": {
+        "S": "success"
+      },
+      "GSI1_SS_PK": {
+        "S": "Jobs.Job#1"
+      },
+      "GSI1_SS_SK": {
+        "S": "own"
+      },
+      "message": {
+        "S": "Synced"
+      },
+      "ttl": {
+        "N": "1802817316"
+      },
+      "LSI1_N_SK": {
+        "N": "21795041316931"
+      },
+      "target": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "1"
+          }
+        }
+      },
+      "createdAt": {
+        "S": "2026-11-18T22:35:16.931Z"
+      },
+      "tier": {
+        "N": "2"
+      },
+      "SK": {
+        "S": "own"
+      },
+      "PK": {
+        "S": "Jobs.Job"
+      },
+      "id": {
+        "S": "own"
+      },
+      "GSI2_SS_SK": {
+        "S": "2026-11-18T22:35:16.931Z#own"
+      },
+      "operation": {
+        "S": "sync"
+      },
+      "attempts": {
+        "L": [
+          {
+            "M": {
+              "number": {
+                "N": "1"
+              },
+              "status": {
+                "S": "success"
+              },
+              "at": {
+                "S": "2026-11-18T22:35:16.931Z"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "S": "success"
+      },
+      "updatedAt": {
+        "S": "2026-11-18T22:35:16.931Z"
+      }
+    },
+    {
+      "GSI2_SS_PK": {
+        "S": "success"
+      },
+      "GSI1_SS_PK": {
+        "S": "Jobs.Job#1"
+      },
+      "GSI1_SS_SK": {
+        "S": "own#Jobs.Job#7#Jobs.Job#1"
+      },
+      "source": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "1"
+          }
+        }
+      },
+      "rerunable": {
+        "BOOL": false
+      },
+      "message": {
+        "S": "Synced"
+      },
+      "ttl": {
+        "N": "1802817316"
+      },
+      "LSI1_N_SK": {
+        "N": "21795041316935"
+      },
+      "target": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "1"
+          }
+        }
+      },
+      "createdAt": {
+        "S": "2026-11-18T22:35:16.935Z"
+      },
+      "tier": {
+        "N": "2"
+      },
+      "SK": {
+        "S": "own#Jobs.Job#7#Jobs.Job#1"
+      },
+      "PK": {
+        "S": "Jobs.Job"
+      },
+      "id": {
+        "S": "own#Jobs.Job#7#Jobs.Job#1"
+      },
+      "GSI2_SS_SK": {
+        "S": "2026-11-18T22:35:16.935Z#own#Jobs.Job#7#Jobs.Job#1"
+      },
+      "operation": {
+        "S": "sync"
+      },
+      "status": {
+        "S": "success"
+      },
+      "updatedAt": {
+        "S": "2026-11-18T22:35:16.935Z"
+      }
+    },
+    {
+      "GSI2_SS_PK": {
+        "S": "success"
+      },
+      "GSI1_SS_PK": {
+        "S": "Jobs.Job#2"
+      },
+      "GSI1_SS_SK": {
+        "S": "undefined#CRM.Contact#9"
+      },
+      "source": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "2"
+          }
+        }
+      },
+      "rerunable": {
+        "BOOL": false
+      },
+      "message": {
+        "S": "Synced"
+      },
+      "ttl": {
+        "N": "1802817316"
+      },
+      "LSI1_N_SK": {
+        "N": "21795041316941"
+      },
+      "target": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "2"
+          }
+        }
+      },
+      "createdAt": {
+        "S": "2026-11-18T22:35:16.941Z"
+      },
+      "tier": {
+        "N": "2"
+      },
+      "SK": {
+        "S": "undefined#CRM.Contact#9"
+      },
+      "PK": {
+        "S": "Jobs.Job"
+      },
+      "id": {
+        "S": "undefined#CRM.Contact#9"
+      },
+      "GSI2_SS_SK": {
+        "S": "2026-11-18T22:35:16.941Z#undefined#CRM.Contact#9"
+      },
+      "operation": {
+        "S": "sync"
+      },
+      "status": {
+        "S": "success"
+      },
+      "updatedAt": {
+        "S": "2026-11-18T22:35:16.941Z"
+      }
+    },
+    {
+      "GSI2_SS_PK": {
+        "S": "success"
+      },
+      "GSI1_SS_PK": {
+        "S": "Jobs.Job#1"
+      },
+      "GSI1_SS_SK": {
+        "S": "x#CRM.Contact#7"
+      },
+      "message": {
+        "S": "Synced"
+      },
+      "ttl": {
+        "N": "1802817316"
+      },
+      "LSI1_N_SK": {
+        "N": "21795041316905"
+      },
+      "target": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "1"
+          }
+        }
+      },
+      "createdAt": {
+        "S": "2026-11-18T22:35:16.905Z"
+      },
+      "tier": {
+        "N": "2"
+      },
+      "SK": {
+        "S": "x#CRM.Contact#7"
+      },
+      "PK": {
+        "S": "Jobs.Job"
+      },
+      "id": {
+        "S": "x#CRM.Contact#7"
+      },
+      "GSI2_SS_SK": {
+        "S": "2026-11-18T22:35:16.905Z#x#CRM.Contact#7"
+      },
+      "operation": {
+        "S": "sync"
+      },
+      "attempts": {
+        "L": [
+          {
+            "M": {
+              "number": {
+                "N": "1"
+              },
+              "status": {
+                "S": "success"
+              },
+              "at": {
+                "S": "2026-11-18T22:35:16.905Z"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "S": "success"
+      },
+      "updatedAt": {
+        "S": "2026-11-18T22:35:16.905Z"
+      }
+    },
+    {
+      "GSI2_SS_PK": {
+        "S": "success"
+      },
+      "GSI1_SS_PK": {
+        "S": "Jobs.Job#1"
+      },
+      "GSI1_SS_SK": {
+        "S": "x#CRM.Contact#7#CRM.Contact#8"
+      },
+      "source": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "1"
+          }
+        }
+      },
+      "rerunable": {
+        "BOOL": false
+      },
+      "message": {
+        "S": "Synced"
+      },
+      "ttl": {
+        "N": "1802817316"
+      },
+      "LSI1_N_SK": {
+        "N": "21795041316911"
+      },
+      "target": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "1"
+          }
+        }
+      },
+      "createdAt": {
+        "S": "2026-11-18T22:35:16.911Z"
+      },
+      "tier": {
+        "N": "2"
+      },
+      "SK": {
+        "S": "x#CRM.Contact#7#CRM.Contact#8"
+      },
+      "PK": {
+        "S": "Jobs.Job"
+      },
+      "id": {
+        "S": "x#CRM.Contact#7#CRM.Contact#8"
+      },
+      "GSI2_SS_SK": {
+        "S": "2026-11-18T22:35:16.911Z#x#CRM.Contact#7#CRM.Contact#8"
+      },
+      "operation": {
+        "S": "sync"
+      },
+      "status": {
+        "S": "success"
+      },
+      "updatedAt": {
+        "S": "2026-11-18T22:35:16.911Z"
+      }
+    }
+  ],
+  "1.8.0": [
+    {
+      "GSI2_SS_PK": {
+        "S": "acme#success"
+      },
+      "GSI1_SS_PK": {
+        "S": "acme#Jobs.Job#1"
+      },
+      "GSI1_SS_SK": {
+        "S": "traced"
+      },
+      "message": {
+        "S": "Synced"
+      },
+      "ttl": {
+        "N": "1802817316"
+      },
+      "LSI1_N_SK": {
+        "N": "21795041316992"
+      },
+      "target": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "1"
+          }
+        }
+      },
+      "createdAt": {
+        "S": "2026-11-18T22:35:16.992Z"
+      },
+      "trace": {
+        "S": ":1"
+      },
+      "tier": {
+        "N": "2"
+      },
+      "SK": {
+        "S": "traced"
+      },
+      "tenantId": {
+        "S": "acme"
+      },
+      "GSI1_SN_SK": {
+        "N": "1"
+      },
+      "PK": {
+        "S": "acme#Jobs.Job"
+      },
+      "id": {
+        "S": "traced"
+      },
+      "GSI1_SN_PK": {
+        "S": "acme#"
+      },
+      "GSI2_SS_SK": {
+        "S": "2026-11-18T22:35:16.992Z#traced"
+      },
+      "operation": {
+        "S": "sync"
+      },
+      "attempts": {
+        "L": [
+          {
+            "M": {
+              "number": {
+                "N": "1"
+              },
+              "status": {
+                "S": "success"
+              },
+              "at": {
+                "S": "2026-11-18T22:35:16.992Z"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "S": "success"
+      },
+      "updatedAt": {
+        "S": "2026-11-18T22:35:16.992Z"
+      }
+    },
+    {
+      "GSI2_SS_PK": {
+        "S": "success"
+      },
+      "GSI1_SS_PK": {
+        "S": "CRM.Contact#9"
+      },
+      "GSI1_SS_SK": {
+        "S": "3MIc2e8dwmHSIEW5QGRgxc1kS8o#CRM.Contact#9"
+      },
+      "source": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "2"
+          }
+        }
+      },
+      "rerunable": {
+        "BOOL": false
+      },
+      "message": {
+        "S": "Synced"
+      },
+      "ttl": {
+        "N": "1802817316"
+      },
+      "LSI1_N_SK": {
+        "N": "21795041316989"
+      },
+      "target": {
+        "M": {
+          "app": {
+            "S": "CRM"
+          },
+          "type": {
+            "S": "Contact"
+          },
+          "id": {
+            "S": "9"
+          }
+        }
+      },
+      "createdAt": {
+        "S": "2026-11-18T22:35:16.989Z"
+      },
+      "tier": {
+        "N": "2"
+      },
+      "SK": {
+        "S": "3MIc2e8dwmHSIEW5QGRgxc1kS8o#CRM.Contact#9"
+      },
+      "PK": {
+        "S": "CRM.Contact"
+      },
+      "id": {
+        "S": "3MIc2e8dwmHSIEW5QGRgxc1kS8o#CRM.Contact#9"
+      },
+      "GSI2_SS_SK": {
+        "S": "2026-11-18T22:35:16.989Z#3MIc2e8dwmHSIEW5QGRgxc1kS8o#CRM.Contact#9"
+      },
+      "operation": {
+        "S": "sync"
+      },
+      "status": {
+        "S": "success"
+      },
+      "updatedAt": {
+        "S": "2026-11-18T22:35:16.989Z"
+      }
+    },
+    {
+      "GSI2_SS_PK": {
+        "S": "success"
+      },
+      "GSI1_SS_PK": {
+        "S": "CRM.Contact#7"
+      },
+      "GSI1_SS_SK": {
+        "S": "job#CRM.Contact#7"
+      },
+      "source": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "1"
+          }
+        }
+      },
+      "rerunable": {
+        "BOOL": false
+      },
+      "message": {
+        "S": "Synced"
+      },
+      "ttl": {
+        "N": "1802817316"
+      },
+      "LSI1_N_SK": {
+        "N": "21795041316981"
+      },
+      "target": {
+        "M": {
+          "app": {
+            "S": "CRM"
+          },
+          "type": {
+            "S": "Contact"
+          },
+          "id": {
+            "S": "7"
+          }
+        }
+      },
+      "createdAt": {
+        "S": "2026-11-18T22:35:16.981Z"
+      },
+      "tier": {
+        "N": "2"
+      },
+      "SK": {
+        "S": "job#CRM.Contact#7"
+      },
+      "PK": {
+        "S": "CRM.Contact"
+      },
+      "id": {
+        "S": "job#CRM.Contact#7"
+      },
+      "GSI2_SS_SK": {
+        "S": "2026-11-18T22:35:16.981Z#job#CRM.Contact#7"
+      },
+      "operation": {
+        "S": "sync"
+      },
+      "status": {
+        "S": "success"
+      },
+      "updatedAt": {
+        "S": "2026-11-18T22:35:16.981Z"
+      }
+    },
+    {
+      "GSI2_SS_PK": {
+        "S": "success"
+      },
+      "GSI1_SS_PK": {
+        "S": "Jobs.Job#2"
+      },
+      "GSI1_SS_SK": {
+        "S": "3MIc2e8dwmHSIEW5QGRgxc1kS8o"
+      },
+      "message": {
+        "S": "Synced"
+      },
+      "ttl": {
+        "N": "1802817316"
+      },
+      "LSI1_N_SK": {
+        "N": "21795041316985"
+      },
+      "target": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "2"
+          }
+        }
+      },
+      "createdAt": {
+        "S": "2026-11-18T22:35:16.985Z"
+      },
+      "tier": {
+        "N": "2"
+      },
+      "SK": {
+        "S": "3MIc2e8dwmHSIEW5QGRgxc1kS8o"
+      },
+      "PK": {
+        "S": "Jobs.Job"
+      },
+      "id": {
+        "S": "3MIc2e8dwmHSIEW5QGRgxc1kS8o"
+      },
+      "GSI2_SS_SK": {
+        "S": "2026-11-18T22:35:16.985Z#3MIc2e8dwmHSIEW5QGRgxc1kS8o"
+      },
+      "operation": {
+        "S": "sync"
+      },
+      "attempts": {
+        "L": [
+          {
+            "M": {
+              "number": {
+                "N": "1"
+              },
+              "status": {
+                "S": "success"
+              },
+              "at": {
+                "S": "2026-11-18T22:35:16.985Z"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "S": "success"
+      },
+      "updatedAt": {
+        "S": "2026-11-18T22:35:16.985Z"
+      }
+    },
+    {
+      "GSI2_SS_PK": {
+        "S": "success"
+      },
+      "GSI1_SS_PK": {
+        "S": "Jobs.Job#1"
+      },
+      "GSI1_SS_SK": {
+        "S": "job"
+      },
+      "message": {
+        "S": "Synced"
+      },
+      "ttl": {
+        "N": "1802817316"
+      },
+      "LSI1_N_SK": {
+        "N": "21795041316977"
+      },
+      "target": {
+        "M": {
+          "app": {
+            "S": "Jobs"
+          },
+          "type": {
+            "S": "Job"
+          },
+          "id": {
+            "S": "1"
+          }
+        }
+      },
+      "createdAt": {
+        "S": "2026-11-18T22:35:16.976Z"
+      },
+      "tier": {
+        "N": "2"
+      },
+      "SK": {
+        "S": "job"
+      },
+      "PK": {
+        "S": "Jobs.Job"
+      },
+      "id": {
+        "S": "job"
+      },
+      "GSI2_SS_SK": {
+        "S": "2026-11-18T22:35:16.976Z#job"
+      },
+      "operation": {
+        "S": "sync"
+      },
+      "attempts": {
+        "L": [
+          {
+            "M": {
+              "number": {
+                "N": "1"
+              },
+              "status": {
+                "S": "success"
+              },
+              "at": {
+                "S": "2026-11-18T22:35:16.976Z"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "S": "success"
+      },
+      "updatedAt": {
+        "S": "2026-11-18T22:35:16.976Z"
+      }
+    }
+  ]
+}

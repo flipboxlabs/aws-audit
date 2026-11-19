@@ -22,8 +22,7 @@ const synth = () => {
   });
   const eventBus = new events.EventBus(stack, "Bus");
   const layer = new ConfigLayerConstruct(stack, "AuditConfigLayer", {
-    apps: ["App1"],
-    resourceTypes: ["Order"],
+    apps: { App1: ["Order"] },
   });
 
   new CloudWatchConstruct(stack, "CloudWatch", {
@@ -53,6 +52,23 @@ describe("CloudWatchConstruct", () => {
   it("should retry failed invocations twice", () => {
     synth().hasResourceProperties("AWS::Lambda::EventInvokeConfig", {
       MaximumRetryAttempts: 2,
+    });
+  });
+
+  it("should let the subscription read an audit back and delete a stale copy, as well as write", () => {
+    synth().hasResourceProperties("AWS::IAM::Policy", {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: Match.arrayWith([
+              "dynamodb:GetItem",
+              "dynamodb:PutItem",
+              "dynamodb:UpdateItem",
+              "dynamodb:DeleteItem",
+            ]),
+          }),
+        ]),
+      },
     });
   });
 

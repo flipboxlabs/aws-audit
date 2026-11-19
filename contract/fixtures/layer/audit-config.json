@@ -1,1 +1,1 @@
-{"apps":["App1","TestApp"],"resourceTypes":["Unknown","User","Order"]}
+{"apps":{"App1":["Unknown","User","Order"],"TestApp":["User","Order"]}}

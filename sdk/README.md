@@ -92,6 +92,79 @@ try {
 
 `AuditRepository.getItem` resolves `undefined` only when the item does not exist; any other failure rejects.
 
+## Listing
+
+`AuditService` lists audits by resource type (`listObjects`), resource
+(`listItems`), status (`listByStatus`) and trace (`listTraceItems`). Each returns
+a page of `AuditSummary` (no `context`, `event`, `error` or `attempts`; `getItem`
+returns the whole audit), newest first, or by stage then oldest first for a trace.
+Each takes `operation` and `tier` filters; the status and trace listings also take
+`app` and `resource` (`type`, and `id` together with both), which match an
+audit's target or any of its related resources.
+
+The resource and resource type listings also hold a copy of each audit that names
+the resource as a related resource. A copy has the audit's id, the resource as
+`target`, the audit's target as `source`, and `related: true`: fetch or rerun the
+audit by its `source`. A retry keeps the fields it leaves out, and each copy it
+writes shows the audit as stored, with them; a retry whose target has no id no
+longer lists under the earlier target's resource, and one with an empty `trace` no
+longer lists under the earlier trace. A retry that changes the target's id also
+removes the targets it replaces from `scopes`, so the status and trace filters stop
+matching them: every resource of the target's app and type there but the target,
+unless the retry lists it as related or a copy under it (one consistent `GetItem`
+each) still lists the audit there. Only the upsert that appended the latest
+attempt removes them, so it also removes those an overlapping retry left to it,
+and it reads the copies again afterwards; a copy put meanwhile, like each
+upsert's own copies once it reads the audit back, puts its resource's scopes back. A trace without an id, such as `:2`, is
+stored but lists under no trace, as an index key can't be empty. Once it writes the copies, `upsertItem`
+reads the audit back (`dynamodb:GetItem`, as well as `UpdateItem` and `PutItem`),
+in case the migration from 1.x merged it in the meantime. A retry whose target
+has an id also deletes any copy under that target (`dynamodb:DeleteItem`), since
+an earlier attempt may have listed the resource as related and the audit now
+lists there itself. A related resource whose copy's sort key would be over
+DynamoDB's 1,024-byte limit gets no copy, with a warning, rather than failing an
+upsert whose audit is already stored.
+
+```typescript
+const { items, pagination } = await service.listByStatus(
+  { status: "fail", app: "Orders", resource: { type: "Order" }, tier: 1 },
+  { pageSize: 50 },
+);
+```
+
+Filters apply after a page is read, so a filtered page can hold fewer items than
+its size, or none, while `pagination.nextToken` continues the listing.
+
+The tenant id `-` is reserved: it keys the audits without a tenant. An audit with
+it fails validation, and a listing for it throws `ReservedTenantError`. An empty
+tenant id is no tenant.
+
+## Migrating from 1.x
+
+The config lists each app's resource types, replacing the separate `apps` and
+`resourceTypes` lists. An audit's type must be one of its app's, and naming the
+app narrows the type in the typed options (`InferResourceType<typeof config, "Orders">`).
+Names may hold only letters, digits, `-` and `_`, as they are REST API path
+segments; `defineAuditConfig` throws on any other.
+
+```typescript
+// 1.x
+defineAuditConfig({ apps: ["Orders", "Inventory"], resourceTypes: ["Order", "Product"] });
+// 2.0
+defineAuditConfig({ apps: { Orders: ["Order"], Inventory: ["Product"] } });
+```
+
+2.0 stores audits in a new table, `{ENV}-{service}-Audit-v2`. After deploying
+`@flipboxlabs/aws-audit-cdk` 2.0, copy the 1.x audits with the bundled CLI:
+
+```bash
+npx -p @flipboxlabs/aws-audit-sdk aws-audit-migrate --from PROD-Orders-Audit --to PROD-Orders-Audit-v2
+```
+
+`--dry-run` reads and transforms without writing. The migration is also
+available as `migrate` from `@flipboxlabs/aws-audit-sdk/migrate`. See the
+[CDK upgrade steps](../cdk/README.md#upgrading-from-1x).
+
 ## Features
 
 - Audit logging with structured data

@@ -17,8 +17,8 @@ use futures_util::stream;
 use lambda_kit::logging::ErrorChain;
 use serde_json::Value;
 
-/// The key an audit is logged under (`AUDIT_LOG_IDENTIFIER` in the TypeScript SDK).
-pub const AUDIT_LOG_IDENTIFIER: &str = "_audit";
+/// The key an audit is logged under.
+pub use aws_audit::log::AUDIT_LOG_IDENTIFIER;
 
 /// How many audits are stored at once.
 const CONCURRENCY: usize = 32;

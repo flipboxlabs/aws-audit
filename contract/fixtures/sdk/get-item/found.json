@@ -1,5 +1,5 @@
 {
-  "description": "GetItem by app, type and id; a stored string trace is returned as stored",
+  "description": "GetItem by app, type and id returns the whole audit without storage attributes",
   "operation": "getItem",
   "args": [
     {
@@ -13,23 +13,23 @@
       "service": "DynamoDB",
       "command": "GetItem",
       "input": {
-        "TableName": "TEST-Contract-Audit",
+        "TableName": "TEST-Contract-Audit-v2",
         "Key": {
           "PK": {
-            "S": "App1.Order"
+            "S": "-#App1#Order#audit-1"
           },
           "SK": {
-            "S": "audit-1"
+            "S": "audit"
           }
         }
       },
       "output": {
         "Item": {
           "PK": {
-            "S": "App1.Order"
+            "S": "-#App1#Order#audit-1"
           },
           "SK": {
-            "S": "audit-1"
+            "S": "audit"
           },
           "id": {
             "S": "audit-1"
@@ -38,7 +38,7 @@
             "S": "createOrder"
           },
           "status": {
-            "S": "success"
+            "S": "fail"
           },
           "tier": {
             "N": "2"
@@ -62,14 +62,83 @@
           "updatedAt": {
             "S": "2026-01-02T03:04:05.678Z"
           },
-          "trace": {
-            "S": "trace-1:0"
+          "tenantKey": {
+            "S": "-"
           },
-          "GSI1_SN_PK": {
+          "app": {
+            "S": "App1"
+          },
+          "resourceType": {
+            "S": "Order"
+          },
+          "resourceId": {
+            "S": "order-1"
+          },
+          "kind": {
+            "S": "audit"
+          },
+          "scopes": {
+            "SS": [
+              "App1",
+              "App1#Order",
+              "*#Order",
+              "App1#Order#order-1"
+            ]
+          },
+          "ttl": {
+            "N": "1775099045"
+          },
+          "trace": {
+            "S": "trace-1:2"
+          },
+          "traceId": {
             "S": "trace-1"
           },
-          "GSI1_SN_SK": {
-            "N": "0"
+          "traceStage": {
+            "N": "2"
+          },
+          "error": {
+            "S": "Boom"
+          },
+          "attempts": {
+            "L": [
+              {
+                "M": {
+                  "number": {
+                    "N": "1"
+                  },
+                  "status": {
+                    "S": "fail"
+                  },
+                  "error": {
+                    "S": "Boom"
+                  },
+                  "at": {
+                    "S": "2026-01-02T03:04:05.678Z"
+                  }
+                }
+              }
+            ]
+          },
+          "context": {
+            "M": {
+              "region": {
+                "S": "us-east-1"
+              }
+            }
+          },
+          "event": {
+            "M": {
+              "source": {
+                "S": "orders"
+              },
+              "detail-type": {
+                "S": "OrderCreated"
+              },
+              "detail": {
+                "S": "{}"
+              }
+            }
           }
         }
       }
@@ -77,15 +146,32 @@
   ],
   "result": {
     "id": "audit-1",
-    "status": "success",
+    "status": "fail",
     "tier": 2,
     "target": {
       "app": "App1",
       "id": "order-1",
       "type": "Order"
     },
+    "context": {
+      "region": "us-east-1"
+    },
     "operation": "createOrder",
-    "trace": "trace-1:0",
+    "trace": "trace-1:2",
+    "event": {
+      "source": "orders",
+      "detail-type": "OrderCreated",
+      "detail": "{}"
+    },
+    "error": "Boom",
+    "attempts": [
+      {
+        "number": 1,
+        "status": "fail",
+        "error": "Boom",
+        "at": "2026-01-02T03:04:05.678Z"
+      }
+    ],
     "updatedAt": "2026-01-02T03:04:05.678Z",
     "createdAt": "2026-01-02T03:04:05.678Z"
   }

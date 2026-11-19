@@ -34,15 +34,14 @@ contract/
 
 Every fixture is generated with the same environment, so the requests are deterministic:
 
-| Input                    | Value                                                                                         |
-| ------------------------ | --------------------------------------------------------------------------------------------- |
-| Apps                     | `App1`, `TestApp`                                                                             |
-| Resource types           | `Unknown`, `User`, `Order`                                                                    |
-| `ENVIRONMENT`, `SERVICE` | `test`, `Contract`, so the table and event bus are both `TEST-Contract-Audit`                 |
-| Clock                    | `2026-01-02T03:04:05.678Z`, for `createdAt`, `updatedAt`, attempt `at`, `LSI1_N_SK` and `ttl` |
-| Retry jitter             | `Math.random()` is `0.5`                                                                      |
-| Audit ids                | Always given in the input. Generated ids are KSUIDs, which no fixture covers.                 |
-| `AWS_AUDIT_CDK_VERSION`  | `0.0.0-contract`                                                                              |
+| Input                    | Value                                                                                                |
+| ------------------------ | ---------------------------------------------------------------------------------------------------- |
+| Apps and resource types  | `App1`: `Unknown`, `User`, `Order`; `TestApp`: `User`, `Order`                                       |
+| `ENVIRONMENT`, `SERVICE` | `test`, `Contract`, so the table is `TEST-Contract-Audit-v2` and the event bus `TEST-Contract-Audit` |
+| Clock                    | `2026-01-02T03:04:05.678Z`, for `createdAt`, `updatedAt`, attempt `at` and `ttl`                     |
+| Retry jitter             | `Math.random()` is `0.5`                                                                             |
+| Audit ids                | Always given in the input. Generated ids are KSUIDs, which no fixture covers.                        |
+| `AWS_AUDIT_CDK_VERSION`  | `0.0.0-contract`                                                                                     |
 
 ## SDK fixtures
 
@@ -66,7 +65,7 @@ Every fixture is generated with the same environment, so the requests are determ
 
 To replay one: answer each call with its `output` (or throw its `error`) in order, assert each request equals `input`, then assert the result or error.
 
-Responses to index queries hold only what the index projects: the table keys, the index's keys and `DynamoDB.Projections.LISTING`.
+Responses to index queries hold only what the index projects: the table keys, the index's keys and `DynamoDB.Projections.SUMMARY`.
 
 ## HTTP fixtures
 

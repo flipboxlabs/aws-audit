@@ -1,0 +1,17 @@
+{
+  "description": "The tenant id of audits without a tenant is refused before any read",
+  "operation": "getItem",
+  "args": [
+    {
+      "tenantId": "-",
+      "app": "App1",
+      "resourceType": "Order",
+      "id": "audit-1"
+    }
+  ],
+  "calls": [],
+  "error": {
+    "name": "ReservedTenantError",
+    "message": "Tenant id \"-\" is reserved for audits without a tenant"
+  }
+}

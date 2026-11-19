@@ -1,9 +1,12 @@
 {
-  "description": "Audits of a resource type",
+  "description": "Summaries of a resource type's audits, newest first; filter[operation] keeps one operation's",
   "route": "GET /apps/{app}/objects/{object}",
   "request": {
     "method": "GET",
-    "path": "/apps/App1/objects/Order"
+    "path": "/apps/App1/objects/Order",
+    "query": {
+      "filter[operation]": "createOrder"
+    }
   },
   "calls": [
     {
@@ -11,27 +14,40 @@
       "command": "Query",
       "input": {
         "ScanIndexForward": false,
-        "IndexName": "LSI1_N",
+        "IndexName": "ByType",
         "ExpressionAttributeValues": {
-          ":PK": {
-            "S": "App1.Order"
+          ":k0": {
+            "S": "-"
+          },
+          ":k1": {
+            "S": "App1"
+          },
+          ":k2": {
+            "S": "Order"
+          },
+          ":operation": {
+            "S": "createOrder"
           }
         },
         "ExpressionAttributeNames": {
-          "#PK": "PK"
+          "#k0": "tenantKey",
+          "#k1": "app",
+          "#k2": "resourceType",
+          "#operation": "operation"
         },
-        "KeyConditionExpression": "#PK=:PK",
-        "TableName": "TEST-Contract-Audit",
-        "Limit": 100
+        "KeyConditionExpression": "#k0 = :k0 AND #k1 = :k1 AND #k2 = :k2",
+        "TableName": "TEST-Contract-Audit-v2",
+        "Limit": 100,
+        "FilterExpression": "#operation = :operation"
       },
       "output": {
         "Items": [
           {
             "PK": {
-              "S": "App1.Order"
+              "S": "-#App1#Order#audit-1"
             },
             "SK": {
-              "S": "audit-1"
+              "S": "audit"
             },
             "id": {
               "S": "audit-1"
@@ -64,11 +80,17 @@
             "updatedAt": {
               "S": "2026-01-02T03:04:05.678Z"
             },
-            "LSI1_N_SK": {
-              "N": "21767323445678"
-            },
             "trace": {
               "S": "trace-1:0"
+            },
+            "tenantKey": {
+              "S": "-"
+            },
+            "app": {
+              "S": "App1"
+            },
+            "resourceType": {
+              "S": "Order"
             }
           }
         ]

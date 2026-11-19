@@ -1,0 +1,15 @@
+{
+  "description": "The tenant id of audits without a tenant is refused before any query",
+  "operation": "listByStatus",
+  "args": [
+    {
+      "tenantId": "-",
+      "status": "fail"
+    }
+  ],
+  "calls": [],
+  "error": {
+    "name": "ReservedTenantError",
+    "message": "Tenant id \"-\" is reserved for audits without a tenant"
+  }
+}

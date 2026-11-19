@@ -1,5 +1,5 @@
 {
-  "description": "Without a stored trace, the trace is rebuilt from the GSI1_SN keys",
+  "description": "A trace stored as NULL (an empty trace) is left out",
   "operation": "getItem",
   "args": [
     {
@@ -13,23 +13,23 @@
       "service": "DynamoDB",
       "command": "GetItem",
       "input": {
-        "TableName": "TEST-Contract-Audit",
+        "TableName": "TEST-Contract-Audit-v2",
         "Key": {
           "PK": {
-            "S": "App1.Order"
+            "S": "-#App1#Order#audit-1"
           },
           "SK": {
-            "S": "audit-1"
+            "S": "audit"
           }
         }
       },
       "output": {
         "Item": {
           "PK": {
-            "S": "App1.Order"
+            "S": "-#App1#Order#audit-1"
           },
           "SK": {
-            "S": "audit-1"
+            "S": "audit"
           },
           "id": {
             "S": "audit-1"
@@ -62,11 +62,34 @@
           "updatedAt": {
             "S": "2026-01-02T03:04:05.678Z"
           },
-          "GSI1_SN_PK": {
-            "S": "trace-1"
+          "tenantKey": {
+            "S": "-"
           },
-          "GSI1_SN_SK": {
-            "N": "2"
+          "app": {
+            "S": "App1"
+          },
+          "resourceType": {
+            "S": "Order"
+          },
+          "resourceId": {
+            "S": "order-1"
+          },
+          "kind": {
+            "S": "audit"
+          },
+          "scopes": {
+            "SS": [
+              "App1",
+              "App1#Order",
+              "*#Order",
+              "App1#Order#order-1"
+            ]
+          },
+          "ttl": {
+            "N": "1775099045"
+          },
+          "trace": {
+            "NULL": true
           }
         }
       }
@@ -82,7 +105,6 @@
       "type": "Order"
     },
     "operation": "createOrder",
-    "trace": "trace-1:2",
     "updatedAt": "2026-01-02T03:04:05.678Z",
     "createdAt": "2026-01-02T03:04:05.678Z"
   }

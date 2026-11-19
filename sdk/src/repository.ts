@@ -1,80 +1,74 @@
 import type { Logger } from "@aws-lambda-powertools/logger";
 import {
-  BatchGetItemCommand,
-  BatchWriteItemCommand,
+  DeleteItemCommand,
   DynamoDBClient,
   GetItemCommand,
+  PutItemCommand,
   QueryCommand,
   UpdateItemCommand,
-  type WriteRequest,
 } from "@aws-sdk/client-dynamodb";
 import type { NativeAttributeValue } from "@aws-sdk/util-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { DEFAULT_TTL_SECONDS, type AuditConfig } from "./config.js";
-import { DynamoDB } from "./constants.js";
-import { InvalidNextTokenError } from "./errors.js";
+import { DynamoDB, type IndexDefinition } from "./constants.js";
+import {
+  InvalidNextTokenError,
+  InvalidResourceFilterError,
+  ReservedTenantError,
+} from "./errors.js";
 import {
   decodeNextPageToken,
   encodeNextPageToken,
   type PageKey,
   type PageKeySchema,
 } from "./repository.utils.js";
-import { type Audit, AuditPayloadSchema, AuditSchema } from "./schema/audit.js";
+import { type Audit, AuditSchema, AuditSummarySchema } from "./schema/audit.js";
+import type { AnyTier, ResourceReference } from "./schema/common.js";
 import type { AnyStatus } from "./schema/log.js";
 import { type Pagination, PaginationCollectionSchema } from "./schema/model.js";
 import type { UpsertAuditInput } from "./schema/service.js";
 import { type AuditStorage, AuditStorageSchema } from "./schema/storage.js";
 import type { AnyApp, AnyResourceType, InferApp, InferResourceType } from "./types.js";
-import { backoffDelay } from "./retry.js";
 import { getTraceParts, hasResourceId } from "./utils.js";
 
-const TABLE_KEY_SCHEMA = {
-  [DynamoDB.Keys.PARTITION_KEY]: "string",
-  [DynamoDB.Keys.SORT_KEY]: "string",
+const { Attributes, Indexes, Keys } = DynamoDB;
+
+/**
+ * An empty string is written as one, not as NULL (`convertEmptyValues`): the
+ * schemas don't accept a null in its place, so an item wouldn't read back as written.
+ */
+const MARSHALL_OPTIONS = {
+  removeUndefinedValues: true,
+  convertClassInstanceToMap: true,
 } as const;
 
 /**
- * Each listing index's LastEvaluatedKey: the table keys plus the index's own, with
- * their attribute types. A nextToken must decode to exactly these.
+ * An index's LastEvaluatedKey: the table keys plus the index's own, with their
+ * attribute types. A nextToken must decode to exactly these.
  */
-const PAGE_KEY_SCHEMAS = {
-  [DynamoDB.Indexes.LSI1_N]: {
-    ...TABLE_KEY_SCHEMA,
-    [DynamoDB.Keys.LSI1_N_SORT_KEY]: "number",
-  },
-  [DynamoDB.Indexes.GSI1_SS]: {
-    ...TABLE_KEY_SCHEMA,
-    [DynamoDB.Keys.GSI1_SS_PARTITION_KEY]: "string",
-    [DynamoDB.Keys.GSI1_SS_SORT_KEY]: "string",
-  },
-  [DynamoDB.Indexes.GSI1_SN]: {
-    ...TABLE_KEY_SCHEMA,
-    [DynamoDB.Keys.GSI1_SN_PARTITION_KEY]: "string",
-    [DynamoDB.Keys.GSI1_SN_SORT_KEY]: "number",
-  },
-  [DynamoDB.Indexes.GSI2_SS]: {
-    ...TABLE_KEY_SCHEMA,
-    [DynamoDB.Keys.GSI2_SS_PARTITION_KEY]: "string",
-    [DynamoDB.Keys.GSI2_SS_SORT_KEY]: "string",
-  },
-} as const satisfies Record<string, PageKeySchema>;
+const pageKeySchema = (index: IndexDefinition): PageKeySchema => ({
+  [Keys.PARTITION_KEY]: "string",
+  [Keys.SORT_KEY]: "string",
+  ...Object.fromEntries(
+    [...index.partitionKeys, ...index.sortKeys].map((key) => [key.name, key.type]),
+  ),
+});
 
 /**
  * Decodes a listing's nextToken into its ExclusiveStartKey.
  *
  * DynamoDB rejects a start key outside the queried partition, so a token issued for
- * another status, trace, resource or tenant is refused here instead.
+ * another resource, status, trace or tenant is refused here instead.
  *
  * @throws {InvalidNextTokenError} When the token isn't one this query could have returned
  */
 function exclusiveStartKey(
   nextToken: string | null | undefined,
-  index: keyof typeof PAGE_KEY_SCHEMAS,
-  partitionKey: string,
-  partition: string,
+  index: IndexDefinition,
+  partition: Record<string, string>,
 ): PageKey | undefined {
-  const key = decodeNextPageToken(nextToken, PAGE_KEY_SCHEMAS[index]);
-  if (key !== undefined && key[partitionKey] !== partition) {
+  const key = decodeNextPageToken(nextToken, pageKeySchema(index));
+  if (key !== undefined && Object.entries(partition).some(([name, value]) => key[name] !== value)) {
     throw new InvalidNextTokenError();
   }
 
@@ -94,86 +88,26 @@ export interface TTLAttribute {
  */
 export type UnmarshalledAttributes = { [key: string]: NativeAttributeValue };
 
-/** Resource type alias for DynamoDB key construction */
-type ResourceType = AnyResourceType;
-
-/** Resource identifier string type */
-type ResourceId = string;
-
-/** Audit record identifier type */
-type Id = string;
-
-/** Trace identifier type for distributed tracing */
-type TraceId = string;
-
-/** Tenant identifier type for multi-tenancy */
-type TenantId = string;
-
-/** DynamoDB partition key base format: {app}.{resourceType} */
-type PKBase = `${AnyApp}.${ResourceType}`;
-
-/** DynamoDB partition key format: optionally prefixed with {tenantId}# */
-type PK = PKBase | `${TenantId}#${PKBase}`;
-
-/** DynamoDB sort key format: {id} */
-type SK = `${Id}`;
-
 /**
- * DynamoDB primary key structure.
- * Uses composite key pattern with partition key (PK) and sort key (SK).
+ * DynamoDB primary key structure: the audit's partition, and `audit` or a
+ * related-resource copy's sort key.
  */
 type DynamoDBPrimaryKey = {
-  [DynamoDB.Keys.PARTITION_KEY]: PK;
-  [DynamoDB.Keys.SORT_KEY]: SK;
-};
-
-/** GSI partition key for trace queries: {traceId} or {tenantId}#{traceId} */
-type TraceGSIPK = `${TraceId}` | `${TenantId}#${TraceId}`;
-/** GSI sort key for trace queries: trace depth/stage number */
-type TraceGSISK = number;
-
-/**
- * DynamoDB GSI keys for trace-based queries.
- * Uses GSI1_SN (String-Number) index for trace lookups.
- */
-type DynamoDBTraceGSIKeys = {
-  [DynamoDB.Keys.GSI1_SN_PARTITION_KEY]?: TraceGSIPK;
-  [DynamoDB.Keys.GSI1_SN_SORT_KEY]?: TraceGSISK;
-};
-
-/** GSI partition key base for resource listing: {app}.{resourceType}#{resourceId} or {app}.{resourceType} */
-type GSI1PKBase = `${PKBase}#${ResourceId}` | PKBase;
-/** GSI partition key for resource listing: optionally prefixed with {tenantId}# */
-type GSI1PK = GSI1PKBase | `${TenantId}#${GSI1PKBase}`;
-/** GSI sort key for resource listing: {id} */
-type GSI1SK = `${Id}`;
-
-/** Status value type for status-based queries */
-type StatusValue = AnyStatus;
-
-/** GSI2 partition key base for status queries: {status} */
-type GSI2PKBase = `${StatusValue}`;
-/** GSI2 partition key for status queries: optionally prefixed with {tenantId}# */
-type GSI2PK = GSI2PKBase | `${TenantId}#${GSI2PKBase}`;
-/** GSI2 sort key for status queries: {createdAt}#{id} for date ordering with uniqueness */
-type GSI2SK = string;
-
-/**
- * DynamoDB GSI keys for resource-based listing queries.
- * Uses GSI1_SS (String-String) index for resource lookups.
- */
-type DynamoDBGSI1Keys = {
-  [DynamoDB.Keys.GSI1_SS_PARTITION_KEY]: GSI1PK;
-  [DynamoDB.Keys.GSI1_SS_SORT_KEY]: GSI1SK;
+  [DynamoDB.Keys.PARTITION_KEY]: string;
+  [DynamoDB.Keys.SORT_KEY]: string;
 };
 
 /**
- * DynamoDB GSI keys for status-based listing queries.
- * Uses GSI2_SS (String-String) index for status lookups with date ordering.
+ * The top-level attributes the index keys are built from.
  */
-type DynamoDBGSI2Keys = {
-  [DynamoDB.Keys.GSI2_SS_PARTITION_KEY]: GSI2PK;
-  [DynamoDB.Keys.GSI2_SS_SORT_KEY]: GSI2SK;
+export type IndexAttributes = {
+  tenantKey: string;
+  app: string;
+  resourceType: string;
+  resourceId?: string;
+  kind?: typeof DynamoDB.Kinds.AUDIT;
+  traceId?: string;
+  traceStage?: number;
 };
 
 /**
@@ -194,210 +128,387 @@ export type Identifiers = {
 };
 
 /**
- * Generic identifiers with typed App and ResourceType from config.
+ * Each app of the config with one of its resource types, as `{ app, resourceType }`.
  * @typeParam C - The audit config type for type inference
  */
-export type TypedIdentifiers<C extends AuditConfig> = {
+type TypedAppResourceType<C extends AuditConfig> = {
+  [A in InferApp<C>]: {
+    /** Application that owns this audit record */
+    app: A;
+    /** Type of resource being audited, one of the app's */
+    resourceType: InferResourceType<C, A>;
+  };
+}[InferApp<C>];
+
+/**
+ * An audit's key, with typed App and ResourceType from config: naming the app
+ * narrows the resource type to that app's. (`Omit` on {@link TypedIdentifiers}
+ * would lose that, as it doesn't distribute over each app.)
+ * @typeParam C - The audit config type for type inference
+ */
+export type TypedAuditIdentifiers<C extends AuditConfig> = TypedAppResourceType<C> & {
   /** Tenant/organization identifier for multi-tenancy support (optional) */
   tenantId?: string;
   /** Unique audit record identifier */
   id: string | number;
-  /** Application that owns this audit record */
-  app: InferApp<C>;
+};
+
+/**
+ * Generic identifiers with typed App and ResourceType from config: naming the app
+ * narrows the resource type to that app's.
+ * @typeParam C - The audit config type for type inference
+ */
+export type TypedIdentifiers<C extends AuditConfig> = TypedAuditIdentifiers<C> & {
   /** Optional resource identifier within the application */
   resourceId?: string | number;
-  /** Type of resource being audited */
-  resourceType: InferResourceType<C>;
 };
 
 /**
- * Combined secondary key structure for DynamoDB indexes.
- * Includes GSI keys for both string-string and string-number indexes,
- * plus LSI sort key for tier-based sorting.
+ * Filters every listing takes. They're applied as a DynamoDB filter expression,
+ * after a page is read, so a filtered page can hold fewer items than its size
+ * (or none) while a nextToken continues the listing.
  */
-type SecondaryKeys = DynamoDBGSI1Keys &
-  DynamoDBGSI2Keys &
-  DynamoDBTraceGSIKeys & {
-    [DynamoDB.Keys.LSI1_N_SORT_KEY]: number;
-  };
+export type ListFilters = {
+  /** Only audits of this operation (exact match) */
+  operation?: string;
+  /** Only audits of this tier */
+  tier?: AnyTier;
+};
 
 /**
- * Complete DynamoDB item structure combining audit data with all keys.
- * Represents the full item as stored in DynamoDB.
- */
-type DynamoDBItem = AuditStorage & TTLAttribute & DynamoDBPrimaryKey & SecondaryKeys;
-
-/**
- * Subset of audit storage attributes used for listing operations.
- * Reduces data transfer by only including essential display fields.
- */
-type ListingAttributes = Pick<
-  AuditStorage,
-  | "operation"
-  | "status"
-  | "message"
-  | "source"
-  | "target"
-  | "rerunable"
-  | "createdAt"
-  | "updatedAt"
-  | "attempts"
-  | "error"
-  | "event"
->;
-
-/**
- * Item structure returned from trace-based queries.
- * Includes listing attributes plus trace GSI keys for ordering.
- */
-type TraceListingItem = ListingAttributes &
-  Pick<DynamoDBPrimaryKey, "PK" | "SK"> &
-  Pick<SecondaryKeys, "GSI1_SN_PK" | "GSI1_SN_SK">;
-
-/**
- * Item structure returned from resource-based listing queries.
- * Extends trace listing with resource GSI keys.
- */
-type ListingItem = TraceListingItem & Pick<SecondaryKeys, "GSI1_SS_PK" | "GSI1_SS_SK">;
-
-/**
- * Item structure returned from status-based listing queries.
- * Includes listing attributes plus status GSI keys for ordering.
- */
-type StatusListingItem = ListingAttributes &
-  Pick<DynamoDBPrimaryKey, "PK" | "SK"> &
-  Pick<SecondaryKeys, "GSI2_SS_PK" | "GSI2_SS_SK">;
-
-/**
- * Options for listing audit objects by resource with typed App and ResourceType.
+ * Filters on the audit's resources, for the status and trace listings. They match
+ * the audit's target or any of its related resources. With an app, the type is one
+ * of that app's; without one, a type matches it under every app. A resource id is
+ * matched only together with its app and type.
  * @typeParam C - The audit config type for type inference
  */
-export type TypedListObjectsOptions<C extends AuditConfig> = {
+export type TypedResourceFilters<C extends AuditConfig> =
+  | {
+      /** No application filter */
+      app?: undefined;
+      /** Optional resource filter */
+      resource?: {
+        /** Filter by resource type, under any app that has it */
+        type?: InferResourceType<C>;
+        /** Filter by resource ID; needs `app` and `resource.type` */
+        id?: string | number;
+      };
+    }
+  | {
+      [A in InferApp<C>]: {
+        /** Application filter */
+        app: A;
+        /** Optional resource filter */
+        resource?: {
+          /** Filter by resource type, one of the app's */
+          type?: InferResourceType<C, A>;
+          /** Filter by resource ID; needs `app` and `resource.type` */
+          id?: string | number;
+        };
+      };
+    }[InferApp<C>];
+
+/**
+ * Options for listing audit objects by resource with typed App and ResourceType:
+ * naming the app narrows the resource type to that app's.
+ * @typeParam C - The audit config type for type inference
+ */
+export type TypedListObjectsOptions<C extends AuditConfig> = ListFilters & {
   /** Tenant/organization identifier for multi-tenancy support (optional) */
   tenantId?: string;
-  /** Resource identification */
-  resource: {
-    /** Type of the resource */
-    type: InferResourceType<C>;
-  };
-  /** Application owning the resource */
-  app: InferApp<C>;
-};
+} & {
+    [A in InferApp<C>]: {
+      /** Application owning the resource */
+      app: A;
+      /** Resource identification */
+      resource: {
+        /** Type of the resource, one of the app's */
+        type: InferResourceType<C, A>;
+      };
+    };
+  }[InferApp<C>];
 
 /**
- * Options for listing audit items by resource with typed App and ResourceType.
+ * Options for listing audit items by resource with typed App and ResourceType:
+ * naming the app narrows the resource type to that app's.
  * @typeParam C - The audit config type for type inference
  */
-export type TypedListItemsOptions<C extends AuditConfig> = Omit<
-  TypedListObjectsOptions<C>,
-  "resource"
-> & {
-  resource: {
-    /** Type of the resource */
-    type: InferResourceType<C>;
-    /** Unique identifier of the resource */
-    id: string;
-  };
-};
+export type TypedListItemsOptions<C extends AuditConfig> = ListFilters & {
+  /** Tenant/organization identifier for multi-tenancy support (optional) */
+  tenantId?: string;
+} & {
+    [A in InferApp<C>]: {
+      /** Application owning the resource */
+      app: A;
+      /** Resource identification */
+      resource: {
+        /** Type of the resource, one of the app's */
+        type: InferResourceType<C, A>;
+        /** Unique identifier of the resource */
+        id: string | number;
+      };
+    };
+  }[InferApp<C>];
 
 /**
  * Options for listing audit items by trace ID with typed App and ResourceType.
  * @typeParam C - The audit config type for type inference
  */
-export type TypedListTraceItems<C extends AuditConfig> = {
-  /** Tenant/organization identifier for multi-tenancy support (optional) */
-  tenantId?: string;
-  /** Trace ID to query for related audit records */
-  trace: string;
-  /** Optional application filter */
-  app?: InferApp<C>;
-  /** Optional resource filter */
-  resource?: {
-    /** Filter by resource type */
-    type?: InferResourceType<C>;
-    /** Filter by resource ID */
-    id?: string;
+export type TypedListTraceItems<C extends AuditConfig> = ListFilters &
+  TypedResourceFilters<C> & {
+    /** Tenant/organization identifier for multi-tenancy support (optional) */
+    tenantId?: string;
+    /** Trace ID to query for related audit records */
+    trace: string;
   };
-};
 
 /**
  * Options for listing audit items by status with typed App and ResourceType.
  * @typeParam C - The audit config type for type inference
  */
-export type TypedListByStatusOptions<C extends AuditConfig> = {
-  /** Tenant/organization identifier for multi-tenancy support (optional) */
-  tenantId?: string;
-  /** Status to filter by (success, warn, fail, skip) */
-  status: AnyStatus;
-  /** Optional application filter */
-  app?: InferApp<C>;
-  /** Optional resource filter */
-  resource?: {
-    /** Filter by resource type */
-    type?: InferResourceType<C>;
-    /** Filter by resource ID */
-    id?: string;
+export type TypedListByStatusOptions<C extends AuditConfig> = ListFilters &
+  TypedResourceFilters<C> & {
+    /** Tenant/organization identifier for multi-tenancy support (optional) */
+    tenantId?: string;
+    /** Status to filter by (success, warn, fail, skip) */
+    status: AnyStatus;
   };
-};
 
 /**
- * Builds the filter shared by index listings that narrow on the audit target.
+ * Joins the parts of a key or `scopes` value with `#`, escaping `%`, `#` and `*` in
+ * each (as `%25`, `%23` and `%2A`), so distinct parts never join to the same value:
+ * a tenant and an audit id holding a `#` would otherwise share a partition with
+ * another tenant's audit.
  *
- * App and resource values live on the nested `target` map (`target.app`,
- * `target.type`, `target.id`), so the filters address them through expression
- * attribute names. Audits recorded against additional resources carry a
- * compound sort key. Without a target filter they are excluded, so each audit
- * is listed once. With one they are kept, so an audit matches on any of its
- * resources; the listing maps them back to their parent with
- * {@link AuditRepository.resolveRelatedItems}.
- *
- * @param params - Optional app and resource filters
- * @returns Filter conditions plus the attribute names and values they reference
+ * @example
+ * ```typescript
+ * joinKey("tenant-1", "App1", "Order", "a#1"); // "tenant-1#App1#Order#a%231"
+ * ```
  * @internal
  */
-function buildTargetFilter(params: { app?: string; resource?: { type?: string; id?: string } }) {
-  const filters: string[] = [];
-  const ExpressionAttributeValues: UnmarshalledAttributes = {};
+export function joinKey(...parts: (string | number)[]): string {
+  return parts
+    .map((part) =>
+      String(part).replace(/[%#*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`),
+    )
+    .join("#");
+}
+
+/**
+ * What an audit's `scopes` attribute holds for one of its resources: everything a
+ * resource filter can name it by (`{app}`, `{app}#{type}`, `*#{type}` and
+ * `{app}#{type}#{id}`, each part escaped by {@link joinKey}).
+ *
+ * @internal
+ */
+export function resourceScopes(resource: ResourceReference): string[] {
+  const scopes = [
+    joinKey(resource.app),
+    joinKey(resource.app, resource.type),
+    `*#${joinKey(resource.type)}`,
+  ];
+  if (hasResourceId(resource.id)) {
+    scopes.push(joinKey(resource.app, resource.type, resource.id));
+  }
+  return scopes;
+}
+
+/**
+ * The `scopes` value a resource filter matches.
+ *
+ * @throws {InvalidResourceFilterError} When a resource id is given without its app and type
+ * @internal
+ */
+export function filterScope(filters: {
+  app?: string;
+  resource?: { type?: string; id?: string | number };
+}): string | undefined {
+  const { app, resource } = filters;
+
+  if (hasResourceId(resource?.id)) {
+    if (!app || !resource.type) {
+      throw new InvalidResourceFilterError();
+    }
+    return joinKey(app, resource.type, resource.id);
+  }
+
+  if (app && resource?.type) return joinKey(app, resource.type);
+  if (app) return joinKey(app);
+  if (resource?.type) return `*#${joinKey(resource.type)}`;
+  return undefined;
+}
+
+/**
+ * Builds a listing's filter expression from its filters.
+ *
+ * @param filters - Operation, tier and the `scopes` value to match, each optional
+ * @returns The expression with its names and values, or undefined when nothing filters
+ * @internal
+ */
+function buildFilter(filters: ListFilters & { scope?: string }) {
+  const conditions: string[] = [];
   const ExpressionAttributeNames: Record<string, string> = {};
+  const ExpressionAttributeValues: UnmarshalledAttributes = {};
 
-  if (params?.resource?.id) {
-    Object.assign(ExpressionAttributeValues, {
-      ":resourceId": params.resource.id,
-    });
-    ExpressionAttributeNames["#target"] = "target";
-    ExpressionAttributeNames["#id"] = "id";
-    filters.push("#target.#id = :resourceId");
+  if (filters.operation !== undefined) {
+    conditions.push("#operation = :operation");
+    ExpressionAttributeNames["#operation"] = "operation";
+    ExpressionAttributeValues[":operation"] = filters.operation;
   }
 
-  if (params?.resource?.type) {
-    Object.assign(ExpressionAttributeValues, {
-      ":resourceType": params.resource.type,
-    });
-    ExpressionAttributeNames["#target"] = "target";
-    ExpressionAttributeNames["#type"] = "type";
-    filters.push("#target.#type = :resourceType");
+  if (filters.tier !== undefined) {
+    conditions.push("#tier = :tier");
+    ExpressionAttributeNames["#tier"] = "tier";
+    ExpressionAttributeValues[":tier"] = filters.tier;
   }
 
-  if (params?.app) {
-    Object.assign(ExpressionAttributeValues, {
-      ":app": params.app,
-    });
-    ExpressionAttributeNames["#target"] = "target";
-    ExpressionAttributeNames["#app"] = "app";
-    filters.push("#target.#app = :app");
+  if (filters.scope !== undefined) {
+    conditions.push("contains(#scopes, :scope)");
+    ExpressionAttributeNames["#scopes"] = Attributes.SCOPES;
+    ExpressionAttributeValues[":scope"] = filters.scope;
   }
 
-  // Audits with other resources will have a compound id, filter these out unless a target
-  // filter could match them (the listing maps them back to their parent)
-  if (filters.length === 0) {
-    Object.assign(ExpressionAttributeValues, { ":isParent": "#" });
-    filters.push("not contains(SK, :isParent)");
+  if (conditions.length === 0) {
+    return undefined;
   }
 
   return {
-    FilterExpression: filters.join(" AND "),
+    FilterExpression: conditions.join(" AND "),
     ExpressionAttributeNames,
     ExpressionAttributeValues,
+  };
+}
+
+/**
+ * The tenant part of every index key.
+ *
+ * @throws {ReservedTenantError} For the tenant id `-`, the key of audits without a
+ *   tenant, which a listing would otherwise return as that tenant's
+ */
+function tenantKey(tenantId?: string): string {
+  if (tenantId === DynamoDB.NO_TENANT) {
+    throw new ReservedTenantError();
+  }
+  return tenantId || DynamoDB.NO_TENANT;
+}
+
+/**
+ * Constructs the DynamoDB primary key of an audit: `PK`
+ * `{tenantKey}#{app}#{type}#{id}`, each part escaped by {@link joinKey}, with `-`
+ * as the tenant of an audit without one.
+ *
+ * @param identifiers - Object containing tenantId (optional), app, id, and resourceType
+ * @returns Primary key object with PK and SK attributes
+ * @throws {ReservedTenantError} For the tenant id `-`, which would read an audit
+ *   without a tenant
+ * @internal
+ */
+export function constructPrimaryKey({
+  tenantId,
+  app,
+  id,
+  resourceType,
+}: Omit<Identifiers, "resourceId">): DynamoDBPrimaryKey {
+  return {
+    [Keys.PARTITION_KEY]: joinKey(tenantKey(tenantId), app, resourceType, id),
+    [Keys.SORT_KEY]: DynamoDB.SortKeys.AUDIT,
+  };
+}
+
+/**
+ * The sort key of an audit's copy under a related resource:
+ * `related#{app}#{type}#{id}`, each part escaped by {@link joinKey}.
+ *
+ * @internal
+ */
+export function relatedSortKey(resource: ResourceReference): string {
+  return `${DynamoDB.SortKeys.RELATED_PREFIX}${joinKey(resource.app, resource.type, resource.id ?? "")}`;
+}
+
+/**
+ * DynamoDB's largest partition and sort key attribute values, in bytes.
+ *
+ * @internal
+ */
+export const KEY_BYTES = { partition: 2048, sort: 1024 } as const;
+
+/**
+ * Whether a copy keyed `sortKey` ({@link relatedSortKey}) can be stored: a
+ * resource id may be longer than a sort key allows.
+ */
+const fitsSortKey = (sortKey: string) => Buffer.byteLength(sortKey) <= KEY_BYTES.sort;
+
+/**
+ * Constructs the top-level attributes the index keys are built from.
+ *
+ * The resource id is stored as a string, so numeric and string ids list together.
+ * Only audits get `kind` and the trace attributes, which keeps copies out of
+ * `ByStatus` and `ByTrace`; an audit whose trace has no id (`:2`) gets no trace
+ * attributes either.
+ *
+ * @param item - The audit, or a related-resource copy
+ * @param kind - Whether the item is the audit or a copy
+ * @returns The index attributes
+ * @internal
+ */
+export function constructIndexAttributes(
+  item: Pick<AuditStorage, "tenantId" | "target" | "trace">,
+  kind: (typeof DynamoDB.Kinds)[keyof typeof DynamoDB.Kinds],
+): IndexAttributes {
+  const audit = kind === DynamoDB.Kinds.AUDIT;
+  const trace = audit && item.trace ? getTraceParts(item.trace) : undefined;
+
+  return {
+    tenantKey: tenantKey(item.tenantId),
+    app: item.target.app,
+    resourceType: item.target.type,
+    // A numeric id of 0 is an id; only a missing or empty one is left out
+    ...(hasResourceId(item.target.id) ? { resourceId: String(item.target.id) } : {}),
+    ...(audit ? { kind: DynamoDB.Kinds.AUDIT } : {}),
+    // A trace without an id (`:2`) lists under none, as an index key can't be empty
+    ...(trace?.id ? { traceId: trace.id, traceStage: trace.stage } : {}),
+  };
+}
+
+/**
+ * The copy of an audit, as stored, that lists it under a related resource: the
+ * audit's summary, with the resource as `target`, the audit's target as `source`
+ * and `related: true`, in the audit's partition (`SK`
+ * `related#{app}#{type}#{resourceId}`), as `revision`, the audit's attempt count.
+ *
+ * @param audit - The audit as stored
+ * @param resource - The related resource, with an id
+ * @param options - The copy's `revision` and `ttl`
+ * @returns The copy's attributes
+ * @internal
+ */
+export function relatedCopy(
+  audit: AuditStorage,
+  resource: ResourceReference,
+  { revision, ttl }: { revision: number; ttl?: number },
+): UnmarshalledAttributes {
+  const target = { app: resource.app, type: resource.type, id: resource.id };
+  const copy = {
+    ...AuditSummarySchema.parse(audit),
+    target,
+    source: audit.target,
+    rerunable: audit.rerunable ?? !!audit.event,
+    related: true,
+  };
+  const { PK } = constructPrimaryKey({
+    tenantId: audit.tenantId,
+    id: audit.id,
+    resourceType: audit.target.type,
+    app: audit.target.app,
+  });
+
+  return {
+    [Keys.PARTITION_KEY]: PK,
+    [Keys.SORT_KEY]: relatedSortKey(target),
+    ...copy,
+    ...constructIndexAttributes(copy, DynamoDB.Kinds.RELATED),
+    ...(ttl === undefined ? {} : { [Attributes.TTL]: ttl }),
+    [Attributes.REVISION]: revision,
   };
 }
 
@@ -406,20 +517,18 @@ function buildTargetFilter(params: { app?: string; resource?: { type?: string; i
  *
  * Provides CRUD operations for audit records with support for:
  * - Single item retrieval by identifiers
- * - Batch upsert operations with automatic batching
- * - Paginated listing by resource
- * - Paginated listing by trace ID for distributed tracing
+ * - Atomic upserts with attempt tracking, plus a copy per related resource
+ * - Paginated listing by resource type, resource, status and trace, newest first
  *
- * The repository uses a single-table design with composite keys and
- * multiple GSI/LSI indexes for efficient query patterns.
+ * See {@link DynamoDB} for the table's items and indexes. Listings return
+ * {@link AuditSummarySchema summaries}; {@link getItem} returns the whole audit.
  *
  * @typeParam C - The audit config type for type inference
  *
  * @example
  * ```typescript
  * const config = defineAuditConfig({
- *   apps: ['Orders', 'Inventory'] as const,
- *   resourceTypes: ['Order', 'Product'] as const,
+ *   apps: { Orders: ['Order'], Inventory: ['Product'] },
  * });
  * const repository = new AuditRepository(logger, config);
  *
@@ -430,16 +539,10 @@ function buildTargetFilter(params: { app?: string; resource?: { type?: string; i
  *   resourceType: 'Order',   // Autocomplete works
  * });
  *
- * // Upsert multiple audit records
- * await repository.upsertBatch([
- *   { operation: 'createUser', status: 'success', ... },
- *   { operation: 'updateUser', status: 'success', ... },
- * ]);
- *
  * // List audits for a specific resource
  * const { items, pagination } = await repository.listItems({
  *   app: 'Orders',
- *   resource: { type: 'Order', id: 'user-123' },
+ *   resource: { type: 'Order', id: 'order-123' },
  * });
  * ```
  */
@@ -469,6 +572,7 @@ export class AuditRepository<C extends AuditConfig> {
    *
    * @param identifiers - Object containing id, app, and resourceType to locate the record
    * @returns The audit record if found, undefined otherwise
+   * @throws {ReservedTenantError} If the tenant id is `-`
    * @throws The underlying error if the DynamoDB request or schema parsing fails
    *
    * @example
@@ -484,22 +588,18 @@ export class AuditRepository<C extends AuditConfig> {
    * }
    * ```
    */
-  public async getItem(
-    identifiers: Omit<TypedIdentifiers<C>, "resourceId">,
-  ): Promise<Audit | undefined> {
+  public async getItem(identifiers: TypedAuditIdentifiers<C>): Promise<Audit | undefined> {
+    // The caller's mistake, so not logged
+    const key = constructPrimaryKey(identifiers);
     try {
       const { Item: item } = await this.client.send(
         new GetItemCommand({
           TableName: DynamoDB.Table.Name(),
-          Key: marshall(this.constructPrimaryKey(identifiers), {
-            removeUndefinedValues: true,
-            convertEmptyValues: true,
-            convertClassInstanceToMap: true,
-          }),
+          Key: marshall(key, MARSHALL_OPTIONS),
         }),
       );
 
-      return item ? this.transformItem(unmarshall(item) as DynamoDBItem) : undefined;
+      return item ? AuditSchema.parse(withoutNulls(unmarshall(item))) : undefined;
     } catch (error) {
       this.logger.error("Failed to read audit item", {
         identifiers,
@@ -511,345 +611,37 @@ export class AuditRepository<C extends AuditConfig> {
   }
 
   /**
-   * Upserts multiple audit records in batch.
-   *
-   * Performs a DynamoDB BatchWriteItem operation, automatically chunking
-   * items into batches of 25 (DynamoDB's maximum batch size).
-   * Each item is enriched with:
-   * - Primary keys (PK, SK)
-   * - Secondary index keys (GSI1_SS, GSI1_SN, LSI1_N)
-   * - TTL attribute (90 days from creation)
-   * - Timestamps (createdAt, updatedAt)
-   *
-   * @param items - Array of audit records to upsert
-   * @returns True when the operation completes (retries unprocessed items with exponential backoff; throws if max retries exceeded)
-   *
-   * @example
-   * ```typescript
-   * await repository.upsertBatch([
-   *   {
-   *     operation: 'createUser',
-   *     status: 'success',
-   *     tier: 2,
-   *     target: { app: App.App1, type: ResourceType.USER, id: 'user-123' },
-   *   },
-   *   {
-   *     operation: 'updateUser',
-   *     status: 'success',
-   *     tier: 2,
-   *     target: { app: App.App1, type: ResourceType.USER, id: 'user-456' },
-   *   },
-   * ]);
-   * ```
-   */
-  public async upsertBatch(items: Array<UpsertAuditInput>): Promise<boolean> {
-    const BATCH_SIZE = 25;
-
-    const updatedAt = new Date();
-
-    const Items: WriteRequest[] = await Promise.all(
-      items.map((item): WriteRequest => {
-        const payload = AuditStorageSchema.parse({
-          createdAt: updatedAt,
-          ...item,
-          updatedAt: updatedAt,
-        });
-
-        return {
-          PutRequest: {
-            Item: marshall(
-              {
-                ...this.constructPrimaryKey({
-                  tenantId: payload.tenantId,
-                  id: payload.id,
-                  resourceType: payload.target.type,
-                  app: payload.target.app,
-                }),
-                ...this.constructSecondaryKeys(payload),
-                ...this.constructTTLAttribute(this.config.ttlSeconds),
-                ...payload,
-              },
-              {
-                removeUndefinedValues: true,
-                convertEmptyValues: true,
-                convertClassInstanceToMap: true,
-              },
-            ),
-          },
-        };
-      }),
-    );
-
-    const ItemBatches: WriteRequest[][] = [];
-
-    // Chunk into batches of 25 (DynamoDB BatchWriteItem limit)
-    for (let i = 0, j = Items.length; i < j; i += BATCH_SIZE) {
-      ItemBatches.push(Items.slice(i, i + BATCH_SIZE));
-    }
-
-    // Process batches sequentially to reduce risk of triggering additional throttling
-    for (const ItemBatch of ItemBatches) {
-      await this.writeBatchWithRetry(ItemBatch, DynamoDB.Table.Name());
-    }
-
-    return true;
-  }
-
-  /**
-   * Sends a batch request, resending its unprocessed part with exponential backoff.
-   *
-   * DynamoDB's batch operations can return unprocessed items when throttled or under
-   * transient errors without throwing an exception. This method retries them automatically.
-   *
-   * @param label - Operation and item noun for logs and errors (e.g. `BatchWriteItem`, `items`)
-   * @param request - The first request to send
-   * @param send - Sends a request and returns its unprocessed part with its size, or
-   *   undefined when everything was processed
-   * @param maxRetries - Maximum number of retry attempts (default: 8)
-   * @param baseDelayMs - Delay ceiling in milliseconds before the first retry, doubling after
-   *   each; the delay is jittered (see {@link backoffDelay}) (default: 100)
-   * @throws Error if unprocessed items remain after maxRetries attempts
-   * @internal
-   */
-  private async sendBatchWithRetry<R>(
-    label: { operation: string; noun: string },
-    request: R,
-    send: (request: R) => Promise<{ unprocessed: R; count: number } | undefined>,
-    maxRetries = 8,
-    baseDelayMs = 100,
-  ): Promise<void> {
-    let attempt = 0;
-
-    for (;;) {
-      const remaining = await send(request);
-      if (!remaining) {
-        return; // all items processed
-      }
-
-      attempt++;
-      if (attempt > maxRetries) {
-        this.logger.error(
-          `${label.operation}: unprocessed ${label.noun} remain after max retries`,
-          {
-            unprocessed: remaining.unprocessed,
-            attempt,
-          },
-        );
-        throw new Error(
-          `${label.operation} failed: unprocessed ${label.noun} after ${maxRetries} retries`,
-        );
-      }
-
-      const delayMs = backoffDelay(attempt, baseDelayMs);
-      this.logger.warn(`${label.operation}: retrying unprocessed ${label.noun}`, {
-        count: remaining.count,
-        attempt,
-        delayMs,
-      });
-
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-      request = remaining.unprocessed;
-    }
-  }
-
-  /**
-   * Writes a batch of items to DynamoDB, retrying unprocessed items with exponential backoff.
-   *
-   * @param items - Array of WriteRequests to send
-   * @param tableName - Target DynamoDB table name
-   * @throws Error if unprocessed items remain after the maximum retries
-   * @internal
-   */
-  private async writeBatchWithRetry(items: WriteRequest[], tableName: string): Promise<void> {
-    await this.sendBatchWithRetry(
-      { operation: "BatchWriteItem", noun: "items" },
-      { [tableName]: items },
-      async (RequestItems) => {
-        const { UnprocessedItems: unprocessed } = await this.client.send(
-          new BatchWriteItemCommand({ RequestItems }),
-        );
-
-        return unprocessed && Object.keys(unprocessed).length > 0
-          ? {
-              unprocessed: unprocessed as Record<string, WriteRequest[]>,
-              count: Object.values(unprocessed).flat().length,
-            }
-          : undefined;
-      },
-    );
-  }
-
-  /**
-   * Reads items by primary key, retrying unprocessed keys with exponential backoff.
-   *
-   * Keys are chunked into batches of 100 (DynamoDB's BatchGetItem limit). Items that
-   * don't exist are absent from the result.
-   *
-   * @param keys - Primary keys of the items to read
-   * @param attributes - Attributes to project
-   * @returns The items found, unmarshalled
-   * @throws Error if unprocessed keys remain after the maximum retries
-   * @internal
-   */
-  private async getBatchWithRetry(
-    keys: DynamoDBPrimaryKey[],
-    attributes: ReadonlyArray<string>,
-  ): Promise<UnmarshalledAttributes[]> {
-    const BATCH_SIZE = 100;
-    const tableName = DynamoDB.Table.Name();
-
-    const ExpressionAttributeNames = Object.fromEntries(
-      attributes.map((attribute, i) => [`#a${i}`, attribute]),
-    );
-    const ProjectionExpression = Object.keys(ExpressionAttributeNames).join(", ");
-
-    const items: UnmarshalledAttributes[] = [];
-
-    for (let i = 0; i < keys.length; i += BATCH_SIZE) {
-      await this.sendBatchWithRetry(
-        { operation: "BatchGetItem", noun: "keys" },
-        keys.slice(i, i + BATCH_SIZE).map((key) => marshall(key)),
-        async (Keys) => {
-          const response = await this.client.send(
-            new BatchGetItemCommand({
-              RequestItems: {
-                [tableName]: { Keys, ProjectionExpression, ExpressionAttributeNames },
-              },
-            }),
-          );
-
-          items.push(...(response.Responses?.[tableName] ?? []).map((item) => unmarshall(item)));
-
-          const unprocessed = response.UnprocessedKeys?.[tableName]?.Keys ?? [];
-          return unprocessed.length > 0 ? { unprocessed, count: unprocessed.length } : undefined;
-        },
-      );
-    }
-
-    return items;
-  }
-
-  /**
-   * Replaces related-resource rows in a listing page with their parent audits.
-   *
-   * `AuditService.upsertItem` writes a copy of an audit per additional resource, with a
-   * compound sort key (`{parentId}#{app}.{type}#{resourceId}`), the resource as `target`
-   * and the parent's target as `source`. When a target filter matches such a copy, the
-   * parent is listed in its place. Parents are identified by their full primary key (ids
-   * are only unique within a partition): a parent row's own key, or for a copy
-   * `[{tenantId}#]{source.app}.{source.type}` and the parent id.
-   *
-   * Parents not already on the page are read from the table, limited to the attributes the
-   * listing indexes project so they have the same shape as index rows. They're kept only
-   * while they're still in the queried index partition (a copy can be stale, e.g. after the
-   * audit moves to another status). Each parent is listed once, at the position of its first
-   * matching row.
-   *
-   * Limitations:
-   * - Deduplication is per page: when an audit's rows match on different pages, the audit
-   *   is listed on each of them.
-   * - A fetched parent takes its copy's position, which follows the copy's index sort key.
-   *   Copies are rewritten on every upsert, so in a status listing a copy's sort key can
-   *   carry a newer `createdAt` than its parent's, placing the parent out of date order.
-   *
-   * @param items - Listing page, in index order
-   * @param partition - Index partition key attribute and the value queried, plus the
-   *   index keys to read for fetched parents
-   * @param tenantId - Tenant the query was made with, if any
-   * @returns The page with related-resource rows mapped to their parents
-   * @internal
-   */
-  private async resolveRelatedItems<
-    T extends Pick<DynamoDBPrimaryKey, "PK" | "SK"> & Pick<ListingAttributes, "source">,
-  >(
-    items: T[],
-    partition: { key: string; value: string; attributes: ReadonlyArray<string> },
-    tenantId?: string,
-  ): Promise<T[]> {
-    const isRelated = (item: T) => item.SK.includes("#");
-
-    if (!items.some(isRelated)) {
-      return items;
-    }
-
-    const keyOf = (key: Pick<DynamoDBPrimaryKey, "PK" | "SK">) => JSON.stringify([key.PK, key.SK]);
-
-    // Primary key of the audit each row lists; a copy without a source has none
-    const parentKeys = items.map((item) => {
-      if (!isRelated(item)) {
-        return { PK: item.PK, SK: item.SK };
-      }
-
-      return item.source
-        ? this.constructPrimaryKey({
-            tenantId,
-            id: item.SK.split("#")[0],
-            app: item.source.app,
-            resourceType: item.source.type,
-          })
-        : undefined;
-    });
-
-    const parents = new Map(items.filter((i) => !isRelated(i)).map((i) => [keyOf(i), i]));
-
-    const missing = new Map<string, DynamoDBPrimaryKey>();
-    for (const key of parentKeys) {
-      if (key && !parents.has(keyOf(key))) missing.set(keyOf(key), key);
-    }
-
-    const fetched = await this.getBatchWithRetry(
-      [...missing.values()],
-      [
-        DynamoDB.Keys.PARTITION_KEY,
-        DynamoDB.Keys.SORT_KEY,
-        ...partition.attributes,
-        ...DynamoDB.Projections.LISTING,
-      ],
-    );
-    for (const parent of fetched) {
-      if (parent[partition.key] === partition.value) {
-        parents.set(keyOf(parent as T), parent as T);
-      }
-    }
-
-    const listed = new Set<string>();
-    return items.flatMap((item, i) => {
-      const key = parentKeys[i] && keyOf(parentKeys[i]);
-      const parent = key && parents.get(key);
-      if (!key || !parent) {
-        this.logger.debug("Skipping related audit without a listable parent", {
-          PK: item.PK,
-          SK: item.SK,
-        });
-        return [];
-      }
-      if (listed.has(key)) return [];
-
-      listed.add(key);
-      return [parent];
-    });
-  }
-
-  /**
    * Upserts a single audit record with atomic attempt tracking.
    *
    * Uses DynamoDB UpdateItem with conditional expressions to:
    * - Create a new item if it doesn't exist (with attempts = [currentAttempt])
    * - Append to existing attempts array if item exists
-   * - Preserve original createdAt timestamp on updates
+   * - Preserve original createdAt timestamp on updates, so a retried audit keeps its
+   *   place in every listing
    *
    * This is atomic and race-condition safe for retry tracking.
    *
    * Attempts are system-managed: each call appends exactly one attempt (`currentAttempt`).
    * Any `attempts` on `item` are ignored; they are neither written nor appended.
    *
+   * A retry replaces the fields it gives and keeps those it leaves out, except the
+   * target, which it replaces whole: a target without an id removes `resourceId`,
+   * so the audit no longer lists under its earlier resource. Likewise a `trace`
+   * without an id, empty or such as `:2`, removes `traceId` and `traceStage`, so
+   * the audit leaves its earlier trace's listing. A retry that changes the
+   * target's id removes the targets it replaces from `scopes`, so the status and
+   * trace filters no longer match them, unless the retry lists one as related or
+   * a related resource's copy still lists the audit under it (see
+   * {@link removeReplacedTargets}).
+   *
    * @param item - The audit record to upsert (its `attempts`, if any, are ignored)
    * @param currentAttempt - The current attempt to append
-   * @returns The attempt number (1 for new items, incremented for existing)
+   * @returns The attempt number (1 for new items, incremented for existing), and
+   *   the audit as stored, with the fields a retry kept and the stored `createdAt`
    *
    * @example
    * ```typescript
-   * const attemptNumber = await repository.upsertItem(
+   * const { attemptNumber, audit } = await repository.upsertItem(
    *   { operation: 'processPayment', status: 'success', ... },
    *   { number: 1, status: 'success', at: '2024-01-01T00:00:00Z' }
    * );
@@ -863,7 +655,7 @@ export class AuditRepository<C extends AuditConfig> {
       error?: unknown;
       at: string;
     },
-  ): Promise<number> {
+  ): Promise<{ attemptNumber: number; audit: AuditStorage }> {
     const now = new Date();
 
     const payload = AuditStorageSchema.parse({
@@ -872,15 +664,12 @@ export class AuditRepository<C extends AuditConfig> {
       updatedAt: now,
     });
 
-    const primaryKey = this.constructPrimaryKey({
+    const primaryKey = constructPrimaryKey({
       tenantId: payload.tenantId,
       id: payload.id,
       resourceType: payload.target.type,
       app: payload.target.app,
     });
-
-    const secondaryKeys = this.constructSecondaryKeys(payload);
-    const ttlAttribute = this.constructTTLAttribute(this.config.ttlSeconds);
 
     const expressionAttributeNames: Record<string, string> = {};
     const expressionAttributeValues: Record<string, unknown> = {
@@ -894,11 +683,20 @@ export class AuditRepository<C extends AuditConfig> {
     expressionAttributeNames["#attempts"] = "attempts";
     expressionAttributeNames["#createdAt"] = "createdAt";
 
+    // Added to, not replaced: a copy under a resource a retry no longer lists stays,
+    // so the status and trace filters keep matching that resource too; the target
+    // this replaces is removed below
+    expressionAttributeNames["#scopes"] = Attributes.SCOPES;
+    expressionAttributeValues[":scopes"] = new Set(
+      [payload.target, ...(item.resources ?? [])].flatMap(resourceScopes),
+    );
+
     // Add all payload fields dynamically
+    const indexAttributes = constructIndexAttributes(payload, DynamoDB.Kinds.AUDIT);
     const allFields: Record<string, unknown> = {
       ...payload,
-      ...secondaryKeys,
-      ttl: ttlAttribute.ttl,
+      ...indexAttributes,
+      ttl: this.constructTTLAttribute(this.config.ttlSeconds).ttl,
     };
 
     // Caller-supplied attempts are ignored; the list_append clause above owns the field.
@@ -919,21 +717,29 @@ export class AuditRepository<C extends AuditConfig> {
       }
     }
 
+    // The target is replaced whole, so its resourceId goes with it; a trace without
+    // an id clears the trace's index attributes, so the audit leaves its listing
+    const removed: string[] = [];
+    if (!hasResourceId(payload.target.id)) {
+      removed.push(Attributes.RESOURCE_ID);
+    }
+    if (payload.trace !== undefined && indexAttributes.traceId === undefined) {
+      removed.push(Attributes.TRACE_ID, Attributes.TRACE_STAGE);
+    }
+    for (const name of removed) {
+      expressionAttributeNames[`#${name}`] = name;
+    }
+    const removeClause = removed.length
+      ? ` REMOVE ${removed.map((name) => `#${name}`).join(", ")}`
+      : "";
+
     const result = await this.client.send(
       new UpdateItemCommand({
         TableName: DynamoDB.Table.Name(),
-        Key: marshall(primaryKey, {
-          removeUndefinedValues: true,
-          convertEmptyValues: true,
-          convertClassInstanceToMap: true,
-        }),
-        UpdateExpression: `SET ${setClauses.join(", ")}`,
+        Key: marshall(primaryKey, MARSHALL_OPTIONS),
+        UpdateExpression: `SET ${setClauses.join(", ")} ADD #scopes :scopes${removeClause}`,
         ExpressionAttributeNames: expressionAttributeNames,
-        ExpressionAttributeValues: marshall(expressionAttributeValues, {
-          removeUndefinedValues: true,
-          convertEmptyValues: true,
-          convertClassInstanceToMap: true,
-        }),
+        ExpressionAttributeValues: marshall(expressionAttributeValues, MARSHALL_OPTIONS),
         ReturnValues: "ALL_NEW",
       }),
     );
@@ -941,18 +747,14 @@ export class AuditRepository<C extends AuditConfig> {
     if (!result.Attributes) {
       throw new Error("UpdateItem did not return attributes");
     }
-    const updated = unmarshall(result.Attributes) as { attempts: unknown[] };
-    const attemptNumber = updated.attempts.length;
+    const updated = unmarshall(result.Attributes);
+    const attemptNumber = (updated.attempts as unknown[]).length;
 
     if (attemptNumber !== currentAttempt.number) {
       await this.client.send(
         new UpdateItemCommand({
           TableName: DynamoDB.Table.Name(),
-          Key: marshall(primaryKey, {
-            removeUndefinedValues: true,
-            convertEmptyValues: true,
-            convertClassInstanceToMap: true,
-          }),
+          Key: marshall(primaryKey, MARSHALL_OPTIONS),
           UpdateExpression: `SET #attempts[${attemptNumber - 1}].#number = :attemptNumber`,
           ExpressionAttributeNames: {
             "#attempts": "attempts",
@@ -965,128 +767,367 @@ export class AuditRepository<C extends AuditConfig> {
       );
     }
 
-    return attemptNumber;
-  }
+    if (attemptNumber > 1) {
+      await this.removeReplacedTargets(primaryKey, updated, item.resources ?? [], attemptNumber);
+    }
 
-  public async listObjects(params: TypedListObjectsOptions<C>, pagination?: Pagination) {
-    const pageSize = Number(pagination?.pageSize || 100);
-
-    const pkBase = `${params.app}.${params.resource.type}`;
-    const pk = params.tenantId ? `${params.tenantId}#${pkBase}` : pkBase;
-    const startKey = exclusiveStartKey(
-      pagination?.nextToken,
-      DynamoDB.Indexes.LSI1_N,
-      DynamoDB.Keys.PARTITION_KEY,
-      pk,
-    );
-
-    const { Items: items, LastEvaluatedKey: lastEvaluatedKey } = await this.client.send(
-      new QueryCommand({
-        ScanIndexForward: false,
-        IndexName: DynamoDB.Indexes.LSI1_N,
-        ExpressionAttributeValues: marshall({
-          ":PK": pk,
-        }),
-        ExpressionAttributeNames: {
-          "#PK": DynamoDB.Keys.PARTITION_KEY,
-        },
-        KeyConditionExpression: "#PK=:PK",
-        TableName: DynamoDB.Table.Name(),
-        Limit: pageSize,
-        ExclusiveStartKey: startKey ? marshall(startKey) : undefined,
-      }),
-    );
-
-    return PaginationCollectionSchema(AuditPayloadSchema).parse({
-      items: items?.map((i) =>
-        this.transformListItem(unmarshall(i) as ListingItem, params.tenantId),
-      ),
-      pagination: {
-        nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
-      },
-    });
+    const audit = AuditStorageSchema.parse(withoutNulls(updated));
+    // As renumbered above
+    const appended = audit.attempts?.at(-1);
+    if (appended) appended.number = attemptNumber;
+    return { attemptNumber, audit };
   }
 
   /**
-   * Lists audit records for a specific resource with pagination.
+   * Removes from `scopes` the targets a retry replaced: each resource of the
+   * audit's app and type there (`{app}#{type}#{id}`) other than its target, unless
+   * the retry lists it as related or a related resource's copy (read consistently)
+   * lists the audit under it. Only the upsert that appended the latest attempt
+   * (`revision`) removes them, as a later one's target is its own; as they're read
+   * from `scopes`, it also removes those an earlier, overlapping retry left to it.
    *
-   * Queries the GSI1_SS index to efficiently retrieve all audits
-   * associated with a specific app/resource combination.
-   * Results are returned in reverse chronological order.
+   * A copy put after the check lists the audit there after all, so its resource
+   * goes back: the copies are read again once the scopes are removed, and
+   * {@link upsertRelated} adds back its resources' scopes after putting theirs.
    *
-   * @param params - Query parameters including app and resource identifiers
+   * @param key - The audit's key
+   * @param stored - The audit as the retry stored it, with its `scopes`
+   * @param listed - The retry's related resources
+   * @param revision - The audit's attempt count, as the retry stored it
+   */
+  private async removeReplacedTargets(
+    key: DynamoDBPrimaryKey,
+    stored: Record<string, unknown>,
+    listed: Iterable<ResourceReference>,
+    revision: number,
+  ): Promise<void> {
+    const target = stored.target as ResourceReference;
+    const resource = `${joinKey(target.app, target.type)}#`;
+    const kept = new Set([target, ...listed].flatMap(resourceScopes));
+    const candidates = [...((stored[Attributes.SCOPES] as Set<string> | undefined) ?? [])].filter(
+      (scope) => scope.startsWith(resource) && !kept.has(scope),
+    );
+
+    const replaced: string[] = [];
+    for (const scope of candidates) {
+      if (!(await this.hasCopy(key, scope))) replaced.push(scope);
+    }
+    if (replaced.length === 0) return;
+
+    try {
+      await this.client.send(
+        new UpdateItemCommand({
+          TableName: DynamoDB.Table.Name(),
+          Key: marshall(key, MARSHALL_OPTIONS),
+          UpdateExpression: "DELETE #scopes :scopes",
+          ConditionExpression: "size(#attempts) = :revision",
+          ExpressionAttributeNames: { "#scopes": Attributes.SCOPES, "#attempts": "attempts" },
+          ExpressionAttributeValues: marshall({
+            ":scopes": new Set(replaced),
+            ":revision": revision,
+          }),
+        }),
+      );
+    } catch (error) {
+      // An upsert since removes them, from the audit as it stored it
+      if ((error as Error | undefined)?.name !== "ConditionalCheckFailedException") throw error;
+      return;
+    }
+
+    // An overlapping upsert's copy put since the check
+    const relisted: string[] = [];
+    for (const scope of replaced) {
+      if (await this.hasCopy(key, scope)) relisted.push(scope);
+    }
+    await this.addScopes(key, relisted);
+  }
+
+  /**
+   * Whether a copy of the audit keyed `key` lists it under the resource whose
+   * `scopes` value is `scope` (`{app}#{type}#{id}`), read consistently.
+   */
+  private async hasCopy(key: DynamoDBPrimaryKey, scope: string): Promise<boolean> {
+    const sortKey = `${DynamoDB.SortKeys.RELATED_PREFIX}${scope}`;
+    // Too long for there to be one
+    if (!fitsSortKey(sortKey)) return false;
+
+    const { Item: copy } = await this.client.send(
+      new GetItemCommand({
+        TableName: DynamoDB.Table.Name(),
+        Key: marshall({ ...key, [DynamoDB.Keys.SORT_KEY]: sortKey }, MARSHALL_OPTIONS),
+        ProjectionExpression: "#pk",
+        ExpressionAttributeNames: { "#pk": DynamoDB.Keys.PARTITION_KEY },
+        ConsistentRead: true,
+      }),
+    );
+    return copy !== undefined;
+  }
+
+  /** Adds `scopes` to the audit keyed `key`, unless it's gone (expired). */
+  private async addScopes(key: DynamoDBPrimaryKey, scopes: string[]): Promise<void> {
+    if (scopes.length === 0) return;
+
+    try {
+      await this.client.send(
+        new UpdateItemCommand({
+          TableName: DynamoDB.Table.Name(),
+          Key: marshall(key, MARSHALL_OPTIONS),
+          UpdateExpression: "ADD #scopes :scopes",
+          ConditionExpression: "attribute_exists(#pk)",
+          ExpressionAttributeNames: {
+            "#scopes": Attributes.SCOPES,
+            "#pk": DynamoDB.Keys.PARTITION_KEY,
+          },
+          ExpressionAttributeValues: marshall({ ":scopes": new Set(scopes) }),
+        }),
+      );
+    } catch (error) {
+      if ((error as Error | undefined)?.name !== "ConditionalCheckFailedException") throw error;
+    }
+  }
+
+  /**
+   * Writes the copy of an audit that lists it under each related resource with an id.
+   *
+   * A copy holds the audit's summary, with the resource as `target`, the audit's
+   * target as `source` and `related: true`, in the audit's partition (`SK`
+   * `related#{app}#{type}#{resourceId}`; see {@link relatedCopy}). It is built
+   * from the audit as stored, so it holds the fields a retry kept and sorts with
+   * the audit by its stored `createdAt`. Each upsert rewrites the copies of the
+   * resources it lists, once per resource, except its own target, under which the
+   * audit lists already; a copy under a resource a retry no longer lists stays,
+   * as do that resource's `scopes` on the audit.
+   *
+   * Each copy is put in turn, as its `revision`, the audit's attempt count, and
+   * only over a copy of the same or an earlier revision: when upserts of the audit
+   * overlap, the copy is the latest one's, whichever writes its copies last.
+   *
+   * Then the audit is read again: when a migration (`aws-audit-migrate`) merged a
+   * 1.x audit into it since it was upserted, its copies are put again from the
+   * merged audit, at its revision. A merge rewrites the copies it finds, so a copy
+   * written after it, from the audit before it, would stay otherwise. A resource
+   * missing from its `scopes` goes back, as an overlapping retry may have removed
+   * it as a target it replaced before its copy was put (see `upsertItem`).
+   *
+   * A retry whose target is a resource an earlier attempt listed deletes that
+   * copy, as the audit lists under its target itself; so does an upsert that put
+   * a copy under the target a later, overlapping upsert gave the audit. Each
+   * delete leaves a copy a later upsert put.
+   *
+   * A resource whose copy's `SK` would be longer than DynamoDB allows (1,024 bytes)
+   * gets no copy, with a warning, as the audit is stored already.
+   *
+   * @param audit - The audit as stored, from {@link upsertItem}
+   * @param related - The resources the upsert listed in `resources`
+   *
+   * @example
+   * ```typescript
+   * const { audit } = await repository.upsertItem(item, attempt);
+   * await repository.upsertRelated(audit, item.resources);
+   * ```
+   */
+  public async upsertRelated(
+    audit: AuditStorage,
+    related: Iterable<ResourceReference> | undefined,
+  ): Promise<void> {
+    const key = constructPrimaryKey({
+      tenantId: audit.tenantId,
+      id: audit.id,
+      resourceType: audit.target.type,
+      app: audit.target.app,
+    });
+    const revision = audit.attempts?.length ?? 0;
+    const own = hasResourceId(audit.target.id) ? relatedSortKey(audit.target) : undefined;
+
+    // A retry's target may be a resource an earlier attempt listed: the audit lists
+    // there itself now, so that copy goes, unless its key is too long for there to be one
+    if (own && revision > 1 && fitsSortKey(own)) {
+      await this.deleteRelated(key, own, revision);
+    }
+
+    // One copy per resource, from its last listing
+    const resources = new Map<string, ResourceReference>();
+    for (const resource of related ?? []) {
+      if (!hasResourceId(resource.id)) continue;
+      const sortKey = relatedSortKey(resource);
+      if (fitsSortKey(sortKey)) {
+        resources.set(sortKey, resource);
+      } else {
+        // The audit is stored already, so it isn't refused for one listing
+        this.logger.warn("Related resource's id is too long for a copy to list it", {
+          id: audit.id,
+          resource,
+          bytes: Buffer.byteLength(sortKey),
+        });
+      }
+    }
+    // The audit lists under its own target already
+    if (own) resources.delete(own);
+    if (resources.size === 0) return;
+
+    await this.putRelated(audit, resources.values(), revision);
+
+    const { Item: item } = await this.client.send(
+      new GetItemCommand({
+        TableName: DynamoDB.Table.Name(),
+        Key: marshall(key, MARSHALL_OPTIONS),
+        ConsistentRead: true,
+      }),
+    );
+    if (!item) return;
+    const current = unmarshall(item);
+    // An overlapping retry removed a resource as one it replaced, before its copy was put
+    const scopes = current[Attributes.SCOPES] as Set<string> | undefined;
+    await this.addScopes(
+      key,
+      [...new Set([...resources.values()].flatMap(resourceScopes))].filter(
+        (scope) => !scopes?.has(scope),
+      ),
+    );
+    const target = current.target as ResourceReference;
+    const targetKey = hasResourceId(target.id) ? relatedSortKey(target) : undefined;
+
+    const attempts = (current.attempts as unknown[] | undefined)?.length ?? 0;
+    if (current[Attributes.MIGRATED] && attempts !== revision) {
+      await this.putRelated(
+        AuditStorageSchema.parse(withoutNulls(current)),
+        Array.from(resources).flatMap(([sortKey, resource]) =>
+          sortKey === targetKey ? [] : [resource],
+        ),
+        attempts,
+      );
+    }
+    // An upsert since made one of these resources its target: the copy just put goes
+    if (targetKey && targetKey !== own && resources.has(targetKey)) {
+      await this.deleteRelated(key, targetKey, revision);
+    }
+  }
+
+  /**
+   * Deletes the copy under a resource the audit keyed `key` now targets, unless a
+   * later upsert than `revision` put it.
+   */
+  private async deleteRelated(key: DynamoDBPrimaryKey, sortKey: string, revision: number) {
+    try {
+      await this.client.send(
+        new DeleteItemCommand({
+          TableName: DynamoDB.Table.Name(),
+          Key: marshall({ ...key, [Keys.SORT_KEY]: sortKey }, MARSHALL_OPTIONS),
+          ConditionExpression: "attribute_not_exists(#revision) OR #revision <= :revision",
+          ExpressionAttributeNames: { "#revision": Attributes.REVISION },
+          ExpressionAttributeValues: marshall({ ":revision": revision }),
+        }),
+      );
+    } catch (error) {
+      if ((error as Error | undefined)?.name !== "ConditionalCheckFailedException") throw error;
+    }
+  }
+
+  /** Puts the copies of `audit` under `resources`, in turn, as `revision`. */
+  private async putRelated(
+    audit: AuditStorage,
+    resources: Iterable<ResourceReference>,
+    revision: number,
+  ): Promise<void> {
+    const { ttl } = this.constructTTLAttribute(this.config.ttlSeconds);
+
+    // In turn, so a throttled table isn't hit harder
+    for (const resource of resources) {
+      try {
+        await this.client.send(
+          new PutItemCommand({
+            TableName: DynamoDB.Table.Name(),
+            Item: marshall(relatedCopy(audit, resource, { revision, ttl }), MARSHALL_OPTIONS),
+            ConditionExpression: "attribute_not_exists(#revision) OR #revision <= :revision",
+            ExpressionAttributeNames: { "#revision": Attributes.REVISION },
+            ExpressionAttributeValues: marshall({ ":revision": revision }),
+          }),
+        );
+      } catch (error) {
+        // A later upsert of the audit wrote its copy already
+        if ((error as Error | undefined)?.name !== "ConditionalCheckFailedException") throw error;
+      }
+    }
+  }
+
+  /**
+   * Lists the audits of a resource type, newest first, with pagination.
+   *
+   * Queries the `ByType` index. The listing includes audits that name a resource of
+   * this type as a related resource, with that resource as `target` and the audit's
+   * own target as `source`.
+   *
+   * @param params - App, resource type and optional filters
    * @param pagination - Optional pagination settings (pageSize, nextToken)
-   * @returns Paginated collection of audit records
+   * @returns Paginated collection of audit summaries
+   * @throws {InvalidNextTokenError} if `pagination.nextToken` isn't one this listing returned
+   * @throws {ReservedTenantError} if the tenant id is `-`
+   */
+  public async listObjects(params: TypedListObjectsOptions<C>, pagination?: Pagination) {
+    return this.listIndex(
+      Indexes.BY_TYPE,
+      {
+        [Attributes.TENANT_KEY]: tenantKey(params.tenantId),
+        [Attributes.APP]: params.app,
+        [Attributes.RESOURCE_TYPE]: params.resource.type,
+      },
+      { forward: false, filters: params, pagination },
+    );
+  }
+
+  /**
+   * Lists the audits of a resource, newest first, with pagination.
+   *
+   * Queries the `ByResource` index. Like {@link listObjects}, it includes audits that
+   * name the resource as a related resource.
+   *
+   * @param params - App, resource type and id, and optional filters
+   * @param pagination - Optional pagination settings (pageSize, nextToken)
+   * @returns Paginated collection of audit summaries
+   * @throws {InvalidNextTokenError} if `pagination.nextToken` isn't one this listing returned
+   * @throws {ReservedTenantError} if the tenant id is `-`
    *
    * @example
    * ```typescript
    * // Get first page
    * const page1 = await repository.listItems({
    *   app: 'Orders',
-   *   resource: { type: 'Order', id: 'user-123' },
+   *   resource: { type: 'Order', id: 'order-123' },
    * });
    *
    * // Get next page using the pagination token
    * const page2 = await repository.listItems(
-   *   { app: 'Orders', resource: { type: 'Order', id: 'user-123' } },
+   *   { app: 'Orders', resource: { type: 'Order', id: 'order-123' } },
    *   { nextToken: page1.pagination?.nextToken },
    * );
    * ```
    */
   public async listItems(params: TypedListItemsOptions<C>, pagination?: Pagination) {
-    const pageSize = Number(pagination?.pageSize || 100);
-
-    const pkBase = `${params.app}.${params.resource.type}#${params.resource.id}`;
-    const pk = params.tenantId ? `${params.tenantId}#${pkBase}` : pkBase;
-    const startKey = exclusiveStartKey(
-      pagination?.nextToken,
-      DynamoDB.Indexes.GSI1_SS,
-      DynamoDB.Keys.GSI1_SS_PARTITION_KEY,
-      pk,
-    );
-
-    const { Items: items, LastEvaluatedKey: lastEvaluatedKey } = await this.client.send(
-      new QueryCommand({
-        ScanIndexForward: false,
-        IndexName: DynamoDB.Indexes.GSI1_SS,
-        ExpressionAttributeValues: marshall({
-          ":PK": pk,
-        }),
-        ExpressionAttributeNames: {
-          "#PK": DynamoDB.Keys.GSI1_SS_PARTITION_KEY,
-        },
-        KeyConditionExpression: "#PK=:PK",
-        TableName: DynamoDB.Table.Name(),
-        Limit: pageSize,
-        ExclusiveStartKey: startKey ? marshall(startKey) : undefined,
-      }),
-    );
-
-    return PaginationCollectionSchema(AuditPayloadSchema).parse({
-      items: items?.map((i) =>
-        this.transformListItem(unmarshall(i) as ListingItem, params.tenantId),
-      ),
-      pagination: {
-        nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
+    return this.listIndex(
+      Indexes.BY_RESOURCE,
+      {
+        [Attributes.TENANT_KEY]: tenantKey(params.tenantId),
+        [Attributes.APP]: params.app,
+        [Attributes.RESOURCE_TYPE]: params.resource.type,
+        [Attributes.RESOURCE_ID]: String(params.resource.id),
       },
-    });
+      { forward: false, filters: params, pagination },
+    );
   }
 
   /**
    * Lists audit records by trace ID for distributed tracing.
    *
-   * Queries the GSI1_SN index to retrieve all audits sharing
-   * the same trace ID, ordered by trace stage/depth.
-   * Supports optional filtering by app, resource type, and resource ID.
-   * A filter matches an audit's target or any of its additional resources;
-   * each matching audit is listed once per page.
-   *
-   * This is useful for viewing the complete audit trail of a
-   * distributed operation across multiple services or resources.
+   * Queries the `ByTrace` index: audits sharing the trace id, by stage, then
+   * oldest first. Resource filters match an audit's target or any of its
+   * related resources.
    *
    * @param params - Query parameters including trace ID and optional filters
    * @param pagination - Optional pagination settings (pageSize, nextToken)
-   * @returns Paginated collection of audit records in trace order
+   * @returns Paginated collection of audit summaries in trace order
+   * @throws {InvalidNextTokenError} if `pagination.nextToken` isn't one this listing returned
+   * @throws {ReservedTenantError} if the tenant id is `-`
+   * @throws {InvalidResourceFilterError} if a resource id filter is given without its app and type
    *
    * @example
    * ```typescript
@@ -1104,251 +1145,89 @@ export class AuditRepository<C extends AuditConfig> {
    * ```
    */
   public async listTraceItems(params: TypedListTraceItems<C>, pagination?: Pagination) {
-    const pageSize = Number(pagination?.pageSize || 100);
-
-    const pkBase = params.trace;
-    const pk = params.tenantId ? `${params.tenantId}#${pkBase}` : pkBase;
-    const startKey = exclusiveStartKey(
-      pagination?.nextToken,
-      DynamoDB.Indexes.GSI1_SN,
-      DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
-      pk,
-    );
-
-    const filter = buildTargetFilter(params);
-
-    const { Items: items, LastEvaluatedKey: lastEvaluatedKey } = await this.client.send(
-      new QueryCommand({
-        ScanIndexForward: true,
-        IndexName: DynamoDB.Indexes.GSI1_SN,
-        ExpressionAttributeValues: marshall({
-          ":PK": pk,
-          ...filter.ExpressionAttributeValues,
-        }),
-        ExpressionAttributeNames: {
-          "#PK": DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
-          ...filter.ExpressionAttributeNames,
-        },
-        KeyConditionExpression: "#PK=:PK",
-        TableName: DynamoDB.Table.Name(),
-        Limit: pageSize,
-        ExclusiveStartKey: startKey ? marshall(startKey) : undefined,
-        FilterExpression: filter.FilterExpression,
-      }),
-    );
-
-    const resolved = await this.resolveRelatedItems(
-      (items ?? []).map((i) => unmarshall(i) as TraceListingItem),
+    return this.listIndex(
+      Indexes.BY_TRACE,
       {
-        key: DynamoDB.Keys.GSI1_SN_PARTITION_KEY,
-        value: pk,
-        attributes: [DynamoDB.Keys.GSI1_SN_PARTITION_KEY, DynamoDB.Keys.GSI1_SN_SORT_KEY],
+        [Attributes.TENANT_KEY]: tenantKey(params.tenantId),
+        [Attributes.TRACE_ID]: params.trace,
       },
-      params.tenantId,
+      { forward: true, filters: { ...params, scope: filterScope(params) }, pagination },
     );
-
-    return PaginationCollectionSchema(AuditPayloadSchema).parse({
-      items: resolved.map((i) => this.transformTraceListItem(i, params.tenantId)),
-      pagination: {
-        nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
-      },
-    });
   }
 
   /**
-   * Lists audit records by status with date ordering and optional filters.
+   * Lists audit records by status, newest first, with optional filters.
    *
-   * Queries the GSI2_SS index to retrieve all audits with a specific status,
-   * ordered by creation date (most recent first by default).
-   * Supports optional filtering by app, resource type, and resource ID.
-   * A filter matches an audit's target or any of its additional resources;
-   * each matching audit is listed once per page.
-   *
-   * Items don't include `trace`: GSI2_SS projects neither the trace nor the
-   * trace keys. Fetch the audit with {@link getItem} when the trace is needed.
+   * Queries the `ByStatus` index, which holds audits only, not their related-resource
+   * copies. Resource filters match an audit's target or any of its related resources.
    *
    * @param params - Query parameters including status and optional filters
    * @param pagination - Optional pagination settings (pageSize, nextToken)
-   * @returns Paginated collection of audit records in reverse date order
+   * @returns Paginated collection of audit summaries
+   * @throws {InvalidNextTokenError} if `pagination.nextToken` isn't one this listing returned
+   * @throws {ReservedTenantError} if the tenant id is `-`
+   * @throws {InvalidResourceFilterError} if a resource id filter is given without its app and type
    */
   public async listByStatus(params: TypedListByStatusOptions<C>, pagination?: Pagination) {
-    const pageSize = Number(pagination?.pageSize || 100);
-
-    const pkBase = params.status;
-    const pk = params.tenantId ? `${params.tenantId}#${pkBase}` : pkBase;
-    const startKey = exclusiveStartKey(
-      pagination?.nextToken,
-      DynamoDB.Indexes.GSI2_SS,
-      DynamoDB.Keys.GSI2_SS_PARTITION_KEY,
-      pk,
+    return this.listIndex(
+      Indexes.BY_STATUS,
+      {
+        [Attributes.TENANT_KEY]: tenantKey(params.tenantId),
+        [Attributes.STATUS]: params.status,
+        [Attributes.KIND]: DynamoDB.Kinds.AUDIT,
+      },
+      { forward: false, filters: { ...params, scope: filterScope(params) }, pagination },
     );
+  }
 
-    const filter = buildTargetFilter(params);
+  /**
+   * Reads a page of an index partition as audit summaries.
+   *
+   * @param index - The index to query
+   * @param partition - Every partition key attribute of the index, with its value
+   * @param options - Sort direction, filters and pagination
+   * @internal
+   */
+  private async listIndex(
+    index: IndexDefinition,
+    partition: Record<string, string>,
+    options: {
+      forward: boolean;
+      filters: ListFilters & { scope?: string };
+      pagination?: Pagination;
+    },
+  ) {
+    const pageSize = Number(options.pagination?.pageSize || 100);
+    const startKey = exclusiveStartKey(options.pagination?.nextToken, index, partition);
+    const filter = buildFilter(options.filters);
 
+    const names = Object.keys(partition);
     const { Items: items, LastEvaluatedKey: lastEvaluatedKey } = await this.client.send(
       new QueryCommand({
-        ScanIndexForward: false,
-        IndexName: DynamoDB.Indexes.GSI2_SS,
-        ExpressionAttributeValues: marshall({
-          ":PK": pk,
-          ...filter.ExpressionAttributeValues,
-        }),
-        ExpressionAttributeNames: {
-          "#PK": DynamoDB.Keys.GSI2_SS_PARTITION_KEY,
-          ...filter.ExpressionAttributeNames,
-        },
-        KeyConditionExpression: "#PK=:PK",
         TableName: DynamoDB.Table.Name(),
+        IndexName: index.name,
+        ScanIndexForward: options.forward,
+        KeyConditionExpression: names.map((_, i) => `#k${i} = :k${i}`).join(" AND "),
+        ExpressionAttributeNames: {
+          ...Object.fromEntries(names.map((name, i) => [`#k${i}`, name])),
+          ...filter?.ExpressionAttributeNames,
+        },
+        ExpressionAttributeValues: marshall({
+          ...Object.fromEntries(names.map((name, i) => [`:k${i}`, partition[name]])),
+          ...filter?.ExpressionAttributeValues,
+        }),
+        FilterExpression: filter?.FilterExpression,
         Limit: pageSize,
         ExclusiveStartKey: startKey ? marshall(startKey) : undefined,
-        FilterExpression: filter.FilterExpression,
       }),
     );
 
-    const resolved = await this.resolveRelatedItems(
-      (items ?? []).map((i) => unmarshall(i) as StatusListingItem),
-      {
-        key: DynamoDB.Keys.GSI2_SS_PARTITION_KEY,
-        value: pk,
-        attributes: [DynamoDB.Keys.GSI2_SS_PARTITION_KEY, DynamoDB.Keys.GSI2_SS_SORT_KEY],
-      },
-      params.tenantId,
-    );
-
-    return PaginationCollectionSchema(AuditPayloadSchema).parse({
-      items: resolved.map((i) => this.transformStatusListItem(i)),
+    return PaginationCollectionSchema(AuditSummarySchema).parse({
+      items: (items ?? []).map((item) => withoutNulls(unmarshall(item))),
       pagination: {
         nextToken: lastEvaluatedKey ? encodeNextPageToken(unmarshall(lastEvaluatedKey)) : undefined,
       },
     });
-  }
-
-  /**
-   * Constructs the DynamoDB primary key from identifiers.
-   *
-   * When tenantId is provided, it prefixes the partition key for multi-tenant isolation.
-   *
-   * @param identifiers - Object containing tenantId (optional), app, id, and resourceType
-   * @returns Primary key object with PK and SK attributes
-   * @internal
-   */
-  private constructPrimaryKey({
-    tenantId,
-    app,
-    id,
-    resourceType,
-  }: Omit<Identifiers, "resourceId">): DynamoDBPrimaryKey {
-    const pkBase = `${app}.${resourceType}`;
-    return {
-      [DynamoDB.Keys.PARTITION_KEY]: (tenantId ? `${tenantId}#${pkBase}` : pkBase) as PK,
-      [DynamoDB.Keys.SORT_KEY]: `${id}`,
-    };
-  }
-
-  /**
-   * Constructs all secondary index keys for an audit item.
-   *
-   * Includes:
-   * - LSI1_N: Tier-based sort key for priority ordering
-   * - GSI1_SS: Resource-based index keys
-   * - GSI1_SN: Trace-based index keys (if trace exists)
-   *
-   * @param item - The audit storage item
-   * @returns Object containing all secondary key attributes
-   * @internal
-   */
-  private constructSecondaryKeys(item: AuditStorage): SecondaryKeys {
-    return {
-      [DynamoDB.Keys.LSI1_N_SORT_KEY]: Number(`${item.tier}${Date.now()}`),
-      ...this.constructGSI1_SS({
-        tenantId: item.tenantId,
-        id: item.id,
-        resourceType: item.target.type,
-        resourceId: item.target.id,
-        app: item.target.app,
-      }),
-      ...this.constructGSI1_SN(item),
-      ...this.constructGSI2_SS(item),
-    };
-  }
-
-  /**
-   * Constructs GSI1_SS (String-String) index keys for resource-based queries.
-   *
-   * The partition key combines app, resourceType, and resourceId for
-   * efficient querying of all audits for a specific resource.
-   * When tenantId is provided, it prefixes the partition key for multi-tenant isolation.
-   *
-   * @param identifiers - Full identifiers including resourceId and optional tenantId
-   * @returns GSI1_SS key attributes
-   * @internal
-   */
-  private constructGSI1_SS({
-    tenantId,
-    app,
-    id,
-    resourceType,
-    resourceId,
-  }: Identifiers): DynamoDBGSI1Keys {
-    // A numeric id of 0 is an id; only a missing or empty one is left out
-    const pkBase = hasResourceId(resourceId)
-      ? `${app}.${resourceType}#${resourceId}`
-      : `${app}.${resourceType}`;
-    return {
-      [DynamoDB.Keys.GSI1_SS_PARTITION_KEY]: (tenantId
-        ? `${tenantId}#${pkBase}`
-        : pkBase) as GSI1PK,
-      [DynamoDB.Keys.GSI1_SS_SORT_KEY]: String(id),
-    };
-  }
-
-  /**
-   * Constructs GSI1_SN (String-Number) index keys for trace-based queries.
-   *
-   * Parses the trace string to extract the trace ID and stage number,
-   * enabling efficient querying of all audits in a distributed trace.
-   * When tenantId is provided, it prefixes the partition key for multi-tenant isolation.
-   *
-   * @param item - The audit storage item
-   * @returns GSI1_SN key attributes, or empty object if no trace
-   * @internal
-   */
-  private constructGSI1_SN(item: AuditStorage): DynamoDBTraceGSIKeys {
-    if (!item.trace) {
-      return {};
-    }
-
-    const { id, stage } = getTraceParts(item.trace);
-    const pkBase = `${id}`;
-
-    return {
-      [DynamoDB.Keys.GSI1_SN_PARTITION_KEY]: (item.tenantId
-        ? `${item.tenantId}#${pkBase}`
-        : pkBase) as TraceGSIPK,
-      [DynamoDB.Keys.GSI1_SN_SORT_KEY]: stage,
-    };
-  }
-
-  /**
-   * Constructs GSI2_SS (String-String) index keys for status-based queries.
-   *
-   * The partition key is the status value (optionally prefixed with tenantId),
-   * and the sort key combines createdAt timestamp with id for date ordering
-   * while ensuring uniqueness.
-   *
-   * @param item - The audit storage item
-   * @returns GSI2_SS key attributes
-   * @internal
-   */
-  private constructGSI2_SS(item: AuditStorage): DynamoDBGSI2Keys {
-    const pkBase = item.status;
-
-    return {
-      [DynamoDB.Keys.GSI2_SS_PARTITION_KEY]: (item.tenantId
-        ? `${item.tenantId}#${pkBase}`
-        : pkBase) as GSI2PK,
-      [DynamoDB.Keys.GSI2_SS_SORT_KEY]: `${item.createdAt}#${item.id}`,
-    };
   }
 
   /**
@@ -1369,118 +1248,14 @@ export class AuditRepository<C extends AuditConfig> {
       ttl: Math.floor((date ?? new Date()).valueOf() / 1000) + ttlSeconds,
     };
   }
+}
 
-  /**
-   * Replaces an item's stored `trace` with the one to return.
-   *
-   * 1. A stored string `trace` is returned verbatim.
-   * 2. Otherwise, when both GSI1_SN keys are present, the trace is rebuilt from them:
-   *    a leading `{tenantId}#` is stripped when the tenant is known (from the item, or the
-   *    tenant the query was made with), and the stage is appended unless it's 0. A trace
-   *    written as `abc:0` therefore comes back as `abc`, which is equivalent.
-   *    When the tenant isn't known, the key is returned as-is rather than guessing a
-   *    prefix by splitting on `#`.
-   * 3. Otherwise the `trace` key is removed. This covers a trace stored as NULL
-   *    (an empty string written with `convertEmptyValues`).
-   *
-   * @param item - Raw DynamoDB item, or the attributes an index projects
-   * @param tenantId - Tenant the query was made with, if any
-   * @returns The item, with `trace` only when resolvable
-   * @internal
-   */
-  private resolveTrace<
-    T extends { trace?: unknown; tenantId?: string } & Partial<
-      Pick<SecondaryKeys, "GSI1_SN_PK" | "GSI1_SN_SK">
-    >,
-  >(item: T, tenantId?: string): Omit<T, "trace"> & { trace?: string } {
-    const { trace, ...rest } = item;
-
-    if (typeof trace === "string") {
-      return { ...rest, trace };
-    }
-
-    if (item.GSI1_SN_PK === undefined || item.GSI1_SN_SK === undefined) {
-      return rest;
-    }
-
-    const tenant = item.tenantId ?? tenantId;
-    const prefix = tenant ? `${tenant}#` : undefined;
-    const id =
-      prefix && item.GSI1_SN_PK.startsWith(prefix)
-        ? item.GSI1_SN_PK.slice(prefix.length)
-        : item.GSI1_SN_PK;
-    const stage = Number(item.GSI1_SN_SK);
-
-    return { ...rest, trace: stage === 0 ? id : `${id}:${stage}` };
-  }
-
-  /**
-   * Transforms a raw DynamoDB item into an Audit object.
-   *
-   * Resolves the trace string and extracts the clean ID
-   * from compound keys.
-   *
-   * @param item - Raw DynamoDB item with all keys
-   * @returns Parsed and validated Audit object
-   * @internal
-   */
-  private transformItem(item: DynamoDBItem): Audit {
-    return AuditSchema.parse({
-      ...this.resolveTrace(item),
-      id: item.id.split("#").pop(),
-    });
-  }
-
-  /**
-   * Transforms a trace listing item into an audit list item payload.
-   *
-   * @param item - Raw trace listing item from GSI1_SN query
-   * @param tenantId - Tenant the query was made with, if any
-   * @returns Parsed audit list item payload
-   * @internal
-   */
-  private transformTraceListItem(item: TraceListingItem, tenantId?: string) {
-    const [id] = item.SK.split("#");
-
-    return AuditPayloadSchema.parse({
-      ...this.resolveTrace(item, tenantId),
-      id: id,
-    });
-  }
-
-  /**
-   * Transforms a resource listing item into an audit list item payload.
-   *
-   * @param item - Raw listing item from LSI1_N or GSI1_SS query
-   * @param tenantId - Tenant the query was made with, if any
-   * @returns Parsed audit list item payload
-   * @internal
-   */
-  private transformListItem(item: ListingItem, tenantId?: string) {
-    const [id] = item.SK.split("#");
-
-    return AuditPayloadSchema.parse({
-      ...this.resolveTrace(item, tenantId),
-      id: id,
-    });
-  }
-
-  /**
-   * Transforms a status listing item into an audit list item payload.
-   *
-   * GSI2_SS projects neither `trace` nor the GSI1_SN keys, so `trace` is
-   * absent from status listings.
-   *
-   * @param item - Raw listing item from GSI2_SS query
-   * @returns Parsed audit list item payload
-   * @internal
-   */
-  private transformStatusListItem(item: StatusListingItem) {
-    const [id] = item.SK.split("#");
-
-    return AuditPayloadSchema.parse({
-      ...item,
-      id: id,
-    });
-  }
+/**
+ * Drops the attributes stored as NULL: the 1.x SDK wrote an empty string as NULL
+ * (`convertEmptyValues`), and a field such as `trace` doesn't accept it.
+ *
+ * @internal
+ */
+function withoutNulls(item: UnmarshalledAttributes): UnmarshalledAttributes {
+  return Object.fromEntries(Object.entries(item).filter(([, value]) => value !== null));
 }

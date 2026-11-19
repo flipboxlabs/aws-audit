@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::config::AuditConfig;
 use crate::model::{
-    Attempt, Context, EventBridgeEvent, ResourceReference, Status, Tier, Timestamp,
+    Attempt, Context, EventBridgeEvent, NO_TENANT, ResourceReference, Status, Tier, Timestamp,
     parse_error_value,
 };
 
@@ -79,56 +79,82 @@ pub struct Issue {
     pub path: Vec<Value>,
 }
 
-/// An upsert naming an app or resource type the config doesn't list.
+/// An audit naming an app or resource type the config doesn't list.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("Invalid audit: {}", .issues.iter().map(|issue| issue.message.as_str()).collect::<Vec<_>>().join("; "))]
-pub struct InvalidUpsert {
+pub struct InvalidAudit {
     /// Every problem found.
     pub issues: Vec<Issue>,
 }
 
 impl UpsertAudit {
-    /// Checks every resource reference against the configured apps and types, as
-    /// `createTypedUpsertAuditSchema` does.
-    pub fn validate(&self, config: &AuditConfig) -> Result<(), InvalidUpsert> {
-        let mut issues = Vec::new();
-        let mut check = |reference: &ResourceReference, path: Vec<Value>| {
-            if !config.is_app(&reference.app) {
-                issues.push(Issue {
-                    message: format!("Invalid option: expected one of {}", options(&config.apps)),
-                    path: [path.clone(), vec!["app".into()]].concat(),
-                });
-            }
-            if !config.is_resource_type(&reference.resource_type) {
-                issues.push(Issue {
-                    message: format!(
-                        "Invalid option: expected one of {}",
-                        options(&config.resource_types)
-                    ),
-                    path: [path, vec!["type".into()]].concat(),
-                });
-            }
-        };
-
-        check(&self.target, vec!["target".into()]);
-        if let Some(source) = &self.source {
-            check(source, vec!["source".into()]);
-        }
-        for (index, resource) in self.resources.iter().flatten().enumerate() {
-            check(resource, vec!["resources".into(), index.into()]);
-        }
-
-        if issues.is_empty() {
-            Ok(())
-        } else {
-            Err(InvalidUpsert { issues })
-        }
+    /// Checks the tenant id isn't [`NO_TENANT`], and every resource reference
+    /// against the configured apps and types, as `createTypedUpsertAuditSchema` does.
+    pub fn validate(&self, config: &AuditConfig) -> Result<(), InvalidAudit> {
+        check_audit(
+            config,
+            self.tenant_id.as_deref(),
+            &self.target,
+            self.source.as_ref(),
+            self.resources.iter().flatten(),
+        )
     }
 }
 
-fn options(values: &[String]) -> String {
+/// Checks an audit's tenant id isn't [`NO_TENANT`], and its target, source and
+/// related resources against the configured apps, then each type against its
+/// app's types, reporting every problem at its path. A type isn't checked when its
+/// app isn't one, as its types are unknown (`resourceReference` in the TypeScript
+/// SDK).
+pub(crate) fn check_audit<'a>(
+    config: &AuditConfig,
+    tenant_id: Option<&str>,
+    target: &ResourceReference,
+    source: Option<&ResourceReference>,
+    resources: impl IntoIterator<Item = &'a ResourceReference>,
+) -> Result<(), InvalidAudit> {
+    let mut issues = Vec::new();
+    if tenant_id == Some(NO_TENANT) {
+        issues.push(Issue {
+            message: format!("Tenant id \"{NO_TENANT}\" is reserved for audits without a tenant"),
+            path: vec!["tenantId".into()],
+        });
+    }
+    let mut check = |reference: &ResourceReference, path: Vec<Value>| match config
+        .resource_types_of(&reference.app)
+    {
+        None => issues.push(Issue {
+            message: format!(
+                "Invalid option: expected one of {}",
+                options(config.apps.keys())
+            ),
+            path: [path, vec!["app".into()]].concat(),
+        }),
+        Some(types) if !types.contains(&reference.resource_type) => issues.push(Issue {
+            message: format!("Invalid option: expected one of {}", options(types)),
+            path: [path, vec!["type".into()]].concat(),
+        }),
+        Some(_) => {}
+    };
+
+    check(target, vec!["target".into()]);
+    if let Some(source) = source {
+        check(source, vec!["source".into()]);
+    }
+    for (index, resource) in resources.into_iter().enumerate() {
+        check(resource, vec!["resources".into(), index.into()]);
+    }
+
+    if issues.is_empty() {
+        Ok(())
+    } else {
+        Err(InvalidAudit { issues })
+    }
+}
+
+fn options<'a>(values: impl IntoIterator<Item = &'a String>) -> String {
     values
-        .iter()
+        .into_iter()
         .map(|value| format!("\"{value}\""))
         .collect::<Vec<_>>()
         .join("|")
@@ -187,7 +213,8 @@ impl StoredAudit {
     pub fn new(audit: &UpsertAudit, id: String, now: &Timestamp) -> Self {
         StoredAudit {
             id,
-            tenant_id: audit.tenant_id.clone(),
+            // An empty tenant is none, as in the keys
+            tenant_id: audit.tenant_id.clone().filter(|tenant| !tenant.is_empty()),
             status: audit.status,
             tier: audit.tier,
             target: audit.target.clone(),
@@ -214,7 +241,7 @@ mod tests {
 
     fn config() -> AuditConfig {
         serde_json::from_value(
-            json!({ "apps": ["App1", "TestApp"], "resourceTypes": ["Unknown", "User", "Order"] }),
+            json!({ "apps": { "App1": ["Unknown", "User", "Order"], "TestApp": ["User", "Order"] } }),
         )
         .unwrap()
     }
@@ -236,7 +263,12 @@ mod tests {
         let audit: UpsertAudit = serde_json::from_value(json!({
             "operation": "createOrder",
             "target": { "app": "Nope", "type": "Order" },
-            "resources": [{ "app": "App1", "type": "User" }, { "app": "App1", "type": "Nope" }],
+            "resources": [
+                { "app": "App1", "type": "User" },
+                { "app": "App1", "type": "Nope" },
+                // Another app's type
+                { "app": "TestApp", "type": "Unknown" },
+            ],
         }))
         .unwrap();
 
@@ -245,12 +277,43 @@ mod tests {
         let paths: Vec<_> = issues.iter().map(|issue| json!(issue.path)).collect();
         assert_eq!(
             paths,
-            [json!(["target", "app"]), json!(["resources", 1, "type"])]
+            [
+                json!(["target", "app"]),
+                json!(["resources", 1, "type"]),
+                json!(["resources", 2, "type"])
+            ]
         );
+        let messages: Vec<_> = issues.iter().map(|issue| issue.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                r#"Invalid option: expected one of "App1"|"TestApp""#,
+                r#"Invalid option: expected one of "Unknown"|"User"|"Order""#,
+                r#"Invalid option: expected one of "User"|"Order""#,
+            ]
+        );
+    }
+
+    #[test]
+    fn reserves_the_no_tenant_key() {
+        let audit = |tenant: &str| -> UpsertAudit {
+            serde_json::from_value(json!({
+                "operation": "createOrder",
+                "tenantId": tenant,
+                "target": { "app": "Nope", "type": "Order" },
+            }))
+            .unwrap()
+        };
+
+        let issues = audit("-").validate(&config()).unwrap_err().issues;
+
+        assert_eq!(issues[0].path, [json!("tenantId")]);
         assert_eq!(
             issues[0].message,
-            r#"Invalid option: expected one of "App1"|"TestApp""#
+            r#"Tenant id "-" is reserved for audits without a tenant"#
         );
+        assert_eq!(issues.len(), 2);
+        assert_eq!(audit("-a").validate(&config()).unwrap_err().issues.len(), 1);
     }
 
     #[test]

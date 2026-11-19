@@ -1,18 +1,20 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { type AuditConfigInput, auditConfigProblem } from "@flipboxlabs/aws-audit-sdk";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import { Construct } from "constructs";
 
 /**
- * Input configuration for the audit config layer.
- * Contains the apps and resource types that will be available to Lambda handlers.
+ * Input configuration for the audit config layer: the apps, with their resource
+ * types, that will be available to Lambda handlers.
  */
 export interface AuditConfigLayerProps {
-  /** List of valid application identifiers */
-  readonly apps: readonly string[];
-  /** List of valid resource type identifiers */
-  readonly resourceTypes: readonly string[];
+  /**
+   * Each app's resource types, e.g. `{ HubSpot: ["Contact", "Company"] }`. Names
+   * hold only letters, digits, `-` and `_`, as they are REST API path segments.
+   */
+  readonly apps: AuditConfigInput["apps"];
 }
 
 /**
@@ -42,18 +44,20 @@ export const AUDIT_CONFIG_JSON_PATH = "/opt/audit-config.json";
 /**
  * Creates a Lambda layer containing the audit configuration.
  *
- * The audit Lambdas read the `apps` and `resourceTypes` from
+ * The audit Lambdas read the `apps`, with their resource types, from
  * {@link AUDIT_CONFIG_JSON_PATH}. The layer also exports them as a Node.js module
  * at {@link AUDIT_CONFIG_LAYER_MODULE_PATH}, for your own Lambdas to use with
  * `defineAuditConfig` from the SDK.
+ *
+ * @throws {Error} At synth, when an app has no resource types or a name isn't
+ *   URL-safe (letters, digits, `-` and `_`)
  *
  * @example
  * ```typescript
  * import { ConfigLayerConstruct } from "@flipboxlabs/aws-audit-cdk/lambda";
  *
  * const auditLayer = new ConfigLayerConstruct(this, "AuditConfigLayer", {
- *   apps: ["Orders", "Inventory"],
- *   resourceTypes: ["Order", "Product"],
+ *   apps: { Orders: ["Order"], Inventory: ["Product"] },
  * });
  *
  * // Pass auditLayer.layer to constructs that need it
@@ -65,11 +69,14 @@ export class ConfigLayerConstruct extends Construct {
   constructor(scope: Construct, id: string, props: AuditConfigLayerProps) {
     super(scope, id);
 
+    // Refused here rather than when a Lambda first loads it
+    const problem = auditConfigProblem(props.apps);
+    if (problem) throw new Error(problem);
+
     // Generate config file content - exports raw data
     // Handlers will call defineAuditConfig themselves
     const configCode = `// Auto-generated audit configuration
 export const apps = ${JSON.stringify(props.apps)};
-export const resourceTypes = ${JSON.stringify(props.resourceTypes)};
 `;
 
     // Create temp directory with proper layer structure
@@ -84,13 +91,13 @@ export const resourceTypes = ${JSON.stringify(props.resourceTypes)};
     fs.writeFileSync(path.join(nodejsDir, "package.json"), JSON.stringify({ type: "module" }));
     fs.writeFileSync(
       path.join(tempDir, path.basename(AUDIT_CONFIG_JSON_PATH)),
-      JSON.stringify({ apps: props.apps, resourceTypes: props.resourceTypes }),
+      JSON.stringify({ apps: props.apps }),
     );
 
     this.layer = new lambda.LayerVersion(this, "Layer", {
       code: lambda.Code.fromAsset(tempDir),
       compatibleRuntimes: [lambda.Runtime.NODEJS_24_X, lambda.Runtime.PROVIDED_AL2023],
-      description: "Audit configuration layer containing apps and resourceTypes",
+      description: "Audit configuration layer containing apps and their resource types",
     });
   }
 }

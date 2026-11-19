@@ -10,7 +10,7 @@
     },
     {
       "pageSize": 2,
-      "nextToken": "eyJQSyI6IkFwcDEuT3JkZXIiLCJTSyI6ImF1ZGl0LTEiLCJMU0kxX05fU0siOjIxNzY3MzIzNDQ1Njc4fQ"
+      "nextToken": "eyJQSyI6Ii0jQXBwMSNPcmRlciNhdWRpdC0xIiwiU0siOiJhdWRpdCIsInRlbmFudEtleSI6Ii0iLCJhcHAiOiJBcHAxIiwicmVzb3VyY2VUeXBlIjoiT3JkZXIiLCJjcmVhdGVkQXQiOiIyMDI2LTAxLTAyVDAzOjA0OjA1LjY3OFoiLCJpZCI6ImF1ZGl0LTEifQ"
     }
   ],
   "calls": [
@@ -18,28 +18,48 @@
       "service": "DynamoDB",
       "command": "Query",
       "input": {
+        "TableName": "TEST-Contract-Audit-v2",
+        "IndexName": "ByType",
         "ScanIndexForward": false,
-        "IndexName": "LSI1_N",
+        "KeyConditionExpression": "#k0 = :k0 AND #k1 = :k1 AND #k2 = :k2",
+        "ExpressionAttributeNames": {
+          "#k0": "tenantKey",
+          "#k1": "app",
+          "#k2": "resourceType"
+        },
         "ExpressionAttributeValues": {
-          ":PK": {
-            "S": "App1.Order"
+          ":k0": {
+            "S": "-"
+          },
+          ":k1": {
+            "S": "App1"
+          },
+          ":k2": {
+            "S": "Order"
           }
         },
-        "ExpressionAttributeNames": {
-          "#PK": "PK"
-        },
-        "KeyConditionExpression": "#PK=:PK",
-        "TableName": "TEST-Contract-Audit",
         "Limit": 2,
         "ExclusiveStartKey": {
           "PK": {
-            "S": "App1.Order"
+            "S": "-#App1#Order#audit-1"
           },
           "SK": {
-            "S": "audit-1"
+            "S": "audit"
           },
-          "LSI1_N_SK": {
-            "N": "21767323445678"
+          "tenantKey": {
+            "S": "-"
+          },
+          "app": {
+            "S": "App1"
+          },
+          "resourceType": {
+            "S": "Order"
+          },
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "id": {
+            "S": "audit-1"
           }
         }
       },

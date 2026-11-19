@@ -1,5 +1,5 @@
 {
-  "description": "App and resource filters match the target; copies are not excluded",
+  "description": "A resource filter matches the audit's scopes (target or related resource); tier filters too",
   "operation": "listTraceItems",
   "args": [
     {
@@ -8,7 +8,8 @@
       "resource": {
         "type": "Order",
         "id": "order-1"
-      }
+      },
+      "tier": 2
     }
   ],
   "calls": [
@@ -16,54 +17,65 @@
       "service": "DynamoDB",
       "command": "Query",
       "input": {
+        "TableName": "TEST-Contract-Audit-v2",
+        "IndexName": "ByTrace",
         "ScanIndexForward": true,
-        "IndexName": "GSI1_SN",
+        "KeyConditionExpression": "#k0 = :k0 AND #k1 = :k1",
+        "ExpressionAttributeNames": {
+          "#k0": "tenantKey",
+          "#k1": "traceId",
+          "#tier": "tier",
+          "#scopes": "scopes"
+        },
         "ExpressionAttributeValues": {
-          ":PK": {
+          ":k0": {
+            "S": "-"
+          },
+          ":k1": {
             "S": "trace-1"
           },
-          ":resourceId": {
-            "S": "order-1"
+          ":tier": {
+            "N": "2"
           },
-          ":resourceType": {
-            "S": "Order"
-          },
-          ":app": {
-            "S": "App1"
+          ":scope": {
+            "S": "App1#Order#order-1"
           }
         },
-        "ExpressionAttributeNames": {
-          "#PK": "GSI1_SN_PK",
-          "#target": "target",
-          "#id": "id",
-          "#type": "type",
-          "#app": "app"
-        },
-        "KeyConditionExpression": "#PK=:PK",
-        "TableName": "TEST-Contract-Audit",
-        "Limit": 100,
-        "FilterExpression": "#target.#id = :resourceId AND #target.#type = :resourceType AND #target.#app = :app"
+        "FilterExpression": "#tier = :tier AND contains(#scopes, :scope)",
+        "Limit": 100
       },
       "output": {
         "Items": [
           {
             "PK": {
-              "S": "App1.Order"
+              "S": "-#App1#Order#audit-1"
             },
             "SK": {
-              "S": "audit-1"
+              "S": "audit"
             },
-            "GSI1_SN_PK": {
+            "tenantKey": {
+              "S": "-"
+            },
+            "traceId": {
               "S": "trace-1"
             },
-            "GSI1_SN_SK": {
-              "N": "0"
+            "traceStage": {
+              "N": "2"
             },
-            "operation": {
-              "S": "createOrder"
+            "createdAt": {
+              "S": "2026-01-02T03:04:05.678Z"
+            },
+            "id": {
+              "S": "audit-1"
             },
             "status": {
               "S": "success"
+            },
+            "tier": {
+              "N": "2"
+            },
+            "operation": {
+              "S": "createOrder"
             },
             "target": {
               "M": {
@@ -78,7 +90,10 @@
                 }
               }
             },
-            "createdAt": {
+            "trace": {
+              "S": "trace-1:2"
+            },
+            "updatedAt": {
               "S": "2026-01-02T03:04:05.678Z"
             }
           }
@@ -92,14 +107,15 @@
         "id": "audit-1",
         "status": "success",
         "tier": 2,
+        "operation": "createOrder",
         "target": {
           "app": "App1",
           "id": "order-1",
           "type": "Order"
         },
-        "operation": "createOrder",
-        "trace": "trace-1",
-        "createdAt": "2026-01-02T03:04:05.678Z"
+        "trace": "trace-1:2",
+        "createdAt": "2026-01-02T03:04:05.678Z",
+        "updatedAt": "2026-01-02T03:04:05.678Z"
       }
     ],
     "pagination": {}

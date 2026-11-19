@@ -1,6 +1,6 @@
 import * as z from "zod/v4";
 import { Status } from "./log.js";
-import { EventBridgeEventSchema } from "./model.js";
+import { EventBridgeEventSchema, TenantIdSchema } from "./model.js";
 
 /**
  * Escalation tiers for audit visibility
@@ -111,17 +111,19 @@ export const DateTimeObjectSchema = z
 
 /**
  * Schema for datetime fields that accept ISO strings or Date objects.
- * Transforms Date objects to ISO strings for storage compatibility.
+ * Outputs an ISO string with milliseconds, whatever the input's precision: an
+ * audit's `createdAt` is the sort key of every listing, compared as text.
  *
  * @example
  * ```typescript
- * DateTimeSchema.parse("2024-01-01T12:00:00.000Z"); // "2024-01-01T12:00:00.000Z"
- * DateTimeSchema.parse(new Date()); // "2024-01-15T10:30:00.000Z"
+ * DateTimeStringSchema.parse("2024-01-01T12:00:00.000Z"); // "2024-01-01T12:00:00.000Z"
+ * DateTimeStringSchema.parse("2024-01-01T12:00:00.5Z"); // "2024-01-01T12:00:00.500Z"
+ * DateTimeStringSchema.parse(new Date()); // "2024-01-15T10:30:00.000Z"
  * ```
  */
 export const DateTimeStringSchema = z
   .union([z.iso.datetime(), z.instanceof(Date)])
-  .transform((val) => (val instanceof Date ? val.toISOString() : val));
+  .transform((val) => new Date(val).toISOString());
 
 /**
  * Schema for tracking individual retry attempts
@@ -148,8 +150,15 @@ export type Attempt = z.output<typeof AttemptSchema>;
 export const BaseSchema = z.object({
   /** Unique identifier for the audit record */
   id: z.string(),
-  /** Tenant identifier for multi-tenancy support (optional) */
-  tenantId: z.string().optional(),
+  /**
+   * Tenant identifier for multi-tenancy support (optional). An empty one is none,
+   * and a null one (an empty one stored as NULL) is dropped.
+   */
+  tenantId: z
+    .union([TenantIdSchema, z.null()])
+    .optional()
+    .transform((tenantId) => tenantId || undefined)
+    .pipe(z.string().optional()),
   /** Current status of the audited operation */
   status: StatusSchema,
   /** Escalation tier for visibility (defaults to INFO) */

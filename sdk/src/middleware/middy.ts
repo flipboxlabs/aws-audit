@@ -34,8 +34,7 @@ type AnyAudits = Audits<AuditConfig>;
  * import { logAudits } from '@flipboxlabs/aws-audit-sdk/middleware';
  *
  * const config = defineAuditConfig({
- *   apps: ['Orders'] as const,
- *   resourceTypes: ['Order'] as const,
+ *   apps: { Orders: ['Order'] },
  * });
  *
  * const audits = new Audits({ config });

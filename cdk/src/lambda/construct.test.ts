@@ -7,8 +7,7 @@ import { Template } from "aws-cdk-lib/assertions";
 import { describe, expect, it } from "vite-plus/test";
 import { ConfigLayerConstruct } from "./construct.js";
 
-const APPS = ["Orders", "Inventory"];
-const RESOURCE_TYPES = ["Order", "Product"];
+const APPS = { Orders: ["Order", "Customer"], Inventory: ["Product"] };
 
 // Synthesizes the layer and returns its staged directory, which Lambda mounts at /opt
 const synthLayerDir = (): string => {
@@ -16,7 +15,6 @@ const synthLayerDir = (): string => {
   const stack = new cdk.Stack(app, "TestStack");
   new ConfigLayerConstruct(stack, "AuditConfigLayer", {
     apps: APPS,
-    resourceTypes: RESOURCE_TYPES,
   });
 
   const { directory } = app.synth();
@@ -41,8 +39,8 @@ const importConfig = (file: string): unknown => {
       "--no-experimental-detect-module",
       "--input-type=module",
       "-e",
-      `const { apps, resourceTypes } = await import(${JSON.stringify(configUrl.href)});
-console.log(JSON.stringify({ apps, resourceTypes }));`,
+      `const config = await import(${JSON.stringify(configUrl.href)});
+console.log(JSON.stringify({ ...config }));`,
     ],
     { encoding: "utf8" },
   );
@@ -57,7 +55,6 @@ describe("ConfigLayerConstruct", () => {
     expect(fs.readdirSync(layerDir).sort()).toEqual(["audit-config.json", "nodejs"]);
     expect(JSON.parse(fs.readFileSync(path.join(layerDir, "audit-config.json"), "utf8"))).toEqual({
       apps: APPS,
-      resourceTypes: RESOURCE_TYPES,
     });
   });
 
@@ -66,7 +63,6 @@ describe("ConfigLayerConstruct", () => {
     const stack = new cdk.Stack(app, "TestStack");
     new ConfigLayerConstruct(stack, "AuditConfigLayer", {
       apps: APPS,
-      resourceTypes: RESOURCE_TYPES,
     });
 
     Template.fromStack(stack).hasResourceProperties("AWS::Lambda::LayerVersion", {
@@ -93,16 +89,27 @@ describe("ConfigLayerConstruct", () => {
     // Another layer can replace /opt/nodejs/package.json; the .mjs must not depend on it
     fs.rmSync(path.join(nodejsDir, "package.json"));
 
-    expect(importConfig(path.join(nodejsDir, "audit-config.mjs"))).toEqual({
-      apps: APPS,
-      resourceTypes: RESOURCE_TYPES,
-    });
+    expect(importConfig(path.join(nodejsDir, "audit-config.mjs"))).toEqual({ apps: APPS });
   });
 
   it("should load audit-config.js as ESM without module syntax detection", () => {
     expect(importConfig(path.join(synthLayerNodejsDir(), "audit-config.js"))).toEqual({
       apps: APPS,
-      resourceTypes: RESOURCE_TYPES,
     });
+  });
+
+  it.each([
+    [{ Orders: [] }, 'App "Orders" must list at least one resource type'],
+    [{ "Order Desk": ["Order"] }, 'App "Order Desk" must hold only letters, digits, - and _'],
+    [{ Orders: ["Order/Line"] }, 'Resource type "Order/Line" of app "Orders" must hold only'],
+    // The 1.x shape, from a JavaScript caller, which the Rust Lambdas can't load
+    [["Orders"], "apps must map each app to its resource types"],
+    [{ Orders: "Order" }, 'App "Orders" must list its resource types as an array of strings'],
+  ])("should refuse %j at synth", (apps, message) => {
+    const stack = new cdk.Stack(new cdk.App(), "TestStack");
+
+    expect(
+      () => new ConfigLayerConstruct(stack, "AuditConfigLayer", { apps: apps as never }),
+    ).toThrow(message);
   });
 });

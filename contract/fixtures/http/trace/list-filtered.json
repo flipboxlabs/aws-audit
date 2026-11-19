@@ -15,24 +15,27 @@
       "command": "Query",
       "input": {
         "ScanIndexForward": true,
-        "IndexName": "GSI1_SN",
+        "IndexName": "ByTrace",
         "ExpressionAttributeValues": {
-          ":PK": {
+          ":k0": {
+            "S": "-"
+          },
+          ":k1": {
             "S": "trace-1"
           },
-          ":resourceType": {
-            "S": "Order"
+          ":scope": {
+            "S": "*#Order"
           }
         },
         "ExpressionAttributeNames": {
-          "#PK": "GSI1_SN_PK",
-          "#target": "target",
-          "#type": "type"
+          "#k0": "tenantKey",
+          "#k1": "traceId",
+          "#scopes": "scopes"
         },
-        "KeyConditionExpression": "#PK=:PK",
-        "TableName": "TEST-Contract-Audit",
+        "KeyConditionExpression": "#k0 = :k0 AND #k1 = :k1",
+        "TableName": "TEST-Contract-Audit-v2",
         "Limit": 5,
-        "FilterExpression": "#target.#type = :resourceType"
+        "FilterExpression": "contains(#scopes, :scope)"
       },
       "output": {
         "Items": []

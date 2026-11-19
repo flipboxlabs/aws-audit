@@ -97,6 +97,16 @@ describe("Audits", () => {
 
       expect(audits.traceId).toBeUndefined();
     });
+
+    it("should read each invocation's X-Ray trace ID, not the first", async () => {
+      process.env._X_AMZN_TRACE_ID = "Root=1-first;Sampled=1";
+
+      const { Audits } = await import("./audits.js");
+      const audits = new Audits({ config: testConfig });
+      process.env._X_AMZN_TRACE_ID = "Root=1-second;Sampled=1";
+
+      expect(audits.traceId).toBe("1-second");
+    });
   });
 
   describe("addAudit", () => {
