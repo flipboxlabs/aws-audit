@@ -1,6 +1,8 @@
 //! The `POST /apps/{app}/objects/{object}/{item}/{audit}/rerun` Lambda
 //! (`rerun/handler.ts`): sends a rerunable audit's recorded EventBridge event
-//! again.
+//! again. An audit is rerunable when it recorded an event and wasn't stored with
+//! `rerunable: false`; the SDK doesn't set the flag, so an unset one counts as
+//! rerunable, as it does for an audit's related-resource copies.
 //!
 //! In order: a 422 for an invalid path, a 404 when the audit is missing or
 //! belongs to another item, a 400 when it isn't rerunable, then one `PutEvents`,
@@ -43,7 +45,11 @@ async fn rerun(state: Arc<State>, request: HttpRequest) -> http::Result {
     )
     .await?;
 
-    let (Some(true), Some(event)) = (audit.rerunable, &audit.event) else {
+    let Some(event) = audit
+        .event
+        .as_ref()
+        .filter(|_| audit.rerunable != Some(false))
+    else {
         return Err(HttpError::bad_request("Item is not rerunable").into());
     };
 
