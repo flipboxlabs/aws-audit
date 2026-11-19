@@ -5,7 +5,7 @@ import type { DynamoDBRecord, KinesisStreamRecord, SQSRecord } from "aws-lambda"
 import KSUID from "ksuid";
 import merge from "lodash.merge";
 import type { MessageWithAuditOverride } from "./batch/batch-processor.js";
-import type { LogAuditInput } from "./schema/log.js";
+import { type LogAuditInput, Status } from "./schema/log.js";
 import type { EventBridgeEvent } from "./schema/model.js";
 
 /**
@@ -253,16 +253,54 @@ export function normalizeEventBridgetEventBody(
  * fields (detail, detail-type, source).
  *
  * @param record - The SQS record containing the message
- * @returns The extracted EventBridge event data
+ * @returns The extracted EventBridge event data, or undefined when the body isn't
+ *   an EventBridge event: not JSON, or without a source and detail type
  */
 export function normalizeSQSEventBody(record: SQSRecord): EventBridgeEvent | undefined {
-  const bodyObject = JSON.parse(record.body);
-
-  return {
+  const bodyObject = parseBody(record.body);
+  const event = {
     detail: bodyObject?.detail,
     "detail-type": bodyObject?.["detail-type"],
     source: bodyObject?.source,
   };
+
+  return isResendable(event) ? event : undefined;
+}
+
+/** An event as an audit records it, whose fields may be of any type when stored. */
+type RecordedEvent = { source?: unknown; "detail-type"?: unknown; [field: string]: unknown };
+
+/**
+ * Whether an event can be put on a bus again: PutEvents needs its source and
+ * detail type.
+ *
+ * @param event - The recorded event
+ * @returns Whether it has both
+ */
+export function isResendable(event: RecordedEvent | undefined): boolean {
+  return (
+    typeof event?.source === "string" &&
+    event.source !== "" &&
+    typeof event["detail-type"] === "string" &&
+    event["detail-type"] !== ""
+  );
+}
+
+/**
+ * Whether an audit's event can be rerun (`is_rerunable` in the Rust crate): it
+ * recorded a resendable event, and either says it's rerunable or, without the
+ * flag, failed. A retry that succeeded keeps the event its failure recorded, so an
+ * unset flag counts only for a failure.
+ *
+ * @param audit - The audit's flag, status and event
+ * @returns Whether a rerun sends its event
+ */
+export function isRerunable(audit: {
+  rerunable?: boolean | null;
+  status?: string;
+  event?: RecordedEvent;
+}): boolean {
+  return isResendable(audit.event) && (audit.rerunable ?? audit.status === Status.FAIL);
 }
 
 /**

@@ -27,9 +27,12 @@ pub fn is_retry(message: &SqsMessage) -> bool {
     receive_count(message).is_some_and(|count| count > 1)
 }
 
-/// The EventBridge event a message's body holds, when an EventBridge rule sent it.
+/// The EventBridge event a message's body holds, when an EventBridge rule sent it:
+/// a body without a source and detail type isn't one.
 pub fn event(message: &SqsMessage) -> Option<EventBridgeEvent> {
-    serde_json::from_str(message.body.as_deref()?).ok()
+    serde_json::from_str::<EventBridgeEvent>(message.body.as_deref()?)
+        .ok()
+        .filter(EventBridgeEvent::is_resendable)
 }
 
 /// The trace an audit of the message continues: the trace in the event's
@@ -135,7 +138,10 @@ async fn process<E: fmt::Display>(
                 let error = error.to_string();
                 item.status = Status::Fail;
                 item.event = event(message).map(|mut event| {
-                    event.event_bus_name = event_bus_name.map(str::to_owned);
+                    // An empty name is none, as in the TypeScript SDK
+                    event.event_bus_name = event_bus_name
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_owned);
                     event
                 });
                 item.append_message(&error);
@@ -236,6 +242,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn reads_no_event_from_a_body_that_isnt_one() {
+        for body in [
+            json!({}),
+            json!({ "orderId": 1 }),
+            json!({ "source": "orders", "detail": {} }),
+            json!("text"),
+        ] {
+            assert_eq!(event(&message("m-1", body.clone(), "1")), None, "{body}");
+        }
+        let mut text = message("m-1", json!({}), "1");
+        text.body = Some("hello".to_owned());
+        assert_eq!(event(&text), None);
+    }
+
     #[derive(Clone, Default)]
     struct Captured(Arc<Mutex<Vec<u8>>>);
 
@@ -331,17 +352,16 @@ mod tests {
             message("m-2", event_body(None), "1"),
         ];
 
-        process_batch_from_bus(
-            "PROD-Global",
-            &mut audits,
-            &batch,
-            |_| LogAudit::new("processOrder", ResourceReference::new("App1", "Order")),
+        let failing =
             async |message: &SqsMessage, _: &mut LogAudit| match message.message_id.as_deref() {
                 Some("m-2") => Err("Boom"),
                 _ => Ok(()),
-            },
-        )
-        .await;
+            };
+        let audit =
+            |_: &SqsMessage| LogAudit::new("processOrder", ResourceReference::new("App1", "Order"));
+        process_batch_from_bus("PROD-Global", &mut audits, &batch, audit, failing).await;
+        // An empty name is none
+        process_batch_from_bus("", &mut audits, &batch, audit, failing).await;
         audits.publish();
 
         let lines: Vec<Value> = String::from_utf8(out.0.lock().unwrap().clone())
@@ -352,6 +372,8 @@ mod tests {
         assert_eq!(lines[0].get("event"), None);
         assert_eq!(lines[1]["event"]["eventBusName"], "PROD-Global");
         assert_eq!(lines[1]["event"]["source"], "orders");
+        assert_eq!(lines[3]["event"]["source"], "orders");
+        assert_eq!(lines[3]["event"].get("eventBusName"), None);
     }
 
     #[tokio::test]

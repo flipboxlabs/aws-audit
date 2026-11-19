@@ -35,7 +35,7 @@
             "S": "audit"
           }
         },
-        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #ttl = :ttl ADD #scopes :scopes",
+        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #rerunable = :rerunable, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #ttl = :ttl ADD #scopes :scopes",
         "ExpressionAttributeNames": {
           "#attempts": "attempts",
           "#createdAt": "createdAt",
@@ -45,6 +45,7 @@
           "#tier": "tier",
           "#target": "target",
           "#operation": "operation",
+          "#rerunable": "rerunable",
           "#updatedAt": "updatedAt",
           "#tenantKey": "tenantKey",
           "#app": "app",
@@ -110,6 +111,9 @@
           },
           ":operation": {
             "S": "createOrder"
+          },
+          ":rerunable": {
+            "BOOL": false
           },
           ":updatedAt": {
             "S": "2026-01-02T03:04:05.678Z"

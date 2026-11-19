@@ -321,6 +321,21 @@ describe("migrate", () => {
     });
   });
 
+  it("says a copy is rerunable as its audit is, whatever the earlier SDK stored on it", async () => {
+    const migrated = async (audit: Record<string, unknown>) => {
+      const { client, send } = stubClient([[v1Copy({ rerunable: false })], [v1Audit(audit)]]);
+      await migrate({ client, from: FROM, to: TO });
+      const [copy] = putItems(send);
+      return copy.rerunable;
+    };
+
+    // A failure with an event, without a flag, as the earlier SDK logged one
+    expect(await migrated({})).toBe(true);
+    expect(await migrated({ status: "success" })).toBe(false);
+    expect(await migrated({ rerunable: false })).toBe(false);
+    expect(await migrated({ event: undefined })).toBe(false);
+  });
+
   it("puts each copy again from its audit, with its createdAt, which the earlier table didn't keep on it", async () => {
     const EARLIER = "2026-01-01T00:00:00.000Z";
     const { client, table } = stubClient([
@@ -720,7 +735,8 @@ describe("migrate", () => {
         trace: "trace-1:2",
         target: { app: "TestApp", type: "User", id: "user-1" },
         source: { app: "App1", type: "Order", id: "order-1" },
-        rerunable: true,
+        // It succeeded: the event is the earlier failure's
+        rerunable: false,
         related: true,
         createdAt: EARLIER,
         updatedAt: NOW,

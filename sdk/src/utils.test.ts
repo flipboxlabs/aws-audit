@@ -11,6 +11,7 @@ import {
   getReceiveCount,
   getRecordId,
   getTraceParts,
+  isRerunable,
   isRetry,
   normalizeEventBridgetEventBody,
   normalizeEventBridgetInput,
@@ -401,30 +402,40 @@ describe("utils", () => {
       });
     });
 
-    it("should handle empty body", () => {
-      const sqsRecord = createMockSQSRecord({});
-
-      const result = normalizeSQSEventBody(sqsRecord);
-
-      expect(result).toEqual({
-        detail: undefined,
-        "detail-type": undefined,
-        source: undefined,
-      });
+    it("should return undefined for a body that isn't an EventBridge event", () => {
+      expect(normalizeSQSEventBody(createMockSQSRecord({}))).toBeUndefined();
+      expect(
+        normalizeSQSEventBody(createMockSQSRecord({ detail: { partial: true } })),
+      ).toBeUndefined();
+      expect(
+        normalizeSQSEventBody(createMockSQSRecord({ source: "orders", detail: {} })),
+      ).toBeUndefined();
     });
 
-    it("should handle partial EventBridge fields", () => {
-      const sqsRecord = createMockSQSRecord({
-        detail: { partial: true },
-      });
+    it("should return undefined for a body that isn't JSON", () => {
+      const sqsRecord = { ...createMockSQSRecord(), body: "hello" };
 
-      const result = normalizeSQSEventBody(sqsRecord);
+      expect(normalizeSQSEventBody(sqsRecord)).toBeUndefined();
+    });
+  });
 
-      expect(result).toEqual({
-        detail: { partial: true },
-        "detail-type": undefined,
-        source: undefined,
-      });
+  describe("isRerunable", () => {
+    const event = { source: "orders", "detail-type": "OrderCreated", detail: "{}" };
+
+    it("should rerun a failure with an event, unless it says it isn't rerunable", () => {
+      expect(isRerunable({ status: "fail", event })).toBe(true);
+      expect(isRerunable({ status: "fail", event, rerunable: false })).toBe(false);
+    });
+
+    it("should rerun another status only when it says it's rerunable", () => {
+      expect(isRerunable({ status: "success", event })).toBe(false);
+      expect(isRerunable({ status: "success", event, rerunable: true })).toBe(true);
+    });
+
+    it("should never rerun without a resendable event", () => {
+      expect(isRerunable({ status: "fail", rerunable: true })).toBe(false);
+      expect(isRerunable({ status: "fail", event: { detail: "{}" }, rerunable: true })).toBe(false);
+      expect(isRerunable({ status: "fail", event: { ...event, source: "" } })).toBe(false);
     });
   });
 

@@ -331,6 +331,30 @@ pub struct EventBridgeEvent {
     pub detail: Option<String>,
 }
 
+impl EventBridgeEvent {
+    /// Whether the event can be put on a bus again: `PutEvents` needs its source
+    /// and detail type. A message whose body isn't an EventBridge event records
+    /// neither.
+    pub fn is_resendable(&self) -> bool {
+        let given =
+            |field: &Option<String>| field.as_deref().is_some_and(|value| !value.is_empty());
+        given(&self.source) && given(&self.detail_type)
+    }
+}
+
+/// Whether an audit's event can be rerun (`isRerunable` in the TypeScript SDK): it
+/// recorded a resendable event, and either says it's rerunable or, without the
+/// flag, failed. A retry that succeeded keeps the event its failure recorded, so
+/// an unset flag counts only for a failure.
+pub fn is_rerunable(
+    rerunable: Option<bool>,
+    status: Status,
+    event: Option<&EventBridgeEvent>,
+) -> bool {
+    event.is_some_and(EventBridgeEvent::is_resendable)
+        && rerunable.unwrap_or(status == Status::Fail)
+}
+
 fn detail<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
     match Option::<Value>::deserialize(deserializer)? {
         None => Ok(None),
@@ -448,6 +472,13 @@ pub struct Audit {
     /// When the audit was created.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<Timestamp>,
+}
+
+impl Audit {
+    /// Whether its event can be rerun (see [`is_rerunable`]).
+    pub fn is_rerunable(&self) -> bool {
+        is_rerunable(self.rerunable, self.status, self.event.as_ref())
+    }
 }
 
 /// An audit as a listing returns it (`AuditSummarySchema`): what tells audits apart,
@@ -591,6 +622,32 @@ mod tests {
 
         value["error"] = json!("Boom");
         assert_eq!(audit(value).unwrap().error, Some(json!("Boom")));
+    }
+
+    #[test]
+    fn reruns_a_resendable_event_that_failed_or_says_it_can() {
+        let event = EventBridgeEvent {
+            source: Some("orders".to_owned()),
+            detail_type: Some("OrderCreated".to_owned()),
+            ..EventBridgeEvent::default()
+        };
+        let no_source = EventBridgeEvent {
+            source: Some(String::new()),
+            ..event.clone()
+        };
+
+        assert!(is_rerunable(None, Status::Fail, Some(&event)));
+        assert!(!is_rerunable(Some(false), Status::Fail, Some(&event)));
+        // A retry that succeeded keeps the failure's event
+        assert!(!is_rerunable(None, Status::Success, Some(&event)));
+        assert!(is_rerunable(Some(true), Status::Success, Some(&event)));
+        assert!(!is_rerunable(Some(true), Status::Fail, None));
+        assert!(!is_rerunable(None, Status::Fail, Some(&no_source)));
+        assert!(!is_rerunable(
+            None,
+            Status::Fail,
+            Some(&EventBridgeEvent::default())
+        ));
     }
 
     #[test]

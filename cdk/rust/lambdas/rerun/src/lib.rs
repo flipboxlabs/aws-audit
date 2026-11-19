@@ -1,11 +1,13 @@
 //! The `POST /apps/{app}/objects/{object}/{item}/{audit}/rerun` Lambda
 //! (`rerun/handler.ts`): sends a rerunable audit's recorded EventBridge event
-//! again. An audit is rerunable when it recorded an event and wasn't stored with
-//! `rerunable: false`; the SDK doesn't set the flag, so an unset one counts as
-//! rerunable, as it does for an audit's related-resource copies.
+//! again. Whether it's rerunable is [`Audit::is_rerunable`]: audits are stored
+//! with the flag, and one stored before that is rerunable when it failed.
 //!
-//! The event goes to the bus it recorded (`eventBusName`), which must be one of
-//! the [`RerunBuses`], or to the audit event bus when it recorded none.
+//! The event goes to the bus it recorded (`eventBusName`), which must be the
+//! audit event bus or one of the [`RerunBuses`], or to the audit event bus when
+//! it recorded none.
+//!
+//! [`Audit::is_rerunable`]: aws_audit::Audit::is_rerunable
 //!
 //! In order: a 422 for an invalid path, a 404 when the audit is missing or
 //! belongs to another item, a 400 when it isn't rerunable or its bus isn't
@@ -111,15 +113,13 @@ async fn rerun(state: Arc<State>, request: HttpRequest) -> http::Result {
     )
     .await?;
 
-    let Some(event) = audit
-        .event
-        .as_ref()
-        .filter(|_| audit.rerunable != Some(false))
-    else {
+    let Some(event) = audit.event.as_ref().filter(|_| audit.is_rerunable()) else {
         return Err(HttpError::bad_request("Item is not rerunable").into());
     };
+    let audit_bus = state.events.bus_name();
     let bus = match event.event_bus_name.as_deref() {
-        None => state.events.bus_name(),
+        None | Some("") => audit_bus,
+        Some(recorded) if recorded == audit_bus => audit_bus,
         Some(recorded) => state.buses.resolve(recorded).ok_or_else(|| {
             HttpError::bad_request(format!("Event bus {recorded} is not allowed for reruns"))
         })?,

@@ -51,7 +51,7 @@
             "S": "audit"
           }
         },
-        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #message = :message, #trace = :trace, #event = :event, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #traceId = :traceId, #traceStage = :traceStage, #ttl = :ttl ADD #scopes :scopes",
+        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #message = :message, #rerunable = :rerunable, #trace = :trace, #event = :event, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #traceId = :traceId, #traceStage = :traceStage, #ttl = :ttl ADD #scopes :scopes",
         "ExpressionAttributeNames": {
           "#attempts": "attempts",
           "#createdAt": "createdAt",
@@ -62,6 +62,7 @@
           "#target": "target",
           "#operation": "operation",
           "#message": "message",
+          "#rerunable": "rerunable",
           "#trace": "trace",
           "#event": "event",
           "#updatedAt": "updatedAt",
@@ -138,6 +139,9 @@
           },
           ":message": {
             "S": "Order created"
+          },
+          ":rerunable": {
+            "BOOL": false
           },
           ":trace": {
             "S": "trace-1"
@@ -339,7 +343,7 @@
             }
           },
           "rerunable": {
-            "BOOL": true
+            "BOOL": false
           },
           "related": {
             "BOOL": true
@@ -438,7 +442,7 @@
             }
           },
           "rerunable": {
-            "BOOL": true
+            "BOOL": false
           },
           "related": {
             "BOOL": true

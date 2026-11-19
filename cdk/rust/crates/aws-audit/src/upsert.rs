@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::config::AuditConfig;
 use crate::model::{
     Attempt, Context, EventBridgeEvent, NO_TENANT, ResourceReference, Status, Tier, Timestamp,
-    parse_error_value,
+    is_rerunable, parse_error_value,
 };
 
 /// An audit to create or update, as an app logs it.
@@ -222,7 +222,12 @@ impl StoredAudit {
             context: audit.context.clone(),
             operation: audit.operation.clone(),
             message: audit.message.clone(),
-            rerunable: audit.rerunable,
+            // Stored whether or not it was given, so listings answer as a rerun would
+            rerunable: Some(is_rerunable(
+                audit.rerunable,
+                audit.status,
+                audit.event.as_ref(),
+            )),
             trace: audit.trace.clone(),
             event: audit.event.clone(),
             error: audit.error.clone().map(parse_error_value),
@@ -346,11 +351,45 @@ mod tests {
                 "tier",
                 "target",
                 "operation",
+                "rerunable",
                 "error",
                 "updatedAt",
                 "createdAt"
             ]
         );
         assert_eq!(stored["error"], json!({ "name": "Error" }));
+        assert_eq!(stored["rerunable"], json!(false));
+    }
+
+    #[test]
+    fn stores_whether_the_event_can_be_rerun() {
+        let now = Timestamp::try_from("2026-01-02T03:04:05.678Z".to_owned()).unwrap();
+        let rerunable = |audit: Value| {
+            let audit: UpsertAudit = serde_json::from_value(audit).unwrap();
+            StoredAudit::new(&audit, "audit-1".into(), &now).rerunable
+        };
+        let failed = json!({
+            "operation": "createOrder",
+            "target": { "app": "App1", "type": "Order" },
+            "status": "fail",
+            "event": { "source": "orders", "detail-type": "OrderCreated", "detail": "{}" },
+        });
+        let with = |field: &str, value: Value| {
+            let mut audit = failed.clone();
+            audit[field] = value;
+            audit
+        };
+
+        assert_eq!(rerunable(failed.clone()), Some(true));
+        assert_eq!(rerunable(with("rerunable", json!(false))), Some(false));
+        // A retry that succeeded leaves the failure's event stored; its flag says no
+        assert_eq!(rerunable(with("status", json!("success"))), Some(false));
+        let mut opted_in = with("status", json!("success"));
+        opted_in["rerunable"] = json!(true);
+        assert_eq!(rerunable(opted_in), Some(true));
+        assert_eq!(
+            rerunable(with("event", json!({ "detail": "{}" }))),
+            Some(false)
+        );
     }
 }

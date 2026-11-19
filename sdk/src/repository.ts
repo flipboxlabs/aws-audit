@@ -29,7 +29,7 @@ import { type Pagination, PaginationCollectionSchema } from "./schema/model.js";
 import type { UpsertAuditInput } from "./schema/service.js";
 import { type AuditStorage, AuditStorageSchema } from "./schema/storage.js";
 import type { AnyApp, AnyResourceType, InferApp, InferResourceType } from "./types.js";
-import { getTraceParts, hasResourceId } from "./utils.js";
+import { getTraceParts, hasResourceId, isRerunable } from "./utils.js";
 
 const { Attributes, Indexes, Keys } = DynamoDB;
 
@@ -492,7 +492,7 @@ export function relatedCopy(
     ...AuditSummarySchema.parse(audit),
     target,
     source: audit.target,
-    rerunable: audit.rerunable ?? !!audit.event,
+    rerunable: isRerunable(audit),
     related: true,
   };
   const { PK } = constructPrimaryKey({
@@ -658,9 +658,11 @@ export class AuditRepository<C extends AuditConfig> {
   ): Promise<{ attemptNumber: number; audit: AuditStorage }> {
     const now = new Date();
 
+    // The flag is stored whether or not it was given, so listings answer as a rerun would
     const payload = AuditStorageSchema.parse({
       createdAt: now,
       ...item,
+      rerunable: isRerunable(item),
       updatedAt: now,
     });
 
