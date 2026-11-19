@@ -18,7 +18,7 @@ import { Audits } from "./audits.js";
 import { DynamoDB, type IndexDefinition } from "./constants.js";
 import { BatchHandler } from "./events/batch-handler.js";
 import { AuditEventBus } from "./events/bus.js";
-import { AuditRepository } from "./repository.js";
+import { AuditRepository, resourceScopes } from "./repository.js";
 import { decodeNextPageToken, encodeNextPageToken, type PageKey } from "./repository.utils.js";
 import { DateTimeStringSchema } from "./schema/common.js";
 import type { LogAuditInput } from "./schema/log.js";
@@ -125,20 +125,24 @@ type Case = {
 };
 
 /**
- * What UpdateItem's `ALL_NEW` returns for an upsert of `input`: its fields, over
- * those an earlier attempt `kept`, with `count` attempts.
+ * What UpdateItem's `ALL_NEW` returns for an upsert of `input`: its fields and its
+ * resources' `scopes`, over those an earlier attempt `kept`, with `count` attempts.
  */
 const storedReply = (
   input: Record<string, unknown>,
   { count, createdAt, kept = {} }: StoredReply["stored"],
 ): Reply => {
-  const { resources: _, attempts: __, ...fields } = input;
+  const { resources, attempts: _, ...fields } = input;
+  const listed = [fields.target, ...((resources as unknown[] | undefined) ?? [])];
   return {
     output: {
       Attributes: marshall(
         {
           status: "success",
           tier: 2,
+          scopes: new Set(
+            (listed as Parameters<typeof resourceScopes>[0][]).flatMap(resourceScopes),
+          ),
           ...kept,
           ...fields,
           createdAt: createdAt ?? DateTimeStringSchema.parse(fields.createdAt ?? NOW),
@@ -397,12 +401,11 @@ const CASES: Case[] = [
   {
     name: "upsert/retarget",
     description:
-      "A retry that changes the target's id removes the target it replaces (previousTarget, set in the same write) from scopes, unless a related resource's copy (read consistently) still lists the audit under it, and only if no upsert appended an attempt since; a related resource's scope stays, even before its copy is written",
+      "A retry that changes the target's id removes from scopes each resource of the target's app and type there but its target, as the targets it replaces, unless a related resource's copy (read consistently) lists the audit under it, and only if no upsert appended an attempt since; a copy put since the check (read again) puts its resource back",
     operation: "upsertItem",
     args: [upsertInput({ status: "fail", target: { app: "App1", type: "Order", id: "order-2" } })],
     replies: [
       attempts(2, "2026-01-01T00:00:00.000Z", {
-        previousTarget: { app: "App1", type: "Order", id: "order-1" },
         scopes: new Set([
           "App1",
           "App1#Order",
@@ -410,11 +413,48 @@ const CASES: Case[] = [
           "App1#Order#order-1",
           "App1#Order#order-2",
           "App1#Order#order-3",
+          "App1#Order#order-4",
+          "TestApp#User#user-1",
+        ]),
+      }),
+      { output: {} },
+      // The copies under order-1, order-3 and order-4: order-3's lists the audit there
+      { output: {} },
+      { output: { Item: marshall({ PK: "-#App1#Order#audit-1" }) } },
+      { output: {} },
+      { output: {} },
+      // Again, once removed: an overlapping upsert put order-4's since
+      { output: {} },
+      { output: { Item: marshall({ PK: "-#App1#Order#audit-1" }) } },
+      { output: {} },
+      { output: {} },
+      accepted(),
+    ],
+  },
+  {
+    name: "upsert/retarget-since",
+    description:
+      "A retry that changes the target's id leaves the scopes to a later upsert, which appended an attempt since and removes them from the audit as it stored it",
+    operation: "upsertItem",
+    args: [upsertInput({ status: "fail", target: { app: "App1", type: "Order", id: "order-2" } })],
+    replies: [
+      attempts(2, "2026-01-01T00:00:00.000Z", {
+        scopes: new Set([
+          "App1",
+          "App1#Order",
+          "*#Order",
+          "App1#Order#order-1",
+          "App1#Order#order-2",
         ]),
       }),
       { output: {} },
       { output: {} },
-      { output: {} },
+      {
+        error: {
+          name: "ConditionalCheckFailedException",
+          message: "The conditional request failed",
+        },
+      },
       { output: {} },
       accepted(),
     ],
@@ -658,6 +698,36 @@ const CASES: Case[] = [
           count: 3,
           createdAt: "2026-01-01T00:00:00.000Z",
           since: { target: { app: "App1", type: "Order", id: "order-2" } },
+        },
+      },
+      { output: {} },
+      accepted(),
+    ],
+  },
+  {
+    name: "upsert/scopes-since",
+    description:
+      "When an overlapping retry removed one of its resources from the audit's scopes (read back), as a target it replaced, before the copy there was put, its scopes go back, unless the audit is gone",
+    operation: "upsertItem",
+    args: [
+      upsertInput({
+        status: "fail",
+        resources: [{ app: "App1", type: "Order", id: "order-3" }],
+      }),
+    ],
+    replies: [
+      attempts(2, "2026-01-01T00:00:00.000Z"),
+      { output: {} },
+      { output: {} },
+      { output: {} },
+      {
+        readBack: {
+          count: 3,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          since: {
+            target: { app: "App1", type: "Order", id: "order-2" },
+            scopes: new Set(["App1", "App1#Order", "*#Order", "App1#Order#order-2"]),
+          },
         },
       },
       { output: {} },

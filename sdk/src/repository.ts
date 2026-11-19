@@ -629,10 +629,10 @@ export class AuditRepository<C extends AuditConfig> {
    * so the audit no longer lists under its earlier resource. Likewise a `trace`
    * without an id, empty or such as `:2`, removes `traceId` and `traceStage`, so
    * the audit leaves its earlier trace's listing. A retry that changes the
-   * target's id removes the target it replaces from `scopes`, so the status and
-   * trace filters no longer match it, unless the retry lists it as related or a
-   * related resource's copy still lists the audit under it (see
-   * {@link removePreviousTarget}).
+   * target's id removes the targets it replaces from `scopes`, so the status and
+   * trace filters no longer match them, unless the retry lists one as related or
+   * a related resource's copy still lists the audit under it (see
+   * {@link removeReplacedTargets}).
    *
    * @param item - The audit record to upsert (its `attempts`, if any, are ignored)
    * @param currentAttempt - The current attempt to append
@@ -679,12 +679,9 @@ export class AuditRepository<C extends AuditConfig> {
     const setClauses: string[] = [
       "#attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt)",
       "#createdAt = if_not_exists(#createdAt, :createdAt)",
-      // Read before this write, so the target it replaces
-      "#previousTarget = if_not_exists(#target, :target)",
     ];
     expressionAttributeNames["#attempts"] = "attempts";
     expressionAttributeNames["#createdAt"] = "createdAt";
-    expressionAttributeNames["#previousTarget"] = Attributes.PREVIOUS_TARGET;
 
     // Added to, not replaced: a copy under a resource a retry no longer lists stays,
     // so the status and trace filters keep matching that resource too; the target
@@ -771,7 +768,7 @@ export class AuditRepository<C extends AuditConfig> {
     }
 
     if (attemptNumber > 1) {
-      await this.removePreviousTarget(primaryKey, updated, item.resources ?? [], attemptNumber);
+      await this.removeReplacedTargets(primaryKey, updated, item.resources ?? [], attemptNumber);
     }
 
     const audit = AuditStorageSchema.parse(withoutNulls(updated));
@@ -782,65 +779,109 @@ export class AuditRepository<C extends AuditConfig> {
   }
 
   /**
-   * Removes from `scopes` the resource the audit targeted before a retry changed
-   * its target's id (`previousTarget`, which the retry's write set): unless the
-   * retry lists it as related, or a related resource's copy (read consistently)
-   * lists the audit under it, and only when no upsert has appended an attempt
-   * since `revision`, as a later one's target is its own. Only that resource's
-   * scope goes: a related resource's scope stays even before an overlapping upsert
-   * writes its copy. Nothing is read or written when the target is unchanged.
+   * Removes from `scopes` the targets a retry replaced: each resource of the
+   * audit's app and type there (`{app}#{type}#{id}`) other than its target, unless
+   * the retry lists it as related or a related resource's copy (read consistently)
+   * lists the audit under it. Only the upsert that appended the latest attempt
+   * (`revision`) removes them, as a later one's target is its own; as they're read
+   * from `scopes`, it also removes those an earlier, overlapping retry left to it.
+   *
+   * A copy put after the check lists the audit there after all, so its resource
+   * goes back: the copies are read again once the scopes are removed, and
+   * {@link upsertRelated} adds back its resources' scopes after putting theirs.
    *
    * @param key - The audit's key
-   * @param stored - The audit as the retry stored it, with its `scopes` and
-   *   `previousTarget`
+   * @param stored - The audit as the retry stored it, with its `scopes`
    * @param listed - The retry's related resources
    * @param revision - The audit's attempt count, as the retry stored it
    */
-  private async removePreviousTarget(
+  private async removeReplacedTargets(
     key: DynamoDBPrimaryKey,
     stored: Record<string, unknown>,
     listed: Iterable<ResourceReference>,
     revision: number,
   ): Promise<void> {
-    const previous = stored[Attributes.PREVIOUS_TARGET] as ResourceReference | undefined;
-    if (!previous || !hasResourceId(previous.id)) return;
+    const target = stored.target as ResourceReference;
+    const resource = `${joinKey(target.app, target.type)}#`;
+    const kept = new Set([target, ...listed].flatMap(resourceScopes));
+    const candidates = [...((stored[Attributes.SCOPES] as Set<string> | undefined) ?? [])].filter(
+      (scope) => scope.startsWith(resource) && !kept.has(scope),
+    );
 
-    const scope = joinKey(previous.app, previous.type, previous.id);
-    const scopes = stored[Attributes.SCOPES] as Set<string> | undefined;
-    const kept = new Set([stored.target as ResourceReference, ...listed].flatMap(resourceScopes));
-    if (!scopes?.has(scope) || kept.has(scope)) return;
-
-    // Unless a related resource's copy still lists the audit under it
-    const sortKey = relatedSortKey(previous);
-    if (fitsSortKey(sortKey)) {
-      const { Item: copy } = await this.client.send(
-        new GetItemCommand({
-          TableName: DynamoDB.Table.Name(),
-          Key: marshall({ ...key, [DynamoDB.Keys.SORT_KEY]: sortKey }, MARSHALL_OPTIONS),
-          ProjectionExpression: "#pk",
-          ExpressionAttributeNames: { "#pk": DynamoDB.Keys.PARTITION_KEY },
-          ConsistentRead: true,
-        }),
-      );
-      if (copy) return;
+    const replaced: string[] = [];
+    for (const scope of candidates) {
+      if (!(await this.hasCopy(key, scope))) replaced.push(scope);
     }
+    if (replaced.length === 0) return;
 
     try {
       await this.client.send(
         new UpdateItemCommand({
           TableName: DynamoDB.Table.Name(),
           Key: marshall(key, MARSHALL_OPTIONS),
-          UpdateExpression: "DELETE #scopes :scope",
+          UpdateExpression: "DELETE #scopes :scopes",
           ConditionExpression: "size(#attempts) = :revision",
           ExpressionAttributeNames: { "#scopes": Attributes.SCOPES, "#attempts": "attempts" },
           ExpressionAttributeValues: marshall({
-            ":scope": new Set([scope]),
+            ":scopes": new Set(replaced),
             ":revision": revision,
           }),
         }),
       );
     } catch (error) {
-      // An upsert since has its own target and scopes
+      // An upsert since removes them, from the audit as it stored it
+      if ((error as Error | undefined)?.name !== "ConditionalCheckFailedException") throw error;
+      return;
+    }
+
+    // An overlapping upsert's copy put since the check
+    const relisted: string[] = [];
+    for (const scope of replaced) {
+      if (await this.hasCopy(key, scope)) relisted.push(scope);
+    }
+    await this.addScopes(key, relisted);
+  }
+
+  /**
+   * Whether a copy of the audit keyed `key` lists it under the resource whose
+   * `scopes` value is `scope` (`{app}#{type}#{id}`), read consistently.
+   */
+  private async hasCopy(key: DynamoDBPrimaryKey, scope: string): Promise<boolean> {
+    const sortKey = `${DynamoDB.SortKeys.RELATED_PREFIX}${scope}`;
+    // Too long for there to be one
+    if (!fitsSortKey(sortKey)) return false;
+
+    const { Item: copy } = await this.client.send(
+      new GetItemCommand({
+        TableName: DynamoDB.Table.Name(),
+        Key: marshall({ ...key, [DynamoDB.Keys.SORT_KEY]: sortKey }, MARSHALL_OPTIONS),
+        ProjectionExpression: "#pk",
+        ExpressionAttributeNames: { "#pk": DynamoDB.Keys.PARTITION_KEY },
+        ConsistentRead: true,
+      }),
+    );
+    return copy !== undefined;
+  }
+
+  /** Adds `scopes` to the audit keyed `key`, unless it's gone (expired). */
+  private async addScopes(key: DynamoDBPrimaryKey, scopes: string[]): Promise<void> {
+    if (scopes.length === 0) return;
+
+    try {
+      await this.client.send(
+        new UpdateItemCommand({
+          TableName: DynamoDB.Table.Name(),
+          Key: marshall(key, MARSHALL_OPTIONS),
+          UpdateExpression: "ADD #scopes :scopes",
+          ConditionExpression: "attribute_exists(#pk)",
+          ExpressionAttributeNames: {
+            "#scopes": Attributes.SCOPES,
+            "#pk": DynamoDB.Keys.PARTITION_KEY,
+          },
+          ExpressionAttributeValues: marshall({ ":scopes": new Set(scopes) }),
+        }),
+      );
+    } catch (error) {
       if ((error as Error | undefined)?.name !== "ConditionalCheckFailedException") throw error;
     }
   }
@@ -864,7 +905,9 @@ export class AuditRepository<C extends AuditConfig> {
    * Then the audit is read again: when a migration (`aws-audit-migrate`) merged a
    * 1.x audit into it since it was upserted, its copies are put again from the
    * merged audit, at its revision. A merge rewrites the copies it finds, so a copy
-   * written after it, from the audit before it, would stay otherwise.
+   * written after it, from the audit before it, would stay otherwise. A resource
+   * missing from its `scopes` goes back, as an overlapping retry may have removed
+   * it as a target it replaced before its copy was put (see `upsertItem`).
    *
    * A retry whose target is a resource an earlier attempt listed deletes that
    * copy, as the audit lists under its target itself; so does an upsert that put
@@ -933,6 +976,14 @@ export class AuditRepository<C extends AuditConfig> {
     );
     if (!item) return;
     const current = unmarshall(item);
+    // An overlapping retry removed a resource as one it replaced, before its copy was put
+    const scopes = current[Attributes.SCOPES] as Set<string> | undefined;
+    await this.addScopes(
+      key,
+      [...new Set([...resources.values()].flatMap(resourceScopes))].filter(
+        (scope) => !scopes?.has(scope),
+      ),
+    );
     const target = current.target as ResourceReference;
     const targetKey = hasResourceId(target.id) ? relatedSortKey(target) : undefined;
 

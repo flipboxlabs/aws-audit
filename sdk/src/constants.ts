@@ -91,12 +91,6 @@ const Attributes = {
    * overlapping upserts leave the latest one's; not projected or returned
    */
   REVISION: "revision",
-  /**
-   * On an audit, its `target` before its latest upsert, which that upsert set in
-   * the same write: a retry that changes the target removes the earlier one's
-   * scope by it; not projected or returned
-   */
-  PREVIOUS_TARGET: "previousTarget",
   STATUS: "status",
   CREATED_AT: "createdAt",
   ID: "id",

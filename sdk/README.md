@@ -109,11 +109,13 @@ audit by its `source`. A retry keeps the fields it leaves out, and each copy it
 writes shows the audit as stored, with them; a retry whose target has no id no
 longer lists under the earlier target's resource, and one with an empty `trace` no
 longer lists under the earlier trace. A retry that changes the target's id also
-removes the target it replaces from `scopes`, so the status and trace filters stop
-matching it, unless the retry or an earlier attempt lists it as a related
-resource. The audit keeps the replaced target as `previousTarget`, set in the same
-write, and the check is one consistent `GetItem` of a copy under it, made only
-when the target changed. A trace without an id, such as `:2`, is
+removes the targets it replaces from `scopes`, so the status and trace filters stop
+matching them: every resource of the target's app and type there but the target,
+unless the retry lists it as related or a copy under it (one consistent `GetItem`
+each) still lists the audit there. Only the upsert that appended the latest
+attempt removes them, so it also removes those an overlapping retry left to it,
+and it reads the copies again afterwards; a copy put meanwhile, like each
+upsert's own copies once it reads the audit back, puts its resource's scopes back. A trace without an id, such as `:2`, is
 stored but lists under no trace, as an index key can't be empty. Once it writes the copies, `upsertItem`
 reads the audit back (`dynamodb:GetItem`, as well as `UpdateItem` and `PutItem`),
 in case the migration from 1.x merged it in the meantime. A retry whose target

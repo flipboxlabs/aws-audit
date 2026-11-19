@@ -72,10 +72,6 @@ pub mod attributes {
     /// written: a copy is put only over one of the same or an earlier revision, so
     /// overlapping upserts leave the latest one's; not projected or returned.
     pub const REVISION: &str = "revision";
-    /// On an audit, its `target` before its latest upsert, which that upsert set in
-    /// the same write: a retry that changes the target removes the earlier one's
-    /// scope by it; not projected or returned.
-    pub const PREVIOUS_TARGET: &str = "previousTarget";
     /// The latest outcome.
     pub const STATUS: &str = "status";
     /// When the audit was created.

@@ -35,11 +35,10 @@
             "S": "audit"
           }
         },
-        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #previousTarget = if_not_exists(#target, :target), #id = :id, #status = :status, #tier = :tier, #target = :target, #context = :context, #operation = :operation, #message = :message, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #kind = :kind, #ttl = :ttl ADD #scopes :scopes REMOVE #resourceId",
+        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #context = :context, #operation = :operation, #message = :message, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #kind = :kind, #ttl = :ttl ADD #scopes :scopes REMOVE #resourceId",
         "ExpressionAttributeNames": {
           "#attempts": "attempts",
           "#createdAt": "createdAt",
-          "#previousTarget": "previousTarget",
           "#scopes": "scopes",
           "#id": "id",
           "#status": "status",
@@ -157,6 +156,13 @@
           },
           "tier": {
             "N": "2"
+          },
+          "scopes": {
+            "SS": [
+              "App1",
+              "App1#Order",
+              "*#Order"
+            ]
           },
           "id": {
             "S": "audit-1"

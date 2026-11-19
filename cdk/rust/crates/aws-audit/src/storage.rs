@@ -21,7 +21,7 @@ use crate::keys::{
 };
 use crate::model::{Attempt, Audit, AuditSummary, ResourceReference, Status, Tier, Timestamp};
 use crate::pagination::{self, InvalidNextToken, Page, PageInfo, Pagination};
-use crate::table::{Index, SUMMARY_PROJECTION, attributes, keys, kinds};
+use crate::table::{Index, SUMMARY_PROJECTION, attributes, keys, kinds, sort_keys};
 use crate::trace::trace_parts;
 use crate::upsert::{StoredAudit, UpsertAudit};
 
@@ -214,10 +214,6 @@ impl AuditRepository {
         let mut names = HashMap::from([
             ("#attempts".to_owned(), "attempts".to_owned()),
             ("#createdAt".to_owned(), "createdAt".to_owned()),
-            (
-                "#previousTarget".to_owned(),
-                attributes::PREVIOUS_TARGET.to_owned(),
-            ),
         ]);
         let mut values = Map::from_iter([
             (":emptyList".to_owned(), Value::Array(vec![])),
@@ -229,8 +225,6 @@ impl AuditRepository {
         let mut clauses = vec![
             "#attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt)".to_owned(),
             "#createdAt = if_not_exists(#createdAt, :createdAt)".to_owned(),
-            // Read before this write, so the target it replaces
-            "#previousTarget = if_not_exists(#target, :target)".to_owned(),
         ];
 
         let Value::Object(payload) = serde_json::to_value(&stored)? else {
@@ -332,7 +326,7 @@ impl AuditRepository {
         }
 
         if number > 1 {
-            self.remove_previous_target(&key, attributes, listed, number)
+            self.remove_replaced_targets(&key, attributes, listed, number)
                 .await?;
         }
 
@@ -371,7 +365,10 @@ impl AuditRepository {
     /// Then the audit is read again: when a migration (`aws-audit-migrate`) merged
     /// a 1.x audit into it since it was upserted, its copies are put again from the
     /// merged audit, at its revision. A merge rewrites the copies it finds, so a
-    /// copy written after it, from the audit before it, would stay otherwise.
+    /// copy written after it, from the audit before it, would stay otherwise. A
+    /// resource missing from its `scopes` goes back, as an overlapping retry may
+    /// have removed it as a target it replaced before its copy was put (see
+    /// [`upsert_item`](Self::upsert_item)).
     ///
     /// A retry whose target is a resource an earlier attempt listed deletes that
     /// copy, as the audit lists under its target itself; so does an upsert that put
@@ -449,6 +446,21 @@ impl AuditRepository {
         let Some(item) = output.item() else {
             return Ok(());
         };
+        // An overlapping retry removed a resource as one it replaced, before its copy was put
+        let scopes = item
+            .get(attributes::SCOPES)
+            .and_then(|scopes| scopes.as_ss().ok())
+            .map_or(&[][..], Vec::as_slice);
+        let mut missing: Vec<String> = Vec::new();
+        for scope in resources
+            .iter()
+            .flat_map(|(_, resource)| resource_scopes(resource))
+        {
+            if !scopes.contains(&scope) && !missing.contains(&scope) {
+                missing.push(scope);
+            }
+        }
+        self.add_scopes(&key, missing).await?;
         let current = unmarshall_map(item);
         let target = current
             .get("target")
@@ -520,69 +532,52 @@ impl AuditRepository {
         }
     }
 
-    /// Removes from `scopes` the resource the audit targeted before a retry changed
-    /// its target's id (`previousTarget`, which the retry's write set, in `stored`):
-    /// unless the retry lists it as related (`listed`), or a related resource's copy
-    /// (read consistently) lists the audit under it, and only when no upsert has
-    /// appended an attempt since `revision`, as a later one's target is its own.
-    /// Only that resource's scope goes: a related resource's scope stays even before
-    /// an overlapping upsert writes its copy. Nothing is read or written when the
-    /// target is unchanged.
-    async fn remove_previous_target<'a>(
+    /// Removes from `scopes` the targets a retry replaced: each resource of the
+    /// audit's app and type there (`{app}#{type}#{id}`) other than its target, in
+    /// `stored`, unless the retry lists it as related (`listed`) or a related
+    /// resource's copy (read consistently) lists the audit under it. Only the
+    /// upsert that appended the latest attempt (`revision`) removes them, as a
+    /// later one's target is its own; as they're read from `scopes`, it also
+    /// removes those an earlier, overlapping retry left to it.
+    ///
+    /// A copy put after the check lists the audit there after all, so its resource
+    /// goes back: the copies are read again once the scopes are removed, and
+    /// [`upsert_related`](Self::upsert_related) adds back its resources' scopes
+    /// after putting theirs.
+    async fn remove_replaced_targets<'a>(
         &self,
         key: &Map<String, Value>,
         stored: &Item,
         listed: impl IntoIterator<Item = &'a ResourceReference>,
         revision: u32,
     ) -> Result<(), StorageError> {
-        let reference = |name: &str| {
-            stored
-                .get(name)
-                .and_then(|value| ResourceReference::deserialize(unmarshall(value)).ok())
-        };
-        let (Some(previous), Some(target)) =
-            (reference(attributes::PREVIOUS_TARGET), reference("target"))
+        let Some(target) = stored
+            .get("target")
+            .and_then(|value| ResourceReference::deserialize(unmarshall(value)).ok())
         else {
             return Ok(());
         };
-        let Some(id) = previous.id.as_ref().filter(|id| has_resource_id(Some(id))) else {
-            return Ok(());
-        };
-
-        let scope = join_key([
-            previous.app.as_str(),
-            previous.resource_type.as_str(),
-            id.to_key().as_str(),
-        ]);
-        let scopes = stored
+        let resource = format!(
+            "{}#",
+            join_key([target.app.as_str(), target.resource_type.as_str()])
+        );
+        let mut kept = resource_scopes(&target);
+        kept.extend(listed.into_iter().flat_map(resource_scopes));
+        let candidates = stored
             .get(attributes::SCOPES)
-            .and_then(|scopes| scopes.as_ss().ok());
-        let kept = resource_scopes(&target).contains(&scope)
-            || listed
-                .into_iter()
-                .any(|resource| resource_scopes(resource).contains(&scope));
-        if kept || !scopes.is_some_and(|scopes| scopes.contains(&scope)) {
-            return Ok(());
-        }
+            .and_then(|scopes| scopes.as_ss().ok())
+            .into_iter()
+            .flatten()
+            .filter(|scope| scope.starts_with(&resource) && !kept.contains(scope));
 
-        // Unless a related resource's copy still lists the audit under it
-        let sort_key = related_sort_key(&previous);
-        if fits_sort_key(&sort_key) {
-            let mut copy = key.clone();
-            copy.insert(keys::SORT_KEY.to_owned(), Value::String(sort_key));
-            let output = self
-                .client
-                .get_item()
-                .table_name(&self.table)
-                .set_key(Some(marshall_map(&copy)))
-                .projection_expression("#pk")
-                .expression_attribute_names("#pk", keys::PARTITION_KEY)
-                .consistent_read(true)
-                .send()
-                .await?;
-            if output.item().is_some() {
-                return Ok(());
+        let mut replaced = Vec::new();
+        for scope in candidates {
+            if !self.has_copy(key, scope).await? {
+                replaced.push(scope.clone());
             }
+        }
+        if replaced.is_empty() {
+            return Ok(());
         }
 
         let update = self
@@ -590,16 +585,83 @@ impl AuditRepository {
             .update_item()
             .table_name(&self.table)
             .set_key(Some(marshall_map(key)))
-            .update_expression("DELETE #scopes :scope")
+            .update_expression("DELETE #scopes :scopes")
             .condition_expression("size(#attempts) = :revision")
             .expression_attribute_names("#scopes", attributes::SCOPES)
             .expression_attribute_names("#attempts", "attempts")
-            .expression_attribute_values(":scope", AttributeValue::Ss(vec![scope]))
+            .expression_attribute_values(":scopes", AttributeValue::Ss(replaced.clone()))
             .expression_attribute_values(":revision", AttributeValue::N(revision.to_string()))
             .send()
             .await;
         match update {
-            // An upsert since has its own target and scopes
+            // An upsert since removes them, from the audit as it stored it
+            Err(error)
+                if error
+                    .as_service_error()
+                    .is_some_and(|error| error.is_conditional_check_failed_exception()) =>
+            {
+                return Ok(());
+            }
+            result => result.map(|_| ())?,
+        }
+
+        // An overlapping upsert's copy put since the check
+        let mut relisted = Vec::new();
+        for scope in replaced {
+            if self.has_copy(key, &scope).await? {
+                relisted.push(scope);
+            }
+        }
+        self.add_scopes(key, relisted).await
+    }
+
+    /// Whether a copy of the audit keyed `key` lists it under the resource whose
+    /// `scopes` value is `scope` (`{app}#{type}#{id}`), read consistently.
+    async fn has_copy(&self, key: &Map<String, Value>, scope: &str) -> Result<bool, StorageError> {
+        let sort_key = format!("{}{scope}", sort_keys::RELATED_PREFIX);
+        // Too long for there to be one
+        if !fits_sort_key(&sort_key) {
+            return Ok(false);
+        }
+
+        let mut copy = key.clone();
+        copy.insert(keys::SORT_KEY.to_owned(), Value::String(sort_key));
+        let output = self
+            .client
+            .get_item()
+            .table_name(&self.table)
+            .set_key(Some(marshall_map(&copy)))
+            .projection_expression("#pk")
+            .expression_attribute_names("#pk", keys::PARTITION_KEY)
+            .consistent_read(true)
+            .send()
+            .await?;
+        Ok(output.item().is_some())
+    }
+
+    /// Adds `scopes` to the audit keyed `key`, unless it's gone (expired).
+    async fn add_scopes(
+        &self,
+        key: &Map<String, Value>,
+        scopes: Vec<String>,
+    ) -> Result<(), StorageError> {
+        if scopes.is_empty() {
+            return Ok(());
+        }
+
+        let update = self
+            .client
+            .update_item()
+            .table_name(&self.table)
+            .set_key(Some(marshall_map(key)))
+            .update_expression("ADD #scopes :scopes")
+            .condition_expression("attribute_exists(#pk)")
+            .expression_attribute_names("#scopes", attributes::SCOPES)
+            .expression_attribute_names("#pk", keys::PARTITION_KEY)
+            .expression_attribute_values(":scopes", AttributeValue::Ss(scopes))
+            .send()
+            .await;
+        match update {
             Err(error)
                 if error
                     .as_service_error()
