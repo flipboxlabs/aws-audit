@@ -1,5 +1,53 @@
 # Changelog
 
+## [2.0.0](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.8.0...sdk-v2.0.0) (2026-11-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* defineAuditConfig and ConfigLayerConstruct take `apps: { [app]: resourceTypes[] }` in place of `apps` and `resourceTypes` lists; the layer's audit-config.json and .mjs export only `apps`, as that map. GET /config answers `apps` as the map, without `resourceTypes`. Rust: AuditConfig::new takes (app, types) pairs, and aws-audit-http's resource_type takes the app.
+* the SDK, the CDK constructs and the Lambdas read and write the new table only. Deploy the new version, then copy the old table's audits with `aws-audit-migrate`; the old table is retained. Listings return summaries (no context, event, error or attempts).
+
+### Features
+
+* **cdk:** record audits from Rust Lambdas with the aws-audit crate ([83476f0](https://github.com/flipboxlabs/aws-audit/commit/83476f08e9803996f46e369db331533d3885d66d)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* list each app's resource types in the config ([f70a2e1](https://github.com/flipboxlabs/aws-audit/commit/f70a2e14661bc840408bc1661faab3cd35416968)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* **sdk:** add aws-audit-migrate to copy 1.x audits into the v2 table ([5d3bfd7](https://github.com/flipboxlabs/aws-audit/commit/5d3bfd7cddadd471a9859f6898db957bd95bf240)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* **sdk:** throw InvalidResourceFilterError for an incomplete resource filter ([1ea022a](https://github.com/flipboxlabs/aws-audit/commit/1ea022a7991f0d444a97233e1acadf0ad6188f45)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* store audits in a v2 table keyed by multi-attribute indexes ([b4fe9fa](https://github.com/flipboxlabs/aws-audit/commit/b4fe9fad05d2a7e94f8b303304733016ecd0c2dd))
+
+
+### Bug Fixes
+
+* **cdk:** treat an audit's empty trace as none in the aws-audit crate ([8d9c018](https://github.com/flipboxlabs/aws-audit/commit/8d9c018fa059b851c1323781f196ad59a18a17db)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* copy the audit as stored, and drop a stale resourceId on retry ([08d8216](https://github.com/flipboxlabs/aws-audit/commit/08d821650b145f0704f4e802ed4cf9e8663ba799)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* delete a related copy under the resource a retry targets ([1daaa19](https://github.com/flipboxlabs/aws-audit/commit/1daaa193bf8d9be5a81440844b8d072c4884adc2)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* drop an earlier target's scopes when a retry changes the target ([ee2fe3c](https://github.com/flipboxlabs/aws-audit/commit/ee2fe3c3fef0cbc21634c5db562ddd4a864e03e0)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* escape each part of the table's keys and scopes ([79e9ad6](https://github.com/flipboxlabs/aws-audit/commit/79e9ad614458b6bc9123afbd18a737ce32467dcb)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* keep empty index keys out of the writers and the migration ([4e7e68b](https://github.com/flipboxlabs/aws-audit/commit/4e7e68bba84451cac375c4e19876ab4431d36457)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* keep related copies from the merged audit when a retry overlaps the migration ([b2a477d](https://github.com/flipboxlabs/aws-audit/commit/b2a477d4bd4933d0f5c2b8f108bf2eac1b5988fc)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* keep the latest upsert's related copies when upserts overlap ([b54c1e1](https://github.com/flipboxlabs/aws-audit/commit/b54c1e18b000b0c45389de052f11ef2ae0ff2341)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* mark related copies, and refuse the reserved tenant in Rust listings ([94d2967](https://github.com/flipboxlabs/aws-audit/commit/94d2967a5be9fb4060d1f278274fbf48003dc741)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* **migrate:** mark merged audits, read audits by their attempts, check concurrency ([4fb93f2](https://github.com/flipboxlabs/aws-audit/commit/4fb93f2207b95901bee74ece140c1f843dde04e4)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* **migrate:** merge audits retried since the deploy, and normalise timestamps ([ba8f0ae](https://github.com/flipboxlabs/aws-audit/commit/ba8f0ae72b0fa3630563aba02c4d91fddce10d11)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* project scopes for resource filters, and keep copies out of ByStatus ([1557c10](https://github.com/flipboxlabs/aws-audit/commit/1557c10c04fa0befb5f1d0fde38bb275ffc77fcd)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* refuse an apps config that isn't a map of resource type arrays ([f247ea2](https://github.com/flipboxlabs/aws-audit/commit/f247ea2c591ee2366263e27b7e262c6a74652587)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* remove every replaced target's scope on the latest retry ([ec7a5e7](https://github.com/flipboxlabs/aws-audit/commit/ec7a5e7ff29e926a3c3836c22e39c775f012dd35)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* remove only the replaced target's scope on a retry ([272fa9c](https://github.com/flipboxlabs/aws-audit/commit/272fa9c10939a7d7a08c60eadb053d429a2c9c01)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* remove the trace index attributes when a retry clears the trace ([6064e31](https://github.com/flipboxlabs/aws-audit/commit/6064e31eb71b2dcf6da67a3b201173dabcefe732)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* **sdk:** accept only table names, not ARNs, for a migration ([4e9b0b0](https://github.com/flipboxlabs/aws-audit/commit/4e9b0b0604aafb719c6765ca3c08ae25b2ed9cb9)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* **sdk:** guard migrate() against one table and bound all its writes ([e8f34ad](https://github.com/flipboxlabs/aws-audit/commit/e8f34ad8f6c3b2655d45a8597d305a0bd46e1a5f)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* **sdk:** keep getItem's resource type narrowed to its app's ([0cd20d7](https://github.com/flipboxlabs/aws-audit/commit/0cd20d798133f39f8629d5a371583926c640a5c0)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* **sdk:** make the migration's copies independent of scan order ([ec7c11f](https://github.com/flipboxlabs/aws-audit/commit/ec7c11fe41b877188aa427f00a37c7d6ba47141a)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* **sdk:** migrate copies as the released 1.x SDKs stored them ([8e50a3e](https://github.com/flipboxlabs/aws-audit/commit/8e50a3e4aacc9b8c23e36a182736448c595ffb42)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* **sdk:** migrate copies with their audit's createdAt, and audits whose id holds a # ([b4b8f26](https://github.com/flipboxlabs/aws-audit/commit/b4b8f26866ef2b1a0d72f79d6a6dc51a5d64e0c5)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* **sdk:** migrate pre-1.4.2 copies, and merge retried audits whole ([bac7249](https://github.com/flipboxlabs/aws-audit/commit/bac72498a0d2ab0ff08e0abc0dc503f6e21c9a33)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* **sdk:** read the X-Ray trace id per invocation, and tolerate non-event SQS bodies ([c4011cd](https://github.com/flipboxlabs/aws-audit/commit/c4011cd8d2db642a88337358a0d7fdf6167a9dad)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* **sdk:** stop a failed migration's writes before it rejects ([44cff6d](https://github.com/flipboxlabs/aws-audit/commit/44cff6dfb9cfeffc98374925fde5bae947663f2b)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* skip related copies whose keys DynamoDB can't store ([b134077](https://github.com/flipboxlabs/aws-audit/commit/b134077731080414f3b6a56097ac23a78139d258)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* store empty strings as such, so an upsert reads back valid ([e1b1ea8](https://github.com/flipboxlabs/aws-audit/commit/e1b1ea8cc57357bb65b8512994cd1950d01c3270)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+* write one related copy per resource and add to an audit's scopes ([69c7507](https://github.com/flipboxlabs/aws-audit/commit/69c7507180cb52651351474e8c9b7ced96aee507)), closes [#149](https://github.com/flipboxlabs/aws-audit/issues/149)
+
 ## [1.8.0](https://github.com/flipboxlabs/aws-audit/compare/sdk-v1.7.0...sdk-v1.8.0) (2026-11-17)
 
 
