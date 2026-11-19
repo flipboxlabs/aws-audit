@@ -13,6 +13,7 @@ import {
   getTraceParts,
   isRerunable,
   isRetry,
+  rerunableToStore,
   normalizeEventBridgetEventBody,
   normalizeEventBridgetInput,
   normalizeSQSEventBody,
@@ -402,14 +403,12 @@ describe("utils", () => {
       });
     });
 
-    it("should return undefined for a body that isn't an EventBridge event", () => {
-      expect(normalizeSQSEventBody(createMockSQSRecord({}))).toBeUndefined();
-      expect(
-        normalizeSQSEventBody(createMockSQSRecord({ detail: { partial: true } })),
-      ).toBeUndefined();
-      expect(
-        normalizeSQSEventBody(createMockSQSRecord({ source: "orders", detail: {} })),
-      ).toBeUndefined();
+    it("should keep what a body holds of an event, for debugging", () => {
+      expect(normalizeSQSEventBody(createMockSQSRecord({ detail: { partial: true } }))).toEqual({
+        detail: { partial: true },
+        "detail-type": undefined,
+        source: undefined,
+      });
     });
 
     it("should return undefined for a body that isn't JSON", () => {
@@ -436,6 +435,23 @@ describe("utils", () => {
       expect(isRerunable({ status: "fail", rerunable: true })).toBe(false);
       expect(isRerunable({ status: "fail", event: { detail: "{}" }, rerunable: true })).toBe(false);
       expect(isRerunable({ status: "fail", event: { ...event, source: "" } })).toBe(false);
+      // PutEvents refuses AWS's own sources
+      expect(isRerunable({ status: "fail", event: { ...event, source: "aws.s3" } })).toBe(false);
+    });
+  });
+
+  describe("rerunableToStore", () => {
+    const event = { source: "orders", "detail-type": "OrderCreated", detail: "{}" };
+
+    it("should store whether what was logged is rerunable", () => {
+      expect(rerunableToStore({ status: "fail", event })).toBe(true);
+      expect(rerunableToStore({ status: "success", event })).toBe(false);
+      expect(rerunableToStore({ status: "success" })).toBe(false);
+    });
+
+    it("should keep the stored flag for a failure logged without an event or a flag", () => {
+      expect(rerunableToStore({ status: "fail" })).toBeUndefined();
+      expect(rerunableToStore({ status: "fail", rerunable: false })).toBe(false);
     });
   });
 

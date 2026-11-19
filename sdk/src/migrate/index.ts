@@ -174,12 +174,15 @@ async function run(
       new GetItemCommand({
         TableName: from,
         Key: marshall(key),
-        ProjectionExpression: "#attempts, #rerunable, #status, #event",
+        // Only what isRerunable reads of the event, not its detail
+        ProjectionExpression: "#attempts, #rerunable, #status, #event.#source, #event.#detailType",
         ExpressionAttributeNames: {
           "#attempts": "attempts",
           "#rerunable": "rerunable",
           "#status": "status",
           "#event": "event",
+          "#source": "source",
+          "#detailType": "detail-type",
         },
       }),
     );
@@ -453,6 +456,8 @@ function toAudit(item: UnmarshalledAttributes): Transformed {
       // Index key attributes: defaulted when the earlier item left them out
       status: parsed.data.status,
       tier: parsed.data.tier,
+      // As a v2 upsert stores it, which the earlier SDK didn't
+      rerunable: isRerunable({ ...fields, status: parsed.data.status }),
       ...constructPrimaryKey({ tenantId, app: target.app, resourceType: target.type, id }),
       ...constructIndexAttributes({ tenantId, target, trace }, DynamoDB.Kinds.AUDIT),
       [Attributes.SCOPES]: new Set(resourceScopes(target)),
@@ -627,13 +632,15 @@ const MERGE_ATTEMPTS = 5;
 
 /**
  * What a merge leaves to the v2 audit, or sets itself: its keys, the attributes
- * built from its fields, and its expiry.
+ * built from its fields, its expiry, and whether it's rerunable, which the merged
+ * audit decides.
  */
 const NOT_FILLED = new Set<string>([
   Keys.PARTITION_KEY,
   Keys.SORT_KEY,
   "attempts",
   "createdAt",
+  "rerunable",
   Attributes.TTL,
   Attributes.TENANT_KEY,
   Attributes.APP,
@@ -692,6 +699,11 @@ async function mergeAudit(
       ([name, value]) =>
         !NOT_FILLED.has(name) && current[name] === undefined && value !== undefined,
     );
+    // An upsert from before audits stored the flag left none: the latest status
+    // decides, with the event the merge leaves, which may be the earlier audit's
+    if (current.rerunable === undefined) {
+      fields.push(["rerunable", isRerunable({ ...current, ...Object.fromEntries(fields) })]);
+    }
     const merged = { ...current, ...Object.fromEntries(fields) } as Parameters<
       typeof constructIndexAttributes
     >[0];

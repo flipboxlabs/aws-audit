@@ -27,12 +27,11 @@ pub fn is_retry(message: &SqsMessage) -> bool {
     receive_count(message).is_some_and(|count| count > 1)
 }
 
-/// The EventBridge event a message's body holds, when an EventBridge rule sent it:
-/// a body without a source and detail type isn't one.
+/// The EventBridge event a message's body holds, when an EventBridge rule sent it.
+/// What a JSON body holds of one is kept for debugging, even when it can't be
+/// re-sent ([`EventBridgeEvent::is_resendable`]).
 pub fn event(message: &SqsMessage) -> Option<EventBridgeEvent> {
-    serde_json::from_str::<EventBridgeEvent>(message.body.as_deref()?)
-        .ok()
-        .filter(EventBridgeEvent::is_resendable)
+    serde_json::from_str(message.body.as_deref()?).ok()
 }
 
 /// The trace an audit of the message continues: the trace in the event's
@@ -243,15 +242,12 @@ mod tests {
     }
 
     #[test]
-    fn reads_no_event_from_a_body_that_isnt_one() {
-        for body in [
-            json!({}),
-            json!({ "orderId": 1 }),
-            json!({ "source": "orders", "detail": {} }),
-            json!("text"),
-        ] {
-            assert_eq!(event(&message("m-1", body.clone(), "1")), None, "{body}");
-        }
+    fn keeps_what_a_body_holds_of_an_event_and_reads_none_from_one_that_isnt_json() {
+        let partial = event(&message("m-1", json!({ "detail": { "orderId": 1 } }), "1")).unwrap();
+        assert_eq!(partial.detail.as_deref(), Some(r#"{"orderId":1}"#));
+        assert!(!partial.is_resendable());
+
+        assert_eq!(event(&message("m-1", json!("text"), "1")), None);
         let mut text = message("m-1", json!({}), "1");
         text.body = Some("hello".to_owned());
         assert_eq!(event(&text), None);

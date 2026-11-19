@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::config::AuditConfig;
 use crate::model::{
     Attempt, Context, EventBridgeEvent, NO_TENANT, ResourceReference, Status, Tier, Timestamp,
-    is_rerunable, parse_error_value,
+    parse_error_value, rerunable_to_store,
 };
 
 /// An audit to create or update, as an app logs it.
@@ -222,12 +222,7 @@ impl StoredAudit {
             context: audit.context.clone(),
             operation: audit.operation.clone(),
             message: audit.message.clone(),
-            // Stored whether or not it was given, so listings answer as a rerun would
-            rerunable: Some(is_rerunable(
-                audit.rerunable,
-                audit.status,
-                audit.event.as_ref(),
-            )),
+            rerunable: rerunable_to_store(audit.rerunable, audit.status, audit.event.as_ref()),
             trace: audit.trace.clone(),
             event: audit.event.clone(),
             error: audit.error.clone().map(parse_error_value),
@@ -391,5 +386,11 @@ mod tests {
             rerunable(with("event", json!({ "detail": "{}" }))),
             Some(false)
         );
+        // A failure logged without an event keeps the flag an earlier one stored
+        let mut without_event = failed.clone();
+        without_event.as_object_mut().unwrap().remove("event");
+        assert_eq!(rerunable(without_event.clone()), None);
+        without_event["rerunable"] = json!(false);
+        assert_eq!(rerunable(without_event), Some(false));
     }
 }

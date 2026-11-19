@@ -204,6 +204,7 @@ describe("migrate", () => {
       operation: "createOrder",
       status: "fail",
       tier: 2,
+      rerunable: true,
       target: { app: "App1", type: "Order", id: "order-1" },
       context: { attempt: 2 },
       event: { source: "orders", "detail-type": "OrderCreated", detail: "{}" },
@@ -689,7 +690,9 @@ describe("migrate", () => {
       expect(updates).toEqual([
         {
           key: { PK: "-#App1#Order#audit-1", SK: "audit" },
-          expression: "SET #attempts = :attempts, #createdAt = :createdAt, #migrated = :migrated",
+          // The retry succeeded, so the earlier failure's event isn't rerunable
+          expression:
+            "SET #attempts = :attempts, #createdAt = :createdAt, #migrated = :migrated, #f0 = :f0",
           condition:
             "attribute_not_exists(#migrated) AND #createdAt = :current AND size(#attempts) = :count",
           values: {
@@ -701,6 +704,7 @@ describe("migrate", () => {
             ":migrated": true,
             ":current": NOW,
             ":count": 1,
+            ":f0": false,
           },
         },
       ]);
@@ -824,11 +828,27 @@ describe("migrate", () => {
         trace: "trace-1:2",
         traceId: "trace-1",
         traceStage: 2,
+        // From the merged audit, whose retry succeeded
+        rerunable: false,
       });
       expect(merge.input.UpdateExpression).toBe(
         "SET #attempts = :attempts, #createdAt = :createdAt, #migrated = :migrated, " +
-          "#f0 = :f0, #f1 = :f1, #f2 = :f2, #f3 = :f3, #f4 = :f4",
+          "#f0 = :f0, #f1 = :f1, #f2 = :f2, #f3 = :f3, #f4 = :f4, #f5 = :f5",
       );
+    });
+
+    it("says the merged audit is rerunable when its retry failed too, by the earlier event", async () => {
+      const { client, send } = stubClient([[v1Audit()]], isAuditPut, [
+        v2Audit({ status: "fail", attempts: [{ number: 1, status: "fail", at: NOW }] }),
+      ]);
+
+      await migrate({ client, from: FROM, to: TO });
+
+      const [merge] = commands(send, UpdateItemCommand);
+      const names = merge.input.ExpressionAttributeNames!;
+      const values = unmarshall(merge.input.ExpressionAttributeValues!);
+      const token = Object.keys(names).find((name) => names[name] === "rerunable")!;
+      expect(values[`:${token.slice(1)}`]).toBe(true);
     });
 
     it("keeps a retry's target, without the earlier target's resourceId", async () => {

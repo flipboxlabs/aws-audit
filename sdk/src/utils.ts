@@ -253,18 +253,18 @@ export function normalizeEventBridgetEventBody(
  * fields (detail, detail-type, source).
  *
  * @param record - The SQS record containing the message
- * @returns The extracted EventBridge event data, or undefined when the body isn't
- *   an EventBridge event: not JSON, or without a source and detail type
+ * @returns The extracted EventBridge event data, kept for debugging even when it
+ *   can't be re-sent ({@link isResendable}), or undefined when the body isn't JSON
  */
 export function normalizeSQSEventBody(record: SQSRecord): EventBridgeEvent | undefined {
   const bodyObject = parseBody(record.body);
-  const event = {
+  if (bodyObject === undefined) return undefined;
+
+  return {
     detail: bodyObject?.detail,
     "detail-type": bodyObject?.["detail-type"],
     source: bodyObject?.source,
   };
-
-  return isResendable(event) ? event : undefined;
 }
 
 /** An event as an audit records it, whose fields may be of any type when stored. */
@@ -272,7 +272,7 @@ type RecordedEvent = { source?: unknown; "detail-type"?: unknown; [field: string
 
 /**
  * Whether an event can be put on a bus again: PutEvents needs its source and
- * detail type.
+ * detail type, and refuses a source of AWS's own (`aws.*`), such as an S3 event's.
  *
  * @param event - The recorded event
  * @returns Whether it has both
@@ -281,6 +281,7 @@ export function isResendable(event: RecordedEvent | undefined): boolean {
   return (
     typeof event?.source === "string" &&
     event.source !== "" &&
+    !event.source.startsWith("aws.") &&
     typeof event["detail-type"] === "string" &&
     event["detail-type"] !== ""
   );
@@ -295,13 +296,31 @@ export function isResendable(event: RecordedEvent | undefined): boolean {
  * @param audit - The audit's flag, status and event
  * @returns Whether a rerun sends its event
  */
-export function isRerunable(audit: {
+export function isRerunable(audit: RerunableFields): boolean {
+  return isResendable(audit.event) && (audit.rerunable ?? audit.status === Status.FAIL);
+}
+
+/**
+ * The flag an upsert stores (`rerunable_to_store` in the Rust crate), so a listing
+ * answers as a rerun would: {@link isRerunable} for what it logged, or undefined,
+ * leaving the stored flag, for a failure logged without an event or a flag. That
+ * failure keeps the event an earlier one stored, which is still rerunable.
+ *
+ * @param audit - The upserted audit's flag, status and event
+ * @returns The flag to store, or undefined to keep the stored one
+ */
+export function rerunableToStore(audit: RerunableFields): boolean | undefined {
+  const keepsStored =
+    audit.rerunable == null && audit.status === Status.FAIL && audit.event === undefined;
+  return keepsStored ? undefined : isRerunable(audit);
+}
+
+/** What decides whether an audit's event can be rerun. */
+type RerunableFields = {
   rerunable?: boolean | null;
   status?: string;
   event?: RecordedEvent;
-}): boolean {
-  return isResendable(audit.event) && (audit.rerunable ?? audit.status === Status.FAIL);
-}
+};
 
 /**
  * Parses a trace ID into its component parts.

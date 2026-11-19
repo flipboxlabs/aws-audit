@@ -70,6 +70,18 @@ describe("RestApiConstruct", () => {
     expect(putEvents).toEqual([auditBus]);
   });
 
+  it("should refuse a rerun event bus in another region", () => {
+    expect(() =>
+      synth((stack) => [
+        events.EventBus.fromEventBusArn(
+          stack,
+          "Elsewhere",
+          "arn:aws:events:eu-west-1:123456789012:event-bus/TEST-Global",
+        ),
+      ]),
+    ).toThrow(/is in eu-west-1, not the stack's region us-east-1/);
+  });
+
   it("should let a rerun send to the rerun event buses too", () => {
     const { variable, putEvents } = rerunBuses(
       synth((stack) => [

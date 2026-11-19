@@ -64,6 +64,12 @@ fn resolves_an_allowed_bus_by_name_in_its_own_account_or_by_arn() {
         None
     );
     assert_eq!(RerunBuses::default().resolve("TEST-Global"), None);
+
+    // PutEvents doesn't reach another region's bus
+    let other_region = "arn:aws:events:eu-west-1:123456789012:event-bus/TEST-Global";
+    let buses = RerunBuses::new("123456789012", "us-east-1", [other_region]);
+    assert_eq!(buses.resolve(other_region), None);
+    assert_eq!(buses.resolve("TEST-Global"), None);
 }
 
 #[tokio::test(start_paused = true)]

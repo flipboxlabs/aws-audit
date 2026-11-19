@@ -333,12 +333,17 @@ pub struct EventBridgeEvent {
 
 impl EventBridgeEvent {
     /// Whether the event can be put on a bus again: `PutEvents` needs its source
-    /// and detail type. A message whose body isn't an EventBridge event records
-    /// neither.
+    /// and detail type, and refuses a source of AWS's own (`aws.*`), such as an S3
+    /// event's. A message whose body isn't an EventBridge event records neither.
     pub fn is_resendable(&self) -> bool {
         let given =
             |field: &Option<String>| field.as_deref().is_some_and(|value| !value.is_empty());
-        given(&self.source) && given(&self.detail_type)
+        given(&self.source)
+            && given(&self.detail_type)
+            && !self
+                .source
+                .as_deref()
+                .is_some_and(|source| source.starts_with("aws."))
     }
 }
 
@@ -353,6 +358,19 @@ pub fn is_rerunable(
 ) -> bool {
     event.is_some_and(EventBridgeEvent::is_resendable)
         && rerunable.unwrap_or(status == Status::Fail)
+}
+
+/// The flag an upsert stores (`rerunableToStore` in the TypeScript SDK), so a
+/// listing answers as a rerun would: [`is_rerunable`] for what it logged, or none,
+/// leaving the stored flag, for a failure logged without an event or a flag. That
+/// failure keeps the event an earlier one stored, which is still rerunable.
+pub fn rerunable_to_store(
+    rerunable: Option<bool>,
+    status: Status,
+    event: Option<&EventBridgeEvent>,
+) -> Option<bool> {
+    (rerunable.is_some() || status != Status::Fail || event.is_some())
+        .then(|| is_rerunable(rerunable, status, event))
 }
 
 fn detail<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
@@ -635,6 +653,10 @@ mod tests {
             source: Some(String::new()),
             ..event.clone()
         };
+        let from_aws = EventBridgeEvent {
+            source: Some("aws.s3".to_owned()),
+            ..event.clone()
+        };
 
         assert!(is_rerunable(None, Status::Fail, Some(&event)));
         assert!(!is_rerunable(Some(false), Status::Fail, Some(&event)));
@@ -643,6 +665,8 @@ mod tests {
         assert!(is_rerunable(Some(true), Status::Success, Some(&event)));
         assert!(!is_rerunable(Some(true), Status::Fail, None));
         assert!(!is_rerunable(None, Status::Fail, Some(&no_source)));
+        // PutEvents refuses AWS's own sources
+        assert!(!is_rerunable(Some(true), Status::Fail, Some(&from_aws)));
         assert!(!is_rerunable(
             None,
             Status::Fail,

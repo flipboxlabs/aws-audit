@@ -130,7 +130,8 @@ export class AuditService<C extends AuditConfig> {
    * - The resource is the copy's target, and the audit's target its source
    * - It is the audit as stored: its id, its stored `createdAt`, and the fields a
    *   retry kept
-   * - It inherits rerunable status from the audit or event presence
+   * - It says whether the audit's event can be rerun, as the audit does
+   *   (`isRerunable`: a resendable event that failed, or was logged rerunable)
    *
    * When an audit with the same ID already exists (retry scenario):
    * - Appends the current execution to the `attempts` array

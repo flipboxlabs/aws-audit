@@ -73,23 +73,23 @@ impl RerunBuses {
         )
     }
 
-    /// The ARN of the allowed bus `bus` names, by ARN or by name.
+    /// The ARN of the allowed bus `bus` names, by ARN or by name. Only a bus in
+    /// the Lambda's region is: `PutEvents` doesn't reach another region's.
     pub fn resolve(&self, bus: &str) -> Option<&str> {
         self.arns
             .iter()
             .find(|arn| {
-                if bus.starts_with("arn:") {
-                    return *arn == bus;
-                }
                 // arn:{partition}:events:{region}:{account}:event-bus/{name}
                 let parts: Vec<&str> = arn.splitn(6, ':').collect();
-                matches!(
-                    parts.as_slice(),
-                    [_, _, _, region, account, resource]
-                        if *region == self.region
-                            && *account == self.account
-                            && resource.strip_prefix("event-bus/") == Some(bus)
-                )
+                let [_, _, _, region, account, resource] = parts.as_slice() else {
+                    return false;
+                };
+                *region == self.region
+                    && if bus.starts_with("arn:") {
+                        *arn == bus
+                    } else {
+                        *account == self.account && resource.strip_prefix("event-bus/") == Some(bus)
+                    }
             })
             .map(String::as_str)
     }

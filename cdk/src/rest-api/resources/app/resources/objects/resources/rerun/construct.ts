@@ -1,4 +1,5 @@
 import type { CDKConfig } from "@flipboxlabs/aws-audit-cdk";
+import * as cdk from "aws-cdk-lib";
 import * as apigateway from "aws-cdk-lib/aws-apigateway";
 import type * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import type * as events from "aws-cdk-lib/aws-events";
@@ -54,6 +55,20 @@ export default class extends Construct {
     // Put events: on the audit bus, and on any bus an event recorded, which must be
     // one of these (the Lambda resolves a recorded bus against RERUN_EVENT_BUSES)
     const buses = [props.eventBus, ...(props.rerunEventBuses ?? [])];
+    // PutEvents doesn't reach another region's bus; the Lambda would refuse it anyway
+    const region = cdk.Stack.of(this).region;
+    for (const bus of props.rerunEventBuses ?? []) {
+      const busRegion = bus.env.region;
+      if (
+        !cdk.Token.isUnresolved(region) &&
+        !cdk.Token.isUnresolved(busRegion) &&
+        busRegion !== region
+      ) {
+        throw new Error(
+          `rerunEventBuses: ${bus.eventBusArn} is in ${busRegion}, not the stack's region ${region}; a rerun can only put events on a bus in its own region`,
+        );
+      }
+    }
     for (const bus of buses) {
       bus.grantPutEventsTo(lambdaFn);
     }
