@@ -1,0 +1,112 @@
+{
+  "description": "An event that recorded an allowed bus by name is re-sent to that bus, by its ARN; 204",
+  "route": "POST /apps/{app}/objects/{object}/{item}/{audit}/rerun",
+  "request": {
+    "method": "POST",
+    "path": "/apps/App1/objects/Order/order-1/audit-1/rerun"
+  },
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "GetItem",
+      "input": {
+        "TableName": "TEST-Contract-Audit-v2",
+        "Key": {
+          "PK": {
+            "S": "-#App1#Order#audit-1"
+          },
+          "SK": {
+            "S": "audit"
+          }
+        }
+      },
+      "output": {
+        "Item": {
+          "PK": {
+            "S": "-#App1#Order#audit-1"
+          },
+          "SK": {
+            "S": "audit"
+          },
+          "id": {
+            "S": "audit-1"
+          },
+          "operation": {
+            "S": "createOrder"
+          },
+          "status": {
+            "S": "fail"
+          },
+          "tier": {
+            "N": "2"
+          },
+          "target": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "type": {
+                "S": "Order"
+              },
+              "id": {
+                "S": "order-1"
+              }
+            }
+          },
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "rerunable": {
+            "BOOL": true
+          },
+          "event": {
+            "M": {
+              "source": {
+                "S": "orders"
+              },
+              "detail-type": {
+                "S": "OrderCreated"
+              },
+              "eventBusName": {
+                "S": "TEST-Global"
+              },
+              "detail": {
+                "S": "{\"orderId\":\"order-1\", \"n\":1.0}"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "service": "EventBridge",
+      "command": "PutEvents",
+      "input": {
+        "Entries": [
+          {
+            "Source": "orders",
+            "EventBusName": "arn:aws:events:us-east-1:123456789012:event-bus/TEST-Global",
+            "Detail": "{\"orderId\":\"order-1\", \"n\":1.0}",
+            "DetailType": "OrderCreated"
+          }
+        ]
+      },
+      "output": {
+        "FailedEntryCount": 0,
+        "Entries": [
+          {
+            "EventId": "event-1"
+          }
+        ]
+      }
+    }
+  ],
+  "response": {
+    "statusCode": 204,
+    "contentType": null,
+    "body": null
+  }
+}

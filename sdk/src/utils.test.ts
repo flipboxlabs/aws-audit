@@ -11,7 +11,9 @@ import {
   getReceiveCount,
   getRecordId,
   getTraceParts,
+  isRerunable,
   isRetry,
+  rerunableToStore,
   normalizeEventBridgetEventBody,
   normalizeEventBridgetInput,
   normalizeSQSEventBody,
@@ -243,6 +245,18 @@ describe("utils", () => {
       });
     });
 
+    it("should keep the entry's event bus, so a rerun goes to it", () => {
+      const entry = { Detail: "{}", DetailType: "OrderCreated", Source: "orders.service" };
+
+      expect(
+        normalizeEventBridgetInput({ ...entry, EventBusName: "PROD-v1-Global" }).eventBusName,
+      ).toBe("PROD-v1-Global");
+      expect(
+        normalizeEventBridgetInput({ ...entry, EventBusName: "" }).eventBusName,
+      ).toBeUndefined();
+      expect(normalizeEventBridgetInput(entry).eventBusName).toBeUndefined();
+    });
+
     it("should handle undefined values", () => {
       const input = {
         Detail: undefined,
@@ -401,30 +415,84 @@ describe("utils", () => {
       });
     });
 
-    it("should handle empty body", () => {
-      const sqsRecord = createMockSQSRecord({});
-
-      const result = normalizeSQSEventBody(sqsRecord);
-
-      expect(result).toEqual({
-        detail: undefined,
+    it("should keep what a body holds of an event, for debugging", () => {
+      expect(normalizeSQSEventBody(createMockSQSRecord({ detail: { partial: true } }))).toEqual({
+        detail: { partial: true },
         "detail-type": undefined,
         source: undefined,
       });
     });
 
-    it("should handle partial EventBridge fields", () => {
-      const sqsRecord = createMockSQSRecord({
-        detail: { partial: true },
-      });
+    it("should return undefined for a body that isn't JSON", () => {
+      const sqsRecord = { ...createMockSQSRecord(), body: "hello" };
 
-      const result = normalizeSQSEventBody(sqsRecord);
+      expect(normalizeSQSEventBody(sqsRecord)).toBeUndefined();
+    });
 
-      expect(result).toEqual({
-        detail: { partial: true },
+    it("should return undefined for a body that isn't a JSON object, or an event's fields", () => {
+      const withBody = (body: string) => ({ ...createMockSQSRecord(), body });
+
+      for (const body of ['"text"', "123", "null", "[1]", '{"source":1}', '{"detail":5}']) {
+        expect(normalizeSQSEventBody(withBody(body)), body).toBeUndefined();
+      }
+    });
+
+    it("should read a null detail as none", () => {
+      expect(
+        normalizeSQSEventBody(createMockSQSRecord({ source: "orders", detail: null })),
+      ).toEqual({
+        detail: undefined,
         "detail-type": undefined,
-        source: undefined,
+        source: "orders",
       });
+    });
+  });
+
+  describe("isRerunable", () => {
+    const event = { source: "orders", "detail-type": "OrderCreated", detail: "{}" };
+
+    it("should rerun a failure with an event, unless it says it isn't rerunable", () => {
+      expect(isRerunable({ status: "fail", event })).toBe(true);
+      expect(isRerunable({ status: "fail", event, rerunable: false })).toBe(false);
+    });
+
+    it("should rerun another status only when it says it's rerunable", () => {
+      expect(isRerunable({ status: "success", event })).toBe(false);
+      expect(isRerunable({ status: "success", event, rerunable: true })).toBe(true);
+    });
+
+    it("should never rerun without a resendable event", () => {
+      expect(isRerunable({ status: "fail", rerunable: true })).toBe(false);
+      expect(isRerunable({ status: "fail", event: { detail: "{}" }, rerunable: true })).toBe(false);
+      expect(isRerunable({ status: "fail", event: { ...event, source: "" } })).toBe(false);
+      // PutEvents refuses AWS's own sources
+      expect(isRerunable({ status: "fail", event: { ...event, source: "aws.s3" } })).toBe(false);
+      // and needs a detail that's a JSON object
+      expect(isRerunable({ status: "fail", event: { ...event, detail: undefined } })).toBe(false);
+      expect(isRerunable({ status: "fail", event: { ...event, detail: '"text"' } })).toBe(false);
+      expect(isRerunable({ status: "fail", event: { ...event, detail: "not json" } })).toBe(false);
+      expect(isRerunable({ status: "fail", event: { ...event, detail: { id: 1 } } })).toBe(true);
+    });
+  });
+
+  describe("rerunableToStore", () => {
+    const event = { source: "orders", "detail-type": "OrderCreated", detail: "{}" };
+
+    it("should store whether what was logged is rerunable", () => {
+      expect(rerunableToStore({ status: "fail", event })).toBe(true);
+      expect(rerunableToStore({ status: "success", event })).toBe(false);
+      expect(rerunableToStore({ status: "success" })).toBe(false);
+    });
+
+    it("should store the flag one logged without an event gives", () => {
+      // A rerun still needs the event the audit kept
+      expect(rerunableToStore({ status: "success", rerunable: true })).toBe(true);
+      expect(rerunableToStore({ status: "fail", rerunable: false })).toBe(false);
+    });
+
+    it("should leave the stored flag for a failure logged without an event or a flag", () => {
+      // An earlier opt-out stays, as does an earlier failure's rerunable event
+      expect(rerunableToStore({ status: "fail" })).toBeUndefined();
     });
   });
 

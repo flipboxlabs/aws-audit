@@ -140,6 +140,11 @@ export const _BaseLogAuditSchema = z.object({
     .pipe(z.transform((val) => (val instanceof Set ? Array.from(val) : val))),
   /** Human-readable description of the audit (optional) */
   message: z.string().optional(),
+  /**
+   * Whether its event can be rerun (optional). Without it, a failure with an event
+   * is rerunable; `false` opts a failure out, `true` opts another status in.
+   */
+  rerunable: z.boolean().optional(),
   /** Trace identifier for distributed tracing (optional) */
   trace: z.string().optional(),
   /** Original EventBridge event that triggered this audit (optional) */
@@ -206,6 +211,7 @@ export function createTypedLogAuditSchema<
       .optional()
       .pipe(z.transform((val) => (val instanceof Set ? Array.from(val) : val))),
     message: z.string().optional(),
+    rerunable: z.boolean().optional(),
     trace: z.string().optional(),
     event: EventBridgeEventSchema.optional(),
     error: z

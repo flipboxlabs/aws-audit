@@ -5,8 +5,8 @@ import type { DynamoDBRecord, KinesisStreamRecord, SQSRecord } from "aws-lambda"
 import KSUID from "ksuid";
 import merge from "lodash.merge";
 import type { MessageWithAuditOverride } from "./batch/batch-processor.js";
-import type { LogAuditInput } from "./schema/log.js";
-import type { EventBridgeEvent } from "./schema/model.js";
+import { type LogAuditInput, Status } from "./schema/log.js";
+import { type EventBridgeEvent, EventBridgeEventSchema } from "./schema/model.js";
 
 /**
  * Generates a unique, time-sortable audit ID using KSUID.
@@ -138,13 +138,15 @@ export function buildAudit(
 /**
  * Input type for EventBridge event normalization.
  */
-type Input = Pick<PutEventsRequestEntry, "Detail" | "DetailType" | "Source">;
+type Input = Pick<PutEventsRequestEntry, "Detail" | "DetailType" | "Source" | "EventBusName">;
 
 /**
  * Normalizes an EventBridge PutEvents request entry to a simplified event format.
  *
- * Converts the AWS SDK format (Detail, DetailType, Source) to the internal
- * event format (detail, detail-type, source).
+ * Converts the AWS SDK format (Detail, DetailType, Source, EventBusName) to the
+ * internal event format (detail, detail-type, source, eventBusName). The bus is
+ * kept so a rerun puts the event on it again; without one (or an empty one), a
+ * rerun goes to the audit event bus.
  *
  * @param input - The EventBridge PutEvents request entry
  * @returns The normalized event object
@@ -155,8 +157,10 @@ type Input = Pick<PutEventsRequestEntry, "Detail" | "DetailType" | "Source">;
  *   Detail: '{"orderId": "123"}',
  *   DetailType: 'OrderCreated',
  *   Source: 'orders.service',
+ *   EventBusName: 'PROD-v1-Global',
  * });
- * // Returns: { detail: '{"orderId": "123"}', 'detail-type': 'OrderCreated', source: 'orders.service' }
+ * // Returns: { detail: '{"orderId": "123"}', 'detail-type': 'OrderCreated',
+ * //   source: 'orders.service', eventBusName: 'PROD-v1-Global' }
  * ```
  */
 export function normalizeEventBridgetInput(input: Input): EventBridgeEvent {
@@ -164,6 +168,8 @@ export function normalizeEventBridgetInput(input: Input): EventBridgeEvent {
     detail: input.Detail,
     "detail-type": input.DetailType,
     source: input.Source,
+    // An empty name is none, as in process_batch_from_bus
+    eventBusName: input.EventBusName || undefined,
   };
 }
 
@@ -253,17 +259,100 @@ export function normalizeEventBridgetEventBody(
  * fields (detail, detail-type, source).
  *
  * @param record - The SQS record containing the message
- * @returns The extracted EventBridge event data
+ * @returns The extracted EventBridge event data, kept for debugging even when it
+ *   can't be re-sent ({@link isResendable}), or undefined when the body isn't a JSON
+ *   object, or its fields aren't an event's (as `sqs::event` reads it in Rust)
  */
 export function normalizeSQSEventBody(record: SQSRecord): EventBridgeEvent | undefined {
-  const bodyObject = JSON.parse(record.body);
+  const bodyObject = parseBody(record.body);
+  if (!isJsonObject(bodyObject)) return undefined;
 
-  return {
-    detail: bodyObject?.detail,
-    "detail-type": bodyObject?.["detail-type"],
-    source: bodyObject?.source,
+  const event = {
+    // A null detail is none
+    detail: bodyObject.detail ?? undefined,
+    "detail-type": bodyObject["detail-type"],
+    source: bodyObject.source,
   };
+  // The detail as the body holds it: the log schema stringifies an object one
+  return EventBridgeEventSchema.safeParse(event).success ? (event as EventBridgeEvent) : undefined;
 }
+
+/** Whether a parsed JSON value is an object, not an array or null. */
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** An event as an audit records it, whose fields may be of any type when stored. */
+type RecordedEvent = { source?: unknown; "detail-type"?: unknown; [field: string]: unknown };
+
+/**
+ * Whether an event can be put on a bus again: PutEvents needs its source, detail
+ * type and a detail that's a JSON object, and refuses a source of AWS's own
+ * (`aws.*`), such as an S3 event's.
+ *
+ * @param event - The recorded event
+ * @returns Whether it has both
+ */
+export function isResendable(event: RecordedEvent | undefined): boolean {
+  return (
+    typeof event?.source === "string" &&
+    event.source !== "" &&
+    !event.source.startsWith("aws.") &&
+    typeof event["detail-type"] === "string" &&
+    event["detail-type"] !== "" &&
+    isObjectDetail(event.detail)
+  );
+}
+
+/** Whether a detail is a JSON object: as stored, a string holding one. */
+function isObjectDetail(detail: unknown): boolean {
+  if (typeof detail !== "string") return isJsonObject(detail);
+  try {
+    return isJsonObject(JSON.parse(detail));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether an audit's event can be rerun (`is_rerunable` in the Rust crate): it
+ * recorded a resendable event, and either says it's rerunable or, without the
+ * flag, failed. A retry that succeeded keeps the event its failure recorded, so an
+ * unset flag counts only for a failure.
+ *
+ * @param audit - The audit's flag, status and event
+ * @returns Whether a rerun sends its event
+ */
+export function isRerunable(audit: RerunableFields): boolean {
+  return isResendable(audit.event) && (audit.rerunable ?? audit.status === Status.FAIL);
+}
+
+/**
+ * The flag an upsert stores (`rerunable_to_store` in the Rust crate), from what it
+ * logged alone:
+ *
+ * - with an event, {@link isRerunable} for it;
+ * - without one, the flag it gives, as a rerun still needs the event the audit
+ *   kept; or, without a flag, `false` unless it failed;
+ * - undefined for a failure logged without an event or a flag, which leaves the
+ *   stored flag: an earlier opt-out stays, and so does an earlier failure's
+ *   rerunable event.
+ *
+ * @param audit - The upserted audit's flag, status and event
+ * @returns The flag to store, or undefined to leave the stored one
+ */
+export function rerunableToStore(audit: RerunableFields): boolean | undefined {
+  if (audit.event !== undefined) return isRerunable(audit);
+  if (audit.rerunable != null) return audit.rerunable;
+  return audit.status === Status.FAIL ? undefined : false;
+}
+
+/** What decides whether an audit's event can be rerun. */
+type RerunableFields = {
+  rerunable?: boolean | null;
+  status?: string;
+  event?: RecordedEvent;
+};
 
 /**
  * Parses a trace ID into its component parts.

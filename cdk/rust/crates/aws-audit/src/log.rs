@@ -86,6 +86,10 @@ pub struct LogAudit {
     /// A human-readable description.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// Whether its event can be rerun. Without it, a failure with an event is
+    /// rerunable; `false` opts a failure out, `true` opts another status in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerunable: Option<bool>,
     /// The trace, `{id}:{stage}`; the invocation's X-Ray trace id when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<String>,
@@ -115,6 +119,7 @@ impl LogAudit {
             context: None,
             resources: None,
             message: None,
+            rerunable: None,
             trace: None,
             event: None,
             error: None,
@@ -183,6 +188,13 @@ impl LogAudit {
     /// Sets the trace.
     pub fn with_trace(mut self, trace: impl Into<String>) -> Self {
         self.trace = Some(trace.into());
+        self
+    }
+
+    /// Sets whether its event can be rerun, overriding the default (a failure with
+    /// an event is rerunable).
+    pub fn with_rerunable(mut self, rerunable: bool) -> Self {
+        self.rerunable = Some(rerunable);
         self
     }
 

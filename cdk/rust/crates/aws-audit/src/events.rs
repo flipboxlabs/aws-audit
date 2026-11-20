@@ -100,19 +100,20 @@ impl AuditEventBus {
         self.put_events_with_retry(entries).await
     }
 
-    /// Sends an audit's recorded event again, in one `PutEvents` without retries
-    /// (`putEventsOrThrow` in the TypeScript rerun handler): a rerun answers its
-    /// caller, who can retry. The detail is sent as stored, byte for byte, and
-    /// left out when there's none.
+    /// Sends an audit's recorded event again, to `bus` (a name or ARN), in one
+    /// `PutEvents` without retries (`putEventsOrThrow` in the TypeScript rerun
+    /// handler): a rerun answers its caller, who can retry. The detail is sent as
+    /// stored, byte for byte, and left out when there's none.
     ///
     /// Fails when the call fails, or the entry comes back rejected or not at all.
     pub async fn resend(
         &self,
+        bus: &str,
         event: &EventBridgeEvent,
     ) -> Result<PutEventsResultEntry, PutEventsError> {
         let entry = PutEventsRequestEntry::builder()
             .set_source(event.source.clone())
-            .event_bus_name(&self.bus_name)
+            .event_bus_name(bus)
             .set_detail(event.detail.clone())
             .set_detail_type(event.detail_type.clone())
             .build();

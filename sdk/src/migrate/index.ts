@@ -24,7 +24,7 @@ import {
 import { AuditSchema, AuditSummarySchema } from "../schema/audit.js";
 import { DateTimeStringSchema, type ResourceReference } from "../schema/common.js";
 import { type AuditStorage, AuditStorageSchema } from "../schema/storage.js";
-import { hasResourceId } from "../utils.js";
+import { hasResourceId, isRerunable } from "../utils.js";
 
 const { Attributes, Keys } = DynamoDB;
 
@@ -442,6 +442,8 @@ function toAudit(item: UnmarshalledAttributes): Transformed {
       // Index key attributes: defaulted when the earlier item left them out
       status: parsed.data.status,
       tier: parsed.data.tier,
+      // As a v2 upsert stores it, which the earlier SDK didn't
+      rerunable: isRerunable({ ...fields, status: parsed.data.status }),
       ...constructPrimaryKey({ tenantId, app: target.app, resourceType: target.type, id }),
       ...constructIndexAttributes({ tenantId, target, trace }, DynamoDB.Kinds.AUDIT),
       [Attributes.SCOPES]: new Set(resourceScopes(target)),
@@ -501,6 +503,7 @@ function toCopy(item: UnmarshalledAttributes, { auditId, target }: Copy): Transf
       updatedAt: summary.data.updatedAt,
       status: summary.data.status,
       tier: summary.data.tier,
+      // Put again from its audit once every audit is written, with the audit's flag
       rerunable: fields.rerunable ?? false,
       related: true,
       [Keys.PARTITION_KEY]: partition,
@@ -615,13 +618,15 @@ const MERGE_ATTEMPTS = 5;
 
 /**
  * What a merge leaves to the v2 audit, or sets itself: its keys, the attributes
- * built from its fields, and its expiry.
+ * built from its fields, its expiry, and whether it's rerunable, which the merged
+ * audit decides.
  */
 const NOT_FILLED = new Set<string>([
   Keys.PARTITION_KEY,
   Keys.SORT_KEY,
   "attempts",
   "createdAt",
+  "rerunable",
   Attributes.TTL,
   Attributes.TENANT_KEY,
   Attributes.APP,
@@ -680,6 +685,11 @@ async function mergeAudit(
       ([name, value]) =>
         !NOT_FILLED.has(name) && current[name] === undefined && value !== undefined,
     );
+    // An upsert from before audits stored the flag left none: the latest status
+    // decides, with the event the merge leaves, which may be the earlier audit's
+    if (current.rerunable === undefined) {
+      fields.push(["rerunable", isRerunable({ ...current, ...Object.fromEntries(fields) })]);
+    }
     const merged = { ...current, ...Object.fromEntries(fields) } as Parameters<
       typeof constructIndexAttributes
     >[0];

@@ -28,6 +28,8 @@ pub fn is_retry(message: &SqsMessage) -> bool {
 }
 
 /// The EventBridge event a message's body holds, when an EventBridge rule sent it.
+/// What a JSON body holds of one is kept for debugging, even when it can't be
+/// re-sent ([`EventBridgeEvent::is_resendable`]).
 pub fn event(message: &SqsMessage) -> Option<EventBridgeEvent> {
     serde_json::from_str(message.body.as_deref()?).ok()
 }
@@ -79,7 +81,34 @@ pub fn audit_for(message: &SqsMessage, mut audit: LogAudit) -> LogAudit {
 /// An audit without an id takes the message id, so a retried message adds an
 /// attempt to the same audit. Enable `ReportBatchItemFailures` on the event source
 /// mapping for SQS to act on the response.
+///
+/// A failure's event records no bus, so a rerun sends it to the audit event bus;
+/// [`process_batch_from_bus`] records the bus the messages came from.
 pub async fn process_batch<E: fmt::Display>(
+    audits: &mut Audits,
+    batch: &SqsEvent,
+    audit: impl Fn(&SqsMessage) -> LogAudit,
+    handler: impl AsyncFn(&SqsMessage, &mut LogAudit) -> Result<(), E>,
+) -> SqsBatchResponse {
+    process(None, audits, batch, audit, handler).await
+}
+
+/// [`process_batch`] for messages an EventBridge rule on `event_bus_name` sent: a
+/// failure's event records the bus, by name or ARN, so a rerun puts it on that bus
+/// again (`AuditBatchProcessor`'s `eventBusName` option). Name a bus in another
+/// account than the audit stack's by ARN.
+pub async fn process_batch_from_bus<E: fmt::Display>(
+    event_bus_name: &str,
+    audits: &mut Audits,
+    batch: &SqsEvent,
+    audit: impl Fn(&SqsMessage) -> LogAudit,
+    handler: impl AsyncFn(&SqsMessage, &mut LogAudit) -> Result<(), E>,
+) -> SqsBatchResponse {
+    process(Some(event_bus_name), audits, batch, audit, handler).await
+}
+
+async fn process<E: fmt::Display>(
+    event_bus_name: Option<&str>,
     audits: &mut Audits,
     batch: &SqsEvent,
     audit: impl Fn(&SqsMessage) -> LogAudit,
@@ -107,7 +136,13 @@ pub async fn process_batch<E: fmt::Display>(
             Err(error) => {
                 let error = error.to_string();
                 item.status = Status::Fail;
-                item.event = event(message);
+                item.event = event(message).map(|mut event| {
+                    // An empty name is none, as in the TypeScript SDK
+                    event.event_bus_name = event_bus_name
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_owned);
+                    event
+                });
                 item.append_message(&error);
                 item.error = Some(error);
 
@@ -206,6 +241,18 @@ mod tests {
         );
     }
 
+    #[test]
+    fn keeps_what_a_body_holds_of_an_event_and_reads_none_from_one_that_isnt_json() {
+        let partial = event(&message("m-1", json!({ "detail": { "orderId": 1 } }), "1")).unwrap();
+        assert_eq!(partial.detail.as_deref(), Some(r#"{"orderId":1}"#));
+        assert!(!partial.is_resendable());
+
+        assert_eq!(event(&message("m-1", json!("text"), "1")), None);
+        let mut text = message("m-1", json!({}), "1");
+        text.body = Some("hello".to_owned());
+        assert_eq!(event(&text), None);
+    }
+
     #[derive(Clone, Default)]
     struct Captured(Arc<Mutex<Vec<u8>>>);
 
@@ -284,8 +331,45 @@ mod tests {
         assert_eq!(lines[1]["message"], "Processing Boom");
         assert_eq!(lines[1]["error"], "Boom");
         assert_eq!(lines[1]["event"]["detail-type"], "OrderCreated");
+        assert_eq!(lines[1]["event"].get("eventBusName"), None);
         assert_eq!(lines[1]["trace"], "xray");
         assert_eq!(lines[2]["status"], "skip");
+    }
+
+    #[tokio::test]
+    async fn records_the_bus_with_a_failures_event() {
+        let out = Captured::default();
+        let mut audits = Audits::new(Arc::new(AuditConfig::new([("App1", ["Order"])])))
+            .with_writer(out.clone())
+            .with_disabled(false);
+        let mut batch = SqsEvent::default();
+        batch.records = vec![
+            message("m-1", event_body(None), "1"),
+            message("m-2", event_body(None), "1"),
+        ];
+
+        let failing =
+            async |message: &SqsMessage, _: &mut LogAudit| match message.message_id.as_deref() {
+                Some("m-2") => Err("Boom"),
+                _ => Ok(()),
+            };
+        let audit =
+            |_: &SqsMessage| LogAudit::new("processOrder", ResourceReference::new("App1", "Order"));
+        process_batch_from_bus("PROD-Global", &mut audits, &batch, audit, failing).await;
+        // An empty name is none
+        process_batch_from_bus("", &mut audits, &batch, audit, failing).await;
+        audits.publish();
+
+        let lines: Vec<Value> = String::from_utf8(out.0.lock().unwrap().clone())
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap()["_audit"].clone())
+            .collect();
+        assert_eq!(lines[0].get("event"), None);
+        assert_eq!(lines[1]["event"]["eventBusName"], "PROD-Global");
+        assert_eq!(lines[1]["event"]["source"], "orders");
+        assert_eq!(lines[3]["event"]["source"], "orders");
+        assert_eq!(lines[3]["event"].get("eventBusName"), None);
     }
 
     #[tokio::test]

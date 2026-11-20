@@ -42,7 +42,7 @@ pub use config::AuditConfig;
 pub use log::{Audits, LogAudit};
 pub use model::{
     Attempt, Audit, AuditSummary, Context, EventBridgeEvent, ResourceId, ResourceReference, Status,
-    Tier,
+    Tier, is_rerunable,
 };
 #[cfg(feature = "service")]
 pub use pagination::{InvalidNextToken, Page, PageKey, Pagination};

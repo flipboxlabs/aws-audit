@@ -112,11 +112,26 @@ REST API for querying audits by resource, status, or trace ID. Every route requi
 
 Every listing returns audit summaries: `id`, `tenantId`, `status`, `tier`, `operation`, `message`, `target`, `source`, `rerunable`, `trace`, `createdAt` and `updatedAt`. Fetch the single audit for its `context`, `event`, `error` and `attempts`. Listings are newest first; `GET /trace/{trace}` lists by trace stage, then oldest first. An audit's `trace` is the trace it was written with, and is omitted when it has none.
 
-`{type}` must be one of `{app}`'s resource types; another is a `422`. Getting or rerunning a single audit answers `404` when `{audit}` doesn't exist or belongs to a resource other than `{item}`. A rerun sends the audit's recorded event once, with its `detail` exactly as stored, and answers `204`. It answers `400` when the audit isn't rerunable, and `500` when EventBridge doesn't accept the event; the caller can retry. An audit that lists a resource in `resources` also appears in that resource's listing, with the audit's `id` and its target as the `source`; fetch or rerun it under the source: `/apps/{source.app}/objects/{source.type}/{source.id}/{id}`.
+`{type}` must be one of `{app}`'s resource types; another is a `422`. Getting or rerunning a single audit answers `404` when `{audit}` doesn't exist or belongs to a resource other than `{item}`. A rerun sends the audit's recorded event once, with its `detail` exactly as stored, and answers `204`. It answers `400` when the audit isn't rerunable, and `500` when EventBridge doesn't accept the event; the caller can retry. An audit is rerunable when it recorded an EventBridge event that `PutEvents` accepts (with a `source`, a `detail-type` and a `detail` that's a JSON object, and a source not of AWS's own, `aws.*`) and either failed or was logged with `rerunable: true`; logging `rerunable: false` opts a failure out. Audits are stored with the resulting flag, so listings show it; one an earlier release stored without the flag is judged by the same rule when rerun. A retry that succeeds keeps the event an earlier failure recorded, but its flag says it's no longer rerunable; a failure logged without an event or a flag keeps the flag an earlier attempt stored, so an opt-out stays, and an attempt logged with only a flag stores it. An audit that lists a resource in `resources` also appears in that resource's listing, with the audit's `id` and its target as the `source`; fetch or rerun it under the source: `/apps/{source.app}/objects/{source.type}/{source.id}/{id}`.
 
 Every listing takes `filter[operation]` (an exact operation name) and `filter[tier]` (`1`, `2` or `3`). `GET /status/{status}` and `GET /trace/{trace}` also take `filter[app]` and `filter[resourceType]`, which match an audit's target or any of its additional `resources`. With `filter[app]`, the type must be one of that app's; without it, the type matches under every app that has it; the audit is returned once, with its own target. Filters apply after a page is read, so a filtered page can hold fewer items than `pagination[pageSize]`, or none, while its `nextToken` continues the listing.
 
 Every route runs as a prebuilt Rust binary, like the subscription Lambda. Every route answers errors as `{statusCode, error, message}`, and a `422` lists each invalid input under `details.issues`, with its location as `path` (e.g. `["query", "filter[app]"]`).
+
+A rerun puts the event on the bus it recorded as `event.eventBusName`, or on the audit event bus when it recorded none. The SDK's `AuditBatchProcessor` records the bus given as its `eventBusName` option (`process_batch_from_bus` in Rust). A recorded bus must be the audit event bus or one of `rerunEventBuses`, the buses the rerun Lambda may put events on; any other is a `400`. A bus recorded by name is the one in the stack's account and region. Record a bus in another account by ARN, and give it a resource policy that lets the stack's account put events on it. Every rerun bus must be in the stack's region, as `PutEvents` doesn't reach another region's; synth fails otherwise.
+
+A rerun puts the event on the bus as it was first sent, so every rule on that bus matches it again, not only the one whose target failed. On a bus several apps listen to, an app that handled the event the first time gets it again too, and nothing in the event marks it as a rerun. Make those targets idempotent, or rerun on a bus only the failed app listens to.
+
+```typescript
+new RestAPI(this, "RestAPI", {
+  config: props.config,
+  lambda: { layers: [auditConfigLayer.layer] },
+  table,
+  eventBus,
+  // The buses your apps' rules listen on, so a rerun reaches them
+  rerunEventBuses: [events.EventBus.fromEventBusName(this, "GlobalBus", "PROD-v1-Global")],
+});
+```
 
 `GET /config` reads the config layer only, so its Lambda has no DynamoDB or EventBridge permissions. Its `version` comes from this package's `package.json` at synth time. Deployments from before the route was added answer `GET /config` with a `403` `{"message":"Missing Authentication Token"}` (API Gateway's response for an unknown route), not a `404`.
 

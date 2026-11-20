@@ -691,7 +691,7 @@ impl AuditRepository {
             .filter(|(name, _)| SUMMARY_PROJECTION.contains(&name.as_str()))
             .collect();
         let source = serde_json::to_value(&audit.target)?;
-        let rerunable = audit.rerunable.unwrap_or(audit.event.is_some());
+        let rerunable = audit.is_rerunable();
 
         // In turn, so a throttled table isn't hit harder
         for (sort_key, resource) in resources {

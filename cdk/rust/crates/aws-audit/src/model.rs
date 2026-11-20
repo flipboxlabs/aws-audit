@@ -313,6 +313,14 @@ pub struct EventBridgeEvent {
         skip_serializing_if = "Option::is_none"
     )]
     pub detail_type: Option<String>,
+    /// The bus the event was put on, as a name or ARN, so a rerun sends it there
+    /// again. A rerun of an event without one goes to the audit event bus.
+    #[serde(
+        rename = "eventBusName",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub event_bus_name: Option<String>,
     /// The event's detail, as a JSON string. An object is stringified; a string is
     /// kept byte for byte, since a rerun re-sends it as is.
     #[serde(
@@ -321,6 +329,61 @@ pub struct EventBridgeEvent {
         deserialize_with = "detail"
     )]
     pub detail: Option<String>,
+}
+
+impl EventBridgeEvent {
+    /// Whether the event can be put on a bus again: `PutEvents` needs its source,
+    /// detail type and a detail that's a JSON object, and refuses a source of AWS's
+    /// own (`aws.*`), such as an S3 event's. A message whose body isn't an
+    /// EventBridge event records neither a source nor a detail type.
+    pub fn is_resendable(&self) -> bool {
+        let given =
+            |field: &Option<String>| field.as_deref().is_some_and(|value| !value.is_empty());
+        given(&self.source)
+            && given(&self.detail_type)
+            && !self
+                .source
+                .as_deref()
+                .is_some_and(|source| source.starts_with("aws."))
+            && self
+                .detail
+                .as_deref()
+                .is_some_and(|detail| serde_json::from_str::<Map<String, Value>>(detail).is_ok())
+    }
+}
+
+/// Whether an audit's event can be rerun (`isRerunable` in the TypeScript SDK): it
+/// recorded a resendable event, and either says it's rerunable or, without the
+/// flag, failed. A retry that succeeded keeps the event its failure recorded, so
+/// an unset flag counts only for a failure.
+pub fn is_rerunable(
+    rerunable: Option<bool>,
+    status: Status,
+    event: Option<&EventBridgeEvent>,
+) -> bool {
+    event.is_some_and(EventBridgeEvent::is_resendable)
+        && rerunable.unwrap_or(status == Status::Fail)
+}
+
+/// The flag an upsert stores (`rerunableToStore` in the TypeScript SDK), from
+/// what it logged alone:
+///
+/// - with an event, [`is_rerunable`] for it;
+/// - without one, the flag it gives, as a rerun still needs the event the audit
+///   kept; or, without a flag, `false` unless it failed;
+/// - none for a failure logged without an event or a flag, which leaves the
+///   stored flag: an earlier opt-out stays, and so does an earlier failure's
+///   rerunable event.
+pub fn rerunable_to_store(
+    rerunable: Option<bool>,
+    status: Status,
+    event: Option<&EventBridgeEvent>,
+) -> Option<bool> {
+    match (rerunable, event) {
+        (_, Some(_)) => Some(is_rerunable(rerunable, status, event)),
+        (Some(rerunable), None) => Some(rerunable),
+        (None, None) => (status != Status::Fail).then_some(false),
+    }
 }
 
 fn detail<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
@@ -440,6 +503,13 @@ pub struct Audit {
     /// When the audit was created.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<Timestamp>,
+}
+
+impl Audit {
+    /// Whether its event can be rerun (see [`is_rerunable`]).
+    pub fn is_rerunable(&self) -> bool {
+        is_rerunable(self.rerunable, self.status, self.event.as_ref())
+    }
 }
 
 /// An audit as a listing returns it (`AuditSummarySchema`): what tells audits apart,
@@ -583,6 +653,49 @@ mod tests {
 
         value["error"] = json!("Boom");
         assert_eq!(audit(value).unwrap().error, Some(json!("Boom")));
+    }
+
+    #[test]
+    fn reruns_a_resendable_event_that_failed_or_says_it_can() {
+        let event = EventBridgeEvent {
+            source: Some("orders".to_owned()),
+            detail_type: Some("OrderCreated".to_owned()),
+            detail: Some(r#"{"orderId":"order-1"}"#.to_owned()),
+            ..EventBridgeEvent::default()
+        };
+        let detail = |detail: Option<&str>| EventBridgeEvent {
+            detail: detail.map(str::to_owned),
+            ..event.clone()
+        };
+        let no_source = EventBridgeEvent {
+            source: Some(String::new()),
+            ..event.clone()
+        };
+        let from_aws = EventBridgeEvent {
+            source: Some("aws.s3".to_owned()),
+            ..event.clone()
+        };
+
+        assert!(is_rerunable(None, Status::Fail, Some(&event)));
+        assert!(!is_rerunable(Some(false), Status::Fail, Some(&event)));
+        // A retry that succeeded keeps the failure's event
+        assert!(!is_rerunable(None, Status::Success, Some(&event)));
+        assert!(is_rerunable(Some(true), Status::Success, Some(&event)));
+        assert!(!is_rerunable(Some(true), Status::Fail, None));
+        assert!(!is_rerunable(None, Status::Fail, Some(&no_source)));
+        // PutEvents refuses AWS's own sources, and needs a detail that's a JSON object
+        assert!(!is_rerunable(Some(true), Status::Fail, Some(&from_aws)));
+        for refused in [None, Some(r#""text""#), Some("[1]"), Some("not json")] {
+            assert!(
+                !is_rerunable(None, Status::Fail, Some(&detail(refused))),
+                "{refused:?}"
+            );
+        }
+        assert!(!is_rerunable(
+            None,
+            Status::Fail,
+            Some(&EventBridgeEvent::default())
+        ));
     }
 
     #[test]

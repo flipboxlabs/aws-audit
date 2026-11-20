@@ -31,6 +31,16 @@ describe("LogAuditSchema", () => {
     expect(result.status).toBe("success"); // default
   });
 
+  it("should keep rerunable, which opts a failure out or another status in", () => {
+    const parse = (rerunable?: boolean) =>
+      LogAuditSchema.parse({ operation: "testOp", target: createValidTarget(), rerunable })
+        .rerunable;
+
+    expect(parse(false)).toBe(false);
+    expect(parse(true)).toBe(true);
+    expect(parse()).toBeUndefined();
+  });
+
   it("should accept tenantId for multi-tenancy", () => {
     const result = LogAuditSchema.parse({
       operation: "testOp",

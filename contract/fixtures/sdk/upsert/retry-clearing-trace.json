@@ -29,7 +29,7 @@
             "S": "audit"
           }
         },
-        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #trace = :trace, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #ttl = :ttl ADD #scopes :scopes REMOVE #traceId, #traceStage",
+        "UpdateExpression": "SET #attempts = list_append(if_not_exists(#attempts, :emptyList), :newAttempt), #createdAt = if_not_exists(#createdAt, :createdAt), #id = :id, #status = :status, #tier = :tier, #target = :target, #operation = :operation, #rerunable = :rerunable, #trace = :trace, #updatedAt = :updatedAt, #tenantKey = :tenantKey, #app = :app, #resourceType = :resourceType, #resourceId = :resourceId, #kind = :kind, #ttl = :ttl ADD #scopes :scopes REMOVE #traceId, #traceStage",
         "ExpressionAttributeNames": {
           "#attempts": "attempts",
           "#createdAt": "createdAt",
@@ -39,6 +39,7 @@
           "#tier": "tier",
           "#target": "target",
           "#operation": "operation",
+          "#rerunable": "rerunable",
           "#trace": "trace",
           "#updatedAt": "updatedAt",
           "#tenantKey": "tenantKey",
@@ -103,6 +104,9 @@
           },
           ":operation": {
             "S": "createOrder"
+          },
+          ":rerunable": {
+            "BOOL": false
           },
           ":trace": {
             "S": ""

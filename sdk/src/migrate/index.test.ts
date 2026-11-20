@@ -204,6 +204,7 @@ describe("migrate", () => {
       operation: "createOrder",
       status: "fail",
       tier: 2,
+      rerunable: true,
       target: { app: "App1", type: "Order", id: "order-1" },
       context: { attempt: 2 },
       event: { source: "orders", "detail-type": "OrderCreated", detail: "{}" },
@@ -319,6 +320,22 @@ describe("migrate", () => {
       copies: { written: 1, existing: 0 },
       scopes: { updated: 1, missingAudit: 0 },
     });
+  });
+
+  it("says a copy is rerunable as its audit is, whatever the earlier SDK stored on it", async () => {
+    const migrated = async (audit: Record<string, unknown>) => {
+      const { client, send } = stubClient([[v1Copy({ rerunable: false })], [v1Audit(audit)]]);
+      await migrate({ client, from: FROM, to: TO });
+      // As put again from its audit, once every audit is written
+      const copies = putItems(send).filter(({ related }) => related);
+      return copies.at(-1)?.rerunable;
+    };
+
+    // A failure with an event, without a flag, as the earlier SDK logged one
+    expect(await migrated({})).toBe(true);
+    expect(await migrated({ status: "success" })).toBe(false);
+    expect(await migrated({ rerunable: false })).toBe(false);
+    expect(await migrated({ event: undefined })).toBe(false);
   });
 
   it("puts each copy again from its audit, with its createdAt, which the earlier table didn't keep on it", async () => {
@@ -674,7 +691,9 @@ describe("migrate", () => {
       expect(updates).toEqual([
         {
           key: { PK: "-#App1#Order#audit-1", SK: "audit" },
-          expression: "SET #attempts = :attempts, #createdAt = :createdAt, #migrated = :migrated",
+          // The retry succeeded, so the earlier failure's event isn't rerunable
+          expression:
+            "SET #attempts = :attempts, #createdAt = :createdAt, #migrated = :migrated, #f0 = :f0",
           condition:
             "attribute_not_exists(#migrated) AND #createdAt = :current AND size(#attempts) = :count",
           values: {
@@ -686,6 +705,7 @@ describe("migrate", () => {
             ":migrated": true,
             ":current": NOW,
             ":count": 1,
+            ":f0": false,
           },
         },
       ]);
@@ -720,7 +740,8 @@ describe("migrate", () => {
         trace: "trace-1:2",
         target: { app: "TestApp", type: "User", id: "user-1" },
         source: { app: "App1", type: "Order", id: "order-1" },
-        rerunable: true,
+        // It succeeded: the event is the earlier failure's
+        rerunable: false,
         related: true,
         createdAt: EARLIER,
         updatedAt: NOW,
@@ -808,11 +829,27 @@ describe("migrate", () => {
         trace: "trace-1:2",
         traceId: "trace-1",
         traceStage: 2,
+        // From the merged audit, whose retry succeeded
+        rerunable: false,
       });
       expect(merge.input.UpdateExpression).toBe(
         "SET #attempts = :attempts, #createdAt = :createdAt, #migrated = :migrated, " +
-          "#f0 = :f0, #f1 = :f1, #f2 = :f2, #f3 = :f3, #f4 = :f4",
+          "#f0 = :f0, #f1 = :f1, #f2 = :f2, #f3 = :f3, #f4 = :f4, #f5 = :f5",
       );
+    });
+
+    it("says the merged audit is rerunable when its retry failed too, by the earlier event", async () => {
+      const { client, send } = stubClient([[v1Audit()]], isAuditPut, [
+        v2Audit({ status: "fail", attempts: [{ number: 1, status: "fail", at: NOW }] }),
+      ]);
+
+      await migrate({ client, from: FROM, to: TO });
+
+      const [merge] = commands(send, UpdateItemCommand);
+      const names = merge.input.ExpressionAttributeNames!;
+      const values = unmarshall(merge.input.ExpressionAttributeValues!);
+      const token = Object.keys(names).find((name) => names[name] === "rerunable")!;
+      expect(values[`:${token.slice(1)}`]).toBe(true);
     });
 
     it("keeps a retry's target, without the earlier target's resourceId", async () => {

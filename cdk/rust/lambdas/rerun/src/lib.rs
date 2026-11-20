@@ -1,10 +1,18 @@
 //! The `POST /apps/{app}/objects/{object}/{item}/{audit}/rerun` Lambda
 //! (`rerun/handler.ts`): sends a rerunable audit's recorded EventBridge event
-//! again.
+//! again. Whether it's rerunable is [`Audit::is_rerunable`]: audits are stored
+//! with the flag, and one stored before that is rerunable when it failed.
+//!
+//! The event goes to the bus it recorded (`eventBusName`), which must be the
+//! audit event bus or one of the [`RerunBuses`], or to the audit event bus when
+//! it recorded none.
+//!
+//! [`Audit::is_rerunable`]: aws_audit::Audit::is_rerunable
 //!
 //! In order: a 422 for an invalid path, a 404 when the audit is missing or
-//! belongs to another item, a 400 when it isn't rerunable, then one `PutEvents`,
-//! answered with a 204, or a logged 500 when the event wasn't sent.
+//! belongs to another item, a 400 when it isn't rerunable or its bus isn't
+//! allowed, then one `PutEvents`, answered with a 204, or a logged 500 when the
+//! event wasn't sent.
 
 use std::sync::Arc;
 
@@ -21,8 +29,70 @@ pub struct State {
     pub config: Arc<AuditConfig>,
     /// The audits.
     pub service: AuditService,
-    /// Where events are sent again.
+    /// Sends events again; an event without a bus goes to its bus.
     pub events: AuditEventBus,
+    /// The buses an event that recorded one may be sent to.
+    pub buses: RerunBuses,
+}
+
+/// The buses a rerun may send an event to, by ARN (`RERUN_EVENT_BUSES`). The
+/// account and region resolve a bus recorded by name, as `PutEvents` does: to the
+/// Lambda's own (`RERUN_EVENT_BUS_ACCOUNT`, the stack's, and `AWS_REGION`).
+#[derive(Debug, Clone, Default)]
+pub struct RerunBuses {
+    account: String,
+    region: String,
+    arns: Vec<String>,
+}
+
+impl RerunBuses {
+    /// The buses `arns`, resolving names in `account` and `region`.
+    pub fn new(
+        account: impl Into<String>,
+        region: impl Into<String>,
+        arns: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        RerunBuses {
+            account: account.into(),
+            region: region.into(),
+            arns: arns.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    /// The comma-separated ARNs in `RERUN_EVENT_BUSES`, resolving names in
+    /// `RERUN_EVENT_BUS_ACCOUNT` and `AWS_REGION`. None are allowed when it's unset.
+    pub fn from_env() -> Self {
+        let var = |name| std::env::var(name).unwrap_or_default();
+        RerunBuses::new(
+            var("RERUN_EVENT_BUS_ACCOUNT"),
+            var("AWS_REGION"),
+            var("RERUN_EVENT_BUSES")
+                .split(',')
+                .map(str::trim)
+                .filter(|arn| !arn.is_empty()),
+        )
+    }
+
+    /// The ARN of the allowed bus `bus` names, by ARN or by name. Only a bus in
+    /// the Lambda's region is: `PutEvents` doesn't reach another region's.
+    pub fn resolve(&self, bus: &str) -> Option<&str> {
+        self.arns
+            .iter()
+            .find(|arn| {
+                // arn:{partition}:events:{region}:{account}:event-bus/{name}
+                let parts: Vec<&str> = arn.splitn(6, ':').collect();
+                let [_, _, _, region, account, resource] = parts.as_slice() else {
+                    return false;
+                };
+                *region == self.region
+                    && if bus.starts_with("arn:") {
+                        *arn == bus
+                    } else {
+                        *account == self.account && resource.strip_prefix("event-bus/") == Some(bus)
+                    }
+            })
+            .map(String::as_str)
+    }
 }
 
 /// The Lambda's routes.
@@ -43,11 +113,19 @@ async fn rerun(state: Arc<State>, request: HttpRequest) -> http::Result {
     )
     .await?;
 
-    let (Some(true), Some(event)) = (audit.rerunable, &audit.event) else {
+    let Some(event) = audit.event.as_ref().filter(|_| audit.is_rerunable()) else {
         return Err(HttpError::bad_request("Item is not rerunable").into());
     };
+    let audit_bus = state.events.bus_name();
+    let bus = match event.event_bus_name.as_deref() {
+        None | Some("") => audit_bus,
+        Some(recorded) if recorded == audit_bus => audit_bus,
+        Some(recorded) => state.buses.resolve(recorded).ok_or_else(|| {
+            HttpError::bad_request(format!("Event bus {recorded} is not allowed for reruns"))
+        })?,
+    };
 
-    match state.events.resend(event).await {
+    match state.events.resend(bus, event).await {
         Ok(_) => Ok(http::no_content()),
         Err(error) => {
             log_unsent(&error);

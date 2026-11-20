@@ -12,11 +12,13 @@ describe("EventBridgeEventSchema", () => {
     const result = EventBridgeEventSchema.parse({
       source: "test.service",
       "detail-type": "TestEvent",
+      eventBusName: "PROD-Global",
       detail: "some detail",
     });
 
     expect(result.source).toBe("test.service");
     expect(result["detail-type"]).toBe("TestEvent");
+    expect(result.eventBusName).toBe("PROD-Global");
     expect(result.detail).toBe("some detail");
   });
 
