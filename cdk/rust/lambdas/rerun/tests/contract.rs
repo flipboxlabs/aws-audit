@@ -97,18 +97,32 @@ async fn logs_a_rejected_event() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn sends_an_event_without_a_detail_without_one() {
-    let mut fixture = fixture("sent");
-    let item = &mut fixture["calls"][0]["output"]["Item"];
-    item["event"]["M"].as_object_mut().unwrap().remove("detail");
-    fixture["calls"][1]["input"]["Entries"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("Detail");
+async fn refuses_an_event_without_a_detail_object() {
+    // PutEvents fails an entry without a detail, or with one that isn't a JSON object
+    for detail in [None, Some(r#""text""#), Some("[1]")] {
+        let mut fixture = fixture("sent");
+        let event = fixture["calls"][0]["output"]["Item"]["event"]["M"]
+            .as_object_mut()
+            .unwrap();
+        match detail {
+            Some(detail) => event.insert("detail".to_owned(), json!({ "S": detail })),
+            None => event.remove("detail"),
+        };
+        fixture["calls"].as_array_mut().unwrap().truncate(1);
+        fixture["response"] = fixture_response("not-rerunable");
 
-    let replay = replay("sent-without-detail", &fixture, contract_router).await;
+        let replay = replay("refused-detail", &fixture, contract_router).await;
 
-    assert!(replay.failures.is_empty(), "{:?}", replay.failures);
+        assert!(
+            replay.failures.is_empty(),
+            "{detail:?}: {:?}",
+            replay.failures
+        );
+    }
+}
+
+fn fixture_response(name: &str) -> Value {
+    fixture(name)["response"].clone()
 }
 
 #[tokio::test(start_paused = true)]

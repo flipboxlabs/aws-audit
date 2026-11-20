@@ -54,10 +54,11 @@ export default class extends Construct {
 
     // Put events: on the audit bus, and on any bus an event recorded, which must be
     // one of these (the Lambda resolves a recorded bus against RERUN_EVENT_BUSES)
-    const buses = [props.eventBus, ...(props.rerunEventBuses ?? [])];
+    const rerunEventBuses = props.rerunEventBuses ?? [];
+    const buses = [props.eventBus, ...rerunEventBuses];
     // PutEvents doesn't reach another region's bus; the Lambda would refuse it anyway
-    const region = cdk.Stack.of(this).region;
-    for (const bus of props.rerunEventBuses ?? []) {
+    const { account, region } = cdk.Stack.of(this);
+    for (const bus of rerunEventBuses) {
       const busRegion = bus.env.region;
       if (
         !cdk.Token.isUnresolved(region) &&
@@ -73,6 +74,8 @@ export default class extends Construct {
       bus.grantPutEventsTo(lambdaFn);
     }
     lambdaFn.addEnvironment("RERUN_EVENT_BUSES", buses.map((bus) => bus.eventBusArn).join(","));
+    // A bus recorded by name is in the account the stack deploys to, as PutEvents reads it
+    lambdaFn.addEnvironment("RERUN_EVENT_BUS_ACCOUNT", account);
 
     // Integration
     const integration = new apigateway.LambdaIntegration(lambdaFn);

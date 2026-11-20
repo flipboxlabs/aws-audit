@@ -167,28 +167,18 @@ async function run(
   // Related resources' scopes per audit partition, added once every audit is written
   const relatedScopes = new Map<string, Set<string>>();
 
-  // The audit the earlier table holds under a key, which only an audit has attempts
-  // under: whether its event can be rerun, which its copies say too
-  const readAudit = async (key: Key): Promise<AuditReading | undefined> => {
+  // Whether the earlier table holds an audit under a key, which only has attempts
+  const readAudit = async (key: Key) => {
     const { Item } = await client.send(
       new GetItemCommand({
         TableName: from,
         Key: marshall(key),
-        // Only what isRerunable reads of the event, not its detail
-        ProjectionExpression: "#attempts, #rerunable, #status, #event.#source, #event.#detailType",
-        ExpressionAttributeNames: {
-          "#attempts": "attempts",
-          "#rerunable": "rerunable",
-          "#status": "status",
-          "#event": "event",
-          "#source": "source",
-          "#detailType": "detail-type",
-        },
+        ProjectionExpression: "#attempts",
+        ExpressionAttributeNames: { "#attempts": "attempts" },
       }),
     );
-    const audit = Item && unmarshall(Item);
-    if (!Array.isArray(audit?.attempts) || audit.attempts.length === 0) return undefined;
-    return { rerunable: isRerunable(audit) };
+    const attempts = Item && unmarshall(Item).attempts;
+    return Array.isArray(attempts) && attempts.length > 0;
   };
 
   const put = async ({ kind, item }: Write) => {
@@ -224,8 +214,8 @@ async function run(
     );
 
     // Per page, as copies of an audit are spread across the earlier table
-    const audits = new Map<string, Promise<AuditReading | undefined>>();
-    const auditAt = (key: Key) => {
+    const audits = new Map<string, Promise<boolean>>();
+    const isAudit = (key: Key) => {
       const name = JSON.stringify([key.PK, key.SK]);
       const read = audits.get(name) ?? readAudit(key);
       audits.set(name, read);
@@ -236,7 +226,7 @@ async function run(
     for (const raw of items) {
       report.scanned++;
       const item = unmarshall(raw);
-      const copy = await copyOf(item, auditAt);
+      const copy = await copyOf(item, isAudit);
       const result = !copy ? toAudit(item) : "reason" in copy ? copy : toCopy(item, copy);
 
       if ("reason" in result) {
@@ -307,10 +297,7 @@ type Transformed =
   | { ownTarget: true };
 
 /** An earlier related resource's copy: its audit's id and its resource */
-type Copy = { auditId: string; target: ResourceReference; rerunable?: boolean };
-
-/** What a copy takes from its audit in the earlier table. */
-type AuditReading = { rerunable: boolean };
+type Copy = { auditId: string; target: ResourceReference };
 
 /**
  * A resource as an earlier copy's `SK` names it after its audit's id,
@@ -334,11 +321,11 @@ const SORT_KEY_RESOURCE = /^([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)#(.+)$/s;
  * a given id (`undefined#{app}.{type}#{id}`). A copy that reads as no audit's,
  * or as more than one's, is refused with the reason, to be reconciled by hand.
  *
- * @param auditAt - The audit the earlier table holds under this key, if any
+ * @param isAudit - Whether the earlier table holds an audit under this key
  */
 async function copyOf(
   item: UnmarshalledAttributes,
-  auditAt: (key: Key) => Promise<AuditReading | undefined>,
+  isAudit: (key: Key) => Promise<boolean>,
 ): Promise<Copy | { reason: string } | undefined> {
   if (Array.isArray(item.attempts) && item.attempts.length > 0) return undefined;
 
@@ -378,8 +365,7 @@ async function copyOf(
     : `${source.app}.${source.type}`;
   const audits: Copy[] = [];
   for (const reading of readings.values()) {
-    const audit = await auditAt({ PK, SK: reading.auditId });
-    if (audit) audits.push({ ...reading, rerunable: audit.rerunable });
+    if (await isAudit({ PK, SK: reading.auditId })) audits.push(reading);
   }
   if (audits.length === 1) return audits[0];
 
@@ -472,7 +458,7 @@ function toAudit(item: UnmarshalledAttributes): Transformed {
  * An earlier related resource's copy as a v2 summary copy, and the scopes it adds
  * to its audit.
  */
-function toCopy(item: UnmarshalledAttributes, { auditId, target, rerunable }: Copy): Transformed {
+function toCopy(item: UnmarshalledAttributes, { auditId, target }: Copy): Transformed {
   const source = item.source as ResourceReference | undefined;
 
   if (!source?.app || !source.type) {
@@ -517,8 +503,8 @@ function toCopy(item: UnmarshalledAttributes, { auditId, target, rerunable }: Co
       updatedAt: summary.data.updatedAt,
       status: summary.data.status,
       tier: summary.data.tier,
-      // As its audit says: the earlier SDK stored false on every copy
-      rerunable: rerunable ?? false,
+      // Put again from its audit once every audit is written, with the audit's flag
+      rerunable: fields.rerunable ?? false,
       related: true,
       [Keys.PARTITION_KEY]: partition,
       [Keys.SORT_KEY]: relatedSortKey(target),

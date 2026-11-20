@@ -326,8 +326,9 @@ describe("migrate", () => {
     const migrated = async (audit: Record<string, unknown>) => {
       const { client, send } = stubClient([[v1Copy({ rerunable: false })], [v1Audit(audit)]]);
       await migrate({ client, from: FROM, to: TO });
-      const [copy] = putItems(send);
-      return copy.rerunable;
+      // As put again from its audit, once every audit is written
+      const copies = putItems(send).filter(({ related }) => related);
+      return copies.at(-1)?.rerunable;
     };
 
     // A failure with an event, without a flag, as the earlier SDK logged one

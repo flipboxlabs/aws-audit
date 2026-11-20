@@ -37,7 +37,7 @@ pub struct State {
 
 /// The buses a rerun may send an event to, by ARN (`RERUN_EVENT_BUSES`). The
 /// account and region resolve a bus recorded by name, as `PutEvents` does: to the
-/// Lambda's own.
+/// Lambda's own (`RERUN_EVENT_BUS_ACCOUNT`, the stack's, and `AWS_REGION`).
 #[derive(Debug, Clone, Default)]
 pub struct RerunBuses {
     account: String,
@@ -60,11 +60,11 @@ impl RerunBuses {
     }
 
     /// The comma-separated ARNs in `RERUN_EVENT_BUSES`, resolving names in
-    /// `AWS_ACCOUNT` and `AWS_REGION`. None are allowed when it's unset.
+    /// `RERUN_EVENT_BUS_ACCOUNT` and `AWS_REGION`. None are allowed when it's unset.
     pub fn from_env() -> Self {
         let var = |name| std::env::var(name).unwrap_or_default();
         RerunBuses::new(
-            var("AWS_ACCOUNT"),
+            var("RERUN_EVENT_BUS_ACCOUNT"),
             var("AWS_REGION"),
             var("RERUN_EVENT_BUSES")
                 .split(',')

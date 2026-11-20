@@ -620,6 +620,22 @@ const CASES: Case[] = [
     ],
   },
   {
+    name: "upsert/retry-rerunable-by-stored-event",
+    description:
+      "A retry that fails without an event keeps the event an earlier attempt stored, so the follow-up UpdateItem that numbers its attempt also sets the flag that event decides",
+    operation: "upsertItem",
+    args: [upsertInput({ status: "fail", error: "Still failing" })],
+    replies: [
+      attempts(2, "2026-01-01T00:00:00.000Z", {
+        event: { source: "orders", "detail-type": "OrderCreated", detail: '{"orderId":"order-1"}' },
+        rerunable: false,
+      }),
+      { output: {} },
+      { output: {} },
+      accepted(),
+    ],
+  },
+  {
     name: "upsert/retry-kept-fields",
     description:
       "A retry keeps the fields it leaves out, and its copies are the audit as stored, with them",

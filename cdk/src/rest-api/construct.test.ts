@@ -58,15 +58,22 @@ const rerunBuses = (template: Template) => {
     (statement: { Action: unknown }) => statement.Action === "events:PutEvents",
   ).map((statement: { Resource: unknown }) => statement.Resource);
 
-  return { variable: rerun.Properties.Environment.Variables.RERUN_EVENT_BUSES, putEvents };
+  const variables = rerun.Properties.Environment.Variables;
+  return {
+    variable: variables.RERUN_EVENT_BUSES,
+    account: variables.RERUN_EVENT_BUS_ACCOUNT,
+    putEvents,
+  };
 };
 
 describe("RestApiConstruct", () => {
   it("should let a rerun send to the audit event bus only by default", () => {
-    const { variable, putEvents } = rerunBuses(synth());
+    const { variable, account, putEvents } = rerunBuses(synth());
     const auditBus = { "Fn::GetAtt": [expect.stringMatching(/^Bus/), "Arn"] };
 
     expect(variable).toEqual(auditBus);
+    // The stack's, which a bus recorded by name is in
+    expect(account).toBe("123456789012");
     expect(putEvents).toEqual([auditBus]);
   });
 

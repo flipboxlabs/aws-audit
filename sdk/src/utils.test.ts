@@ -416,6 +416,24 @@ describe("utils", () => {
 
       expect(normalizeSQSEventBody(sqsRecord)).toBeUndefined();
     });
+
+    it("should return undefined for a body that isn't a JSON object, or an event's fields", () => {
+      const withBody = (body: string) => ({ ...createMockSQSRecord(), body });
+
+      for (const body of ['"text"', "123", "null", "[1]", '{"source":1}', '{"detail":5}']) {
+        expect(normalizeSQSEventBody(withBody(body)), body).toBeUndefined();
+      }
+    });
+
+    it("should read a null detail as none", () => {
+      expect(
+        normalizeSQSEventBody(createMockSQSRecord({ source: "orders", detail: null })),
+      ).toEqual({
+        detail: undefined,
+        "detail-type": undefined,
+        source: "orders",
+      });
+    });
   });
 
   describe("isRerunable", () => {
@@ -437,6 +455,11 @@ describe("utils", () => {
       expect(isRerunable({ status: "fail", event: { ...event, source: "" } })).toBe(false);
       // PutEvents refuses AWS's own sources
       expect(isRerunable({ status: "fail", event: { ...event, source: "aws.s3" } })).toBe(false);
+      // and needs a detail that's a JSON object
+      expect(isRerunable({ status: "fail", event: { ...event, detail: undefined } })).toBe(false);
+      expect(isRerunable({ status: "fail", event: { ...event, detail: '"text"' } })).toBe(false);
+      expect(isRerunable({ status: "fail", event: { ...event, detail: "not json" } })).toBe(false);
+      expect(isRerunable({ status: "fail", event: { ...event, detail: { id: 1 } } })).toBe(true);
     });
   });
 
@@ -449,8 +472,9 @@ describe("utils", () => {
       expect(rerunableToStore({ status: "success" })).toBe(false);
     });
 
-    it("should keep the stored flag for a failure logged without an event or a flag", () => {
+    it("should leave it to the stored event when one logged without an event may be rerunable", () => {
       expect(rerunableToStore({ status: "fail" })).toBeUndefined();
+      expect(rerunableToStore({ status: "success", rerunable: true })).toBeUndefined();
       expect(rerunableToStore({ status: "fail", rerunable: false })).toBe(false);
     });
   });
