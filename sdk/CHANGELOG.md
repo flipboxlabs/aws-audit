@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.2.0](https://github.com/flipboxlabs/aws-audit/compare/sdk-v2.1.0...sdk-v2.2.0) (2026-11-20)
+
+
+### Features
+
+* log a rerun's outcome as an attempt of the audit it reruns ([51f5566](https://github.com/flipboxlabs/aws-audit/commit/51f5566ba6ce8b0056c7fcfde03d6b42891bc5ea))
+* log a rerun's outcome as an attempt of the audit it reruns ([34a4667](https://github.com/flipboxlabs/aws-audit/commit/34a4667ce13638183d6f6df7a5b65056c552effb)), closes [#158](https://github.com/flipboxlabs/aws-audit/issues/158)
+* tag a rerun's attempt, and match reruns as handlers leave their audits ([3c75696](https://github.com/flipboxlabs/aws-audit/commit/3c75696681f7248aaf6d8681cc39827528f76f9f))
+
+
+### Bug Fixes
+
+* keep reruns working if PutEvents refuses the audit, and link reruns predictably ([59b6bd7](https://github.com/flipboxlabs/aws-audit/commit/59b6bd7fde4b66c2c204af4dc16c79d33bac1bea))
+
 ## [2.1.0](https://github.com/flipboxlabs/aws-audit/compare/sdk-v2.0.0...sdk-v2.1.0) (2026-11-20)
 
 
