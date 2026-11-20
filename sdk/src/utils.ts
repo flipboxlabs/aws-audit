@@ -138,13 +138,15 @@ export function buildAudit(
 /**
  * Input type for EventBridge event normalization.
  */
-type Input = Pick<PutEventsRequestEntry, "Detail" | "DetailType" | "Source">;
+type Input = Pick<PutEventsRequestEntry, "Detail" | "DetailType" | "Source" | "EventBusName">;
 
 /**
  * Normalizes an EventBridge PutEvents request entry to a simplified event format.
  *
- * Converts the AWS SDK format (Detail, DetailType, Source) to the internal
- * event format (detail, detail-type, source).
+ * Converts the AWS SDK format (Detail, DetailType, Source, EventBusName) to the
+ * internal event format (detail, detail-type, source, eventBusName). The bus is
+ * kept so a rerun puts the event on it again; without one (or an empty one), a
+ * rerun goes to the audit event bus.
  *
  * @param input - The EventBridge PutEvents request entry
  * @returns The normalized event object
@@ -155,8 +157,10 @@ type Input = Pick<PutEventsRequestEntry, "Detail" | "DetailType" | "Source">;
  *   Detail: '{"orderId": "123"}',
  *   DetailType: 'OrderCreated',
  *   Source: 'orders.service',
+ *   EventBusName: 'PROD-v1-Global',
  * });
- * // Returns: { detail: '{"orderId": "123"}', 'detail-type': 'OrderCreated', source: 'orders.service' }
+ * // Returns: { detail: '{"orderId": "123"}', 'detail-type': 'OrderCreated',
+ * //   source: 'orders.service', eventBusName: 'PROD-v1-Global' }
  * ```
  */
 export function normalizeEventBridgetInput(input: Input): EventBridgeEvent {
@@ -164,6 +168,8 @@ export function normalizeEventBridgetInput(input: Input): EventBridgeEvent {
     detail: input.Detail,
     "detail-type": input.DetailType,
     source: input.Source,
+    // An empty name is none, as in process_batch_from_bus
+    eventBusName: input.EventBusName || undefined,
   };
 }
 

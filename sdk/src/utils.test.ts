@@ -245,6 +245,18 @@ describe("utils", () => {
       });
     });
 
+    it("should keep the entry's event bus, so a rerun goes to it", () => {
+      const entry = { Detail: "{}", DetailType: "OrderCreated", Source: "orders.service" };
+
+      expect(
+        normalizeEventBridgetInput({ ...entry, EventBusName: "PROD-v1-Global" }).eventBusName,
+      ).toBe("PROD-v1-Global");
+      expect(
+        normalizeEventBridgetInput({ ...entry, EventBusName: "" }).eventBusName,
+      ).toBeUndefined();
+      expect(normalizeEventBridgetInput(entry).eventBusName).toBeUndefined();
+    });
+
     it("should handle undefined values", () => {
       const input = {
         Detail: undefined,
