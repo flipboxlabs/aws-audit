@@ -11,8 +11,14 @@ type Props = {
   table: dynamodb.ITable;
   eventBus: events.IEventBus;
   /**
+   * The bus a rerun sends an event that recorded none to, such as the apps' own
+   * global bus, instead of the audit event bus. A handler overrides it by
+   * recording its bus with the event (`AuditBatchProcessor`'s `eventBusName`).
+   */
+  defaultRerunEventBus?: events.IEventBus;
+  /**
    * Buses a rerun may send an event to when the event recorded one, besides the
-   * audit event bus (an event that recorded none goes to that).
+   * audit event bus and `defaultRerunEventBus`.
    */
   rerunEventBuses?: events.IEventBus[];
   /** Lambda configuration */

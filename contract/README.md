@@ -34,15 +34,15 @@ contract/
 
 Every fixture is generated with the same environment, so the requests are deterministic:
 
-| Input                    | Value                                                                                                          |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| Apps and resource types  | `App1`: `Unknown`, `User`, `Order`; `TestApp`: `User`, `Order`                                                 |
-| `ENVIRONMENT`, `SERVICE` | `test`, `Contract`, so the table is `TEST-Contract-Audit-v2` and the event bus `TEST-Contract-Audit`           |
-| Clock                    | `2026-01-02T03:04:05.678Z`, for `createdAt`, `updatedAt`, attempt `at` and `ttl`                               |
-| Retry jitter             | `Math.random()` is `0.5`                                                                                       |
-| Rerun buses              | `TEST-Global` in the Lambda's account `123456789012`, and `TEST-Shared` in `210987654321`, both in `us-east-1` |
-| Audit ids                | Always given in the input. Generated ids are KSUIDs, which no fixture covers.                                  |
-| `AWS_AUDIT_CDK_VERSION`  | `0.0.0-contract`                                                                                               |
+| Input                    | Value                                                                                                                                                                   |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Apps and resource types  | `App1`: `Unknown`, `User`, `Order`; `TestApp`: `User`, `Order`                                                                                                          |
+| `ENVIRONMENT`, `SERVICE` | `test`, `Contract`, so the table is `TEST-Contract-Audit-v2` and the event bus `TEST-Contract-Audit`                                                                    |
+| Clock                    | `2026-01-02T03:04:05.678Z`, for `createdAt`, `updatedAt`, attempt `at` and `ttl`                                                                                        |
+| Retry jitter             | `Math.random()` is `0.5`                                                                                                                                                |
+| Rerun buses              | `TEST-Global` in the Lambda's account `123456789012`, and `TEST-Shared` in `210987654321`, both in `us-east-1`; no default rerun bus (the rerun Lambda's tests add one) |
+| Audit ids                | Always given in the input. Generated ids are KSUIDs, which no fixture covers.                                                                                           |
+| `AWS_AUDIT_CDK_VERSION`  | `0.0.0-contract`                                                                                                                                                        |
 
 ## SDK fixtures
 

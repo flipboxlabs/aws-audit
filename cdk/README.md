@@ -118,7 +118,13 @@ Every listing takes `filter[operation]` (an exact operation name) and `filter[ti
 
 Every route runs as a prebuilt Rust binary, like the subscription Lambda. Every route answers errors as `{statusCode, error, message}`, and a `422` lists each invalid input under `details.issues`, with its location as `path` (e.g. `["query", "filter[app]"]`).
 
-A rerun puts the event on the bus it recorded as `event.eventBusName`, or on the audit event bus when it recorded none. The SDK's `AuditBatchProcessor` records the bus given as its `eventBusName` option (`process_batch_from_bus` in Rust). A recorded bus must be the audit event bus or one of `rerunEventBuses`, the buses the rerun Lambda may put events on; any other is a `400`. A bus recorded by name is the one in the stack's account and region. Record a bus in another account by ARN, and give it a resource policy that lets the stack's account put events on it. Every rerun bus must be in the stack's region, as `PutEvents` doesn't reach another region's; synth fails otherwise.
+A rerun picks the bus in three steps, the most specific first:
+
+1. the bus the event recorded as `event.eventBusName`, for a handler whose records come from a bus of their own. The SDK's `AuditBatchProcessor` records the bus given as its `eventBusName` option (`process_batch_from_bus` in Rust);
+2. otherwise `defaultRerunEventBus`, set once for every app, such as the global bus their rules listen on;
+3. otherwise the audit event bus.
+
+A recorded bus must be the audit event bus, `defaultRerunEventBus` or one of `rerunEventBuses`, the buses the rerun Lambda may put events on; any other is a `400`. A bus recorded by name is the one in the stack's account and region. Record a bus in another account by ARN, and give it a resource policy that lets the stack's account put events on it. Every rerun bus must be in the stack's region, as `PutEvents` doesn't reach another region's; synth fails otherwise.
 
 A rerun puts the event on the bus as it was first sent, so every rule on that bus matches it again, not only the one whose target failed. On a bus several apps listen to, an app that handled the event the first time gets it again too, and nothing in the event marks it as a rerun. Make those targets idempotent, or rerun on a bus only the failed app listens to.
 
@@ -128,8 +134,10 @@ new RestAPI(this, "RestAPI", {
   lambda: { layers: [auditConfigLayer.layer] },
   table,
   eventBus,
-  // The buses your apps' rules listen on, so a rerun reaches them
-  rerunEventBuses: [events.EventBus.fromEventBusName(this, "GlobalBus", "PROD-v1-Global")],
+  // The bus your apps' rules listen on, for an event that recorded no bus
+  defaultRerunEventBus: events.EventBus.fromEventBusName(this, "GlobalBus", "PROD-v1-Global"),
+  // Other buses a handler may record, so a rerun reaches them
+  rerunEventBuses: [events.EventBus.fromEventBusName(this, "OrdersBus", "PROD-v1-Orders")],
 });
 ```
 

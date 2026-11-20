@@ -4,8 +4,9 @@
 //! with the flag, and one stored before that is rerunable when it failed.
 //!
 //! The event goes to the bus it recorded (`eventBusName`), which must be the
-//! audit event bus or one of the [`RerunBuses`], or to the audit event bus when
-//! it recorded none.
+//! audit event bus or one of the [`RerunBuses`]. One that recorded none goes to
+//! the default rerun bus, when the REST API has one, or else to the audit event
+//! bus.
 //!
 //! [`Audit::is_rerunable`]: aws_audit::Audit::is_rerunable
 //!
@@ -35,7 +36,8 @@ pub struct State {
     pub buses: RerunBuses,
 }
 
-/// The buses a rerun may send an event to, by ARN (`RERUN_EVENT_BUSES`). The
+/// The buses a rerun may send an event to, by ARN (`RERUN_EVENT_BUSES`), and the
+/// one it sends an event that recorded none to (`RERUN_DEFAULT_EVENT_BUS`). The
 /// account and region resolve a bus recorded by name, as `PutEvents` does: to the
 /// Lambda's own (`RERUN_EVENT_BUS_ACCOUNT`, the stack's, and `AWS_REGION`).
 #[derive(Debug, Clone, Default)]
@@ -43,6 +45,7 @@ pub struct RerunBuses {
     account: String,
     region: String,
     arns: Vec<String>,
+    default: Option<String>,
 }
 
 impl RerunBuses {
@@ -56,21 +59,41 @@ impl RerunBuses {
             account: account.into(),
             region: region.into(),
             arns: arns.into_iter().map(Into::into).collect(),
+            default: None,
         }
     }
 
+    /// The buses, sending an event that recorded none to `arn` instead of the audit
+    /// event bus.
+    pub fn with_default(mut self, arn: impl Into<String>) -> Self {
+        self.default = Some(arn.into());
+        self
+    }
+
+    /// The bus an event that recorded none goes to, when it isn't the audit event
+    /// bus.
+    pub fn default_bus(&self) -> Option<&str> {
+        self.default.as_deref()
+    }
+
     /// The comma-separated ARNs in `RERUN_EVENT_BUSES`, resolving names in
-    /// `RERUN_EVENT_BUS_ACCOUNT` and `AWS_REGION`. None are allowed when it's unset.
+    /// `RERUN_EVENT_BUS_ACCOUNT` and `AWS_REGION`, and the default in
+    /// `RERUN_DEFAULT_EVENT_BUS`. None are allowed when it's unset, and without a
+    /// default an event that recorded no bus goes to the audit event bus.
     pub fn from_env() -> Self {
         let var = |name| std::env::var(name).unwrap_or_default();
-        RerunBuses::new(
+        let buses = RerunBuses::new(
             var("RERUN_EVENT_BUS_ACCOUNT"),
             var("AWS_REGION"),
             var("RERUN_EVENT_BUSES")
                 .split(',')
                 .map(str::trim)
                 .filter(|arn| !arn.is_empty()),
-        )
+        );
+        match var("RERUN_DEFAULT_EVENT_BUS").trim() {
+            "" => buses,
+            arn => buses.with_default(arn),
+        }
     }
 
     /// The ARN of the allowed bus `bus` names, by ARN or by name. Only a bus in
@@ -118,7 +141,7 @@ async fn rerun(state: Arc<State>, request: HttpRequest) -> http::Result {
     };
     let audit_bus = state.events.bus_name();
     let bus = match event.event_bus_name.as_deref() {
-        None | Some("") => audit_bus,
+        None | Some("") => state.buses.default_bus().unwrap_or(audit_bus),
         Some(recorded) if recorded == audit_bus => audit_bus,
         Some(recorded) => state.buses.resolve(recorded).ok_or_else(|| {
             HttpError::bad_request(format!("Event bus {recorded} is not allowed for reruns"))
