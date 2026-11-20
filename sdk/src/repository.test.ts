@@ -257,8 +257,6 @@ describe("AuditRepository", () => {
           target: { app: App.App1, type: ResourceType.ORDER, id: "order-1" },
           trace: "trace-1:2",
           error: "Boom",
-          // A failure without an event: the event the audit kept (none) decides
-          rerunable: false,
           attempts: [attempt],
           createdAt: "2025-12-31T00:00:00.000Z",
           updatedAt: CREATED_AT,

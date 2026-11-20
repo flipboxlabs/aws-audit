@@ -328,19 +328,23 @@ export function isRerunable(audit: RerunableFields): boolean {
 }
 
 /**
- * The flag an upsert stores with what it logged (`rerunable_to_store` in the Rust
- * crate), or undefined when the event already stored decides it: a failure, or
- * an audit logged `rerunable: true`, without an event keeps the stored one. The
- * upsert then decides it from the stored audit ({@link isRerunable}).
+ * The flag an upsert stores (`rerunable_to_store` in the Rust crate), from what it
+ * logged alone:
+ *
+ * - with an event, {@link isRerunable} for it;
+ * - without one, the flag it gives, as a rerun still needs the event the audit
+ *   kept; or, without a flag, `false` unless it failed;
+ * - undefined for a failure logged without an event or a flag, which leaves the
+ *   stored flag: an earlier opt-out stays, and so does an earlier failure's
+ *   rerunable event.
  *
  * @param audit - The upserted audit's flag, status and event
- * @returns The flag to store, or undefined when the stored event decides it
+ * @returns The flag to store, or undefined to leave the stored one
  */
 export function rerunableToStore(audit: RerunableFields): boolean | undefined {
   if (audit.event !== undefined) return isRerunable(audit);
-  if (audit.rerunable === false) return false;
-  if (audit.rerunable == null && audit.status !== Status.FAIL) return false;
-  return undefined;
+  if (audit.rerunable != null) return audit.rerunable;
+  return audit.status === Status.FAIL ? undefined : false;
 }
 
 /** What decides whether an audit's event can be rerun. */

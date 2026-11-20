@@ -1,5 +1,5 @@
 {
-  "description": "A retry that fails without an event keeps the event an earlier attempt stored, so the follow-up UpdateItem that numbers its attempt also sets the flag that event decides",
+  "description": "A retry that fails without an event or a flag leaves the flag an earlier attempt stored, so an opt-out stays: the follow-up UpdateItem only numbers its attempt",
   "operation": "upsertItem",
   "args": [
     {
@@ -241,18 +241,14 @@
             "S": "audit"
           }
         },
-        "UpdateExpression": "SET #attempts[1].#number = :attemptNumber, #rerunable = :rerunable",
+        "UpdateExpression": "SET #attempts[1].#number = :attemptNumber",
         "ExpressionAttributeNames": {
           "#attempts": "attempts",
-          "#number": "number",
-          "#rerunable": "rerunable"
+          "#number": "number"
         },
         "ExpressionAttributeValues": {
           ":attemptNumber": {
             "N": "2"
-          },
-          ":rerunable": {
-            "BOOL": true
           }
         }
       },

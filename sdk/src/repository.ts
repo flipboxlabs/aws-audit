@@ -751,42 +751,21 @@ export class AuditRepository<C extends AuditConfig> {
     const updated = unmarshall(result.Attributes);
     const attemptNumber = (updated.attempts as unknown[]).length;
 
-    // Without an event, the event the audit kept decides the flag the upsert didn't
-    const rerunable =
-      payload.rerunable === undefined
-        ? isRerunable({ rerunable: item.rerunable, status: payload.status, event: updated.event })
-        : undefined;
-
-    // Afterwards, in one write: a retry appended to earlier attempts renumbers this
-    // one by its position, and the flag the stored audit decides is set
-    const followUp: string[] = [];
-    const followUpNames: Record<string, string> = {};
-    const followUpValues: Record<string, unknown> = {};
     if (attemptNumber !== currentAttempt.number) {
-      followUp.push(`#attempts[${attemptNumber - 1}].#number = :attemptNumber`);
-      followUpNames["#attempts"] = "attempts";
-      followUpNames["#number"] = "number";
-      followUpValues[":attemptNumber"] = attemptNumber;
-    }
-    // Only when the audit as stored would answer otherwise
-    if (rerunable !== undefined && rerunable !== isRerunable(updated)) {
-      followUp.push("#rerunable = :rerunable");
-      followUpNames["#rerunable"] = "rerunable";
-      followUpValues[":rerunable"] = rerunable;
-    }
-    if (followUp.length > 0) {
       await this.client.send(
         new UpdateItemCommand({
           TableName: DynamoDB.Table.Name(),
           Key: marshall(primaryKey, MARSHALL_OPTIONS),
-          UpdateExpression: `SET ${followUp.join(", ")}`,
-          ExpressionAttributeNames: followUpNames,
-          ExpressionAttributeValues: marshall(followUpValues),
+          UpdateExpression: `SET #attempts[${attemptNumber - 1}].#number = :attemptNumber`,
+          ExpressionAttributeNames: {
+            "#attempts": "attempts",
+            "#number": "number",
+          },
+          ExpressionAttributeValues: marshall({
+            ":attemptNumber": attemptNumber,
+          }),
         }),
       );
-    }
-    if (rerunable !== undefined) {
-      updated.rerunable = rerunable;
     }
 
     if (attemptNumber > 1) {

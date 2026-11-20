@@ -620,9 +620,9 @@ const CASES: Case[] = [
     ],
   },
   {
-    name: "upsert/retry-rerunable-by-stored-event",
+    name: "upsert/retry-keeps-opt-out",
     description:
-      "A retry that fails without an event keeps the event an earlier attempt stored, so the follow-up UpdateItem that numbers its attempt also sets the flag that event decides",
+      "A retry that fails without an event or a flag leaves the flag an earlier attempt stored, so an opt-out stays: the follow-up UpdateItem only numbers its attempt",
     operation: "upsertItem",
     args: [upsertInput({ status: "fail", error: "Still failing" })],
     replies: [

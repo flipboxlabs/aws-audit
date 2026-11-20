@@ -19,9 +19,7 @@ use crate::keys::{
     has_resource_id, index_attributes, join_key, primary_key, related_sort_key, resource_scopes,
     tenant_key,
 };
-use crate::model::{
-    Attempt, Audit, AuditSummary, ResourceReference, Status, Tier, Timestamp, is_rerunable,
-};
+use crate::model::{Attempt, Audit, AuditSummary, ResourceReference, Status, Tier, Timestamp};
 use crate::pagination::{self, InvalidNextToken, Page, PageInfo, Pagination};
 use crate::table::{Index, SUMMARY_PROJECTION, attributes, keys, kinds, sort_keys};
 use crate::trace::trace_parts;
@@ -206,7 +204,6 @@ impl AuditRepository {
     ) -> Result<Upserted, StorageError> {
         let now = self.clock.now();
         let stored = StoredAudit::new(audit, id.to_owned(), &Timestamp::from(now));
-        let logged_rerunable = audit.rerunable;
         let key = primary_key(
             stored.tenant_id.as_deref(),
             &stored.target.app,
@@ -308,45 +305,24 @@ impl AuditRepository {
         let listed = audit.resources.iter().flatten();
         let mut audit = parse_item(unmarshall_map(attributes))?;
 
-        // Without an event, the event the audit kept decides the flag the upsert didn't
-        let rerunable = stored
-            .rerunable
-            .is_none()
-            .then(|| is_rerunable(logged_rerunable, stored.status, audit.event.as_ref()));
-
-        // Afterwards, in one write: a retry appended to earlier attempts renumbers this
-        // one by its position, and the flag the stored audit decides is set, only when
-        // the audit as stored would answer otherwise
-        let mut follow_up = Vec::new();
-        let mut follow_up_names = HashMap::new();
-        let mut follow_up_values = Map::new();
+        // A retry appended to earlier attempts: renumber this one by its position
         if number != attempt.number {
-            follow_up.push(format!(
-                "#attempts[{}].#number = :attemptNumber",
-                number - 1
-            ));
-            follow_up_names.insert("#attempts".to_owned(), "attempts".to_owned());
-            follow_up_names.insert("#number".to_owned(), "number".to_owned());
-            follow_up_values.insert(":attemptNumber".to_owned(), Value::from(number));
-        }
-        if let Some(rerunable) = rerunable.filter(|rerunable| *rerunable != audit.is_rerunable()) {
-            follow_up.push("#rerunable = :rerunable".to_owned());
-            follow_up_names.insert("#rerunable".to_owned(), "rerunable".to_owned());
-            follow_up_values.insert(":rerunable".to_owned(), Value::Bool(rerunable));
-        }
-        if !follow_up.is_empty() {
             self.client
                 .update_item()
                 .table_name(&self.table)
                 .set_key(Some(marshall_map(&key)))
-                .update_expression(format!("SET {}", follow_up.join(", ")))
-                .set_expression_attribute_names(Some(follow_up_names))
-                .set_expression_attribute_values(Some(marshall_map(&follow_up_values)))
+                .update_expression(format!(
+                    "SET #attempts[{}].#number = :attemptNumber",
+                    number - 1
+                ))
+                .expression_attribute_names("#attempts", "attempts")
+                .expression_attribute_names("#number", "number")
+                .set_expression_attribute_values(Some(marshall_map(&Map::from_iter([(
+                    ":attemptNumber".to_owned(),
+                    Value::from(number),
+                )]))))
                 .send()
                 .await?;
-        }
-        if rerunable.is_some() {
-            audit.rerunable = rerunable;
         }
 
         if number > 1 {

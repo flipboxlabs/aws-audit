@@ -390,8 +390,9 @@ mod tests {
         let mut without_event = failed.clone();
         without_event.as_object_mut().unwrap().remove("event");
         assert_eq!(rerunable(without_event.clone()), None);
+        // The flag it gives, as a rerun still needs the event the audit kept
         without_event["rerunable"] = json!(true);
-        assert_eq!(rerunable(without_event.clone()), None);
+        assert_eq!(rerunable(without_event.clone()), Some(true));
         without_event["rerunable"] = json!(false);
         assert_eq!(rerunable(without_event.clone()), Some(false));
         without_event["status"] = json!("success");

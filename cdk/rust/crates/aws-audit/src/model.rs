@@ -365,10 +365,15 @@ pub fn is_rerunable(
         && rerunable.unwrap_or(status == Status::Fail)
 }
 
-/// The flag an upsert stores with what it logged (`rerunableToStore` in the
-/// TypeScript SDK), or none when the event already stored decides it: a failure,
-/// or an audit logged rerunable, without an event keeps the stored one. The
-/// upsert then decides it from the stored audit ([`is_rerunable`]).
+/// The flag an upsert stores (`rerunableToStore` in the TypeScript SDK), from
+/// what it logged alone:
+///
+/// - with an event, [`is_rerunable`] for it;
+/// - without one, the flag it gives, as a rerun still needs the event the audit
+///   kept; or, without a flag, `false` unless it failed;
+/// - none for a failure logged without an event or a flag, which leaves the
+///   stored flag: an earlier opt-out stays, and so does an earlier failure's
+///   rerunable event.
 pub fn rerunable_to_store(
     rerunable: Option<bool>,
     status: Status,
@@ -376,9 +381,8 @@ pub fn rerunable_to_store(
 ) -> Option<bool> {
     match (rerunable, event) {
         (_, Some(_)) => Some(is_rerunable(rerunable, status, event)),
-        (Some(false), None) => Some(false),
-        (None, None) if status != Status::Fail => Some(false),
-        _ => None,
+        (Some(rerunable), None) => Some(rerunable),
+        (None, None) => (status != Status::Fail).then_some(false),
     }
 }
 

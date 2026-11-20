@@ -484,10 +484,15 @@ describe("utils", () => {
       expect(rerunableToStore({ status: "success" })).toBe(false);
     });
 
-    it("should leave it to the stored event when one logged without an event may be rerunable", () => {
-      expect(rerunableToStore({ status: "fail" })).toBeUndefined();
-      expect(rerunableToStore({ status: "success", rerunable: true })).toBeUndefined();
+    it("should store the flag one logged without an event gives", () => {
+      // A rerun still needs the event the audit kept
+      expect(rerunableToStore({ status: "success", rerunable: true })).toBe(true);
       expect(rerunableToStore({ status: "fail", rerunable: false })).toBe(false);
+    });
+
+    it("should leave the stored flag for a failure logged without an event or a flag", () => {
+      // An earlier opt-out stays, as does an earlier failure's rerunable event
+      expect(rerunableToStore({ status: "fail" })).toBeUndefined();
     });
   });
 
