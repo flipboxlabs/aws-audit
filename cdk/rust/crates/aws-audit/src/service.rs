@@ -106,6 +106,7 @@ impl AuditService {
             status: audit.status,
             error: audit.error.clone().map(Value::String),
             at: Timestamp::from(self.clock.now()),
+            rerun: audit.rerun.filter(|rerun| *rerun),
         };
         let upserted = self.storage.upsert_item(&audit, &id, &attempt).await?;
         // Copies of the audit as stored: with the fields a retry kept, sorted with

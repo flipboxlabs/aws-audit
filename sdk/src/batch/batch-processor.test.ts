@@ -407,13 +407,25 @@ describe("AuditBatchProcessor", () => {
         })}`;
       const calls = () => (mockAudits.addAudit as ReturnType<typeof vi.fn>).mock.calls;
 
-      it("should log its outcome under the audit it reruns", () => {
+      it("should log its outcome under the audit it reruns, tagged rerun", () => {
         const record = createMockSQSRecord({ resources: [rerunOf("processMessage")] });
 
         processor.successHandler(record, "Success");
         processor.failureHandler(record, new Error("Failed"));
 
-        expect(calls().map(([audit]) => audit.id)).toEqual(["audit-1", "audit-1"]);
+        expect(calls().map(([audit]) => [audit.id, audit.rerun])).toEqual([
+          ["audit-1", true],
+          ["audit-1", true],
+        ]);
+      });
+
+      it("should match the audit as the handler's result leaves it", () => {
+        const record = createMockSQSRecord({ resources: [rerunOf("processMessage")] });
+
+        processor.successHandler(record, { message: "Done", _audit: { operation: "other" } });
+
+        expect(calls()[0][0]).toMatchObject({ id: "test-message-id", operation: "other" });
+        expect(calls()[0][0].rerun).toBeUndefined();
       });
 
       it("should leave another rule's audit of the event under the messageId", () => {
@@ -422,6 +434,7 @@ describe("AuditBatchProcessor", () => {
         processor.successHandler(record, "Success");
 
         expect(calls()[0][0].id).toBe("test-message-id");
+        expect(calls()[0][0].rerun).toBeUndefined();
       });
 
       it("should not match a Kinesis record", () => {

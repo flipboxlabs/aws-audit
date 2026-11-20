@@ -92,7 +92,7 @@ export class AuditBatchProcessor<Record extends EventSourceDataClassTypes> exten
    * without throwing an error. Creates an audit entry with SUCCESS status
    * and excludes the original event data to reduce storage costs.
    *
-   * Without an ID of its own, the audit takes one by {@link AuditBatchProcessor.auditId}.
+   * Without an ID of its own, the audit takes one by {@link AuditBatchProcessor.correlate}.
    *
    * @param record - The successfully processed record
    * @param result - The result returned by the record handler, may include audit overrides
@@ -108,7 +108,7 @@ export class AuditBatchProcessor<Record extends EventSourceDataClassTypes> exten
     });
 
     if (!auditItem.id) {
-      auditItem.id = this.auditId(record, auditItem);
+      Object.assign(auditItem, this.correlate(record, auditItem));
     }
 
     this.audit.addAudit({
@@ -127,7 +127,7 @@ export class AuditBatchProcessor<Record extends EventSourceDataClassTypes> exten
    * the original event data for debugging and rerunning, with the configured
    * event bus, and captures the error details.
    *
-   * Without an ID of its own, the audit takes one by {@link AuditBatchProcessor.auditId}.
+   * Without an ID of its own, the audit takes one by {@link AuditBatchProcessor.correlate}.
    *
    * @param record - The record that failed processing
    * @param error - The error thrown during processing
@@ -143,7 +143,7 @@ export class AuditBatchProcessor<Record extends EventSourceDataClassTypes> exten
     });
 
     if (!auditItem.id) {
-      auditItem.id = this.auditId(record, auditItem);
+      Object.assign(auditItem, this.correlate(record, auditItem));
     }
 
     this.audit.addAudit({
@@ -158,19 +158,27 @@ export class AuditBatchProcessor<Record extends EventSourceDataClassTypes> exten
    * The ID an audit of a record takes when it has none: the record's unique
    * identifier (messageId for SQS, eventID for Kinesis/DynamoDB), so retries of the
    * record are attempts of one audit. When an SQS message's event reruns an audit
-   * this one matches ({@link getRerunAuditId}), that audit's ID instead, so the
-   * rerun's outcome is an attempt of it.
+   * this one matches ({@link getRerunAuditId}), that audit's ID instead, with
+   * `rerun: true`, so the rerun's outcome is an attempt of it tagged `rerun`.
    *
    * @param record - The record processed
    * @param auditItem - Its audit
-   * @returns The ID, or undefined for an unsupported event type
+   * @returns The ID, undefined for an unsupported event type, and the rerun tag
    */
-  protected auditId(record: Record, auditItem: LogAuditInput): string | undefined {
-    return (
-      (this.eventType === EventType.SQS
+  protected correlate(
+    record: Record,
+    auditItem: LogAuditInput,
+  ): Pick<LogAuditInput, "id" | "rerun"> {
+    const rerunId =
+      this.eventType === EventType.SQS
         ? getRerunAuditId(record as SQSRecord, auditItem)
-        : undefined) ??
-      getRecordId(this.eventType, record as SQSRecord | KinesisStreamRecord | DynamoDBRecord)
+        : undefined;
+    if (rerunId) return { id: rerunId, rerun: true };
+
+    const recordId = getRecordId(
+      this.eventType,
+      record as SQSRecord | KinesisStreamRecord | DynamoDBRecord,
     );
+    return recordId ? { id: recordId } : {};
   }
 }

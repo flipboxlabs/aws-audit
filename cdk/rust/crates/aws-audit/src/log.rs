@@ -90,6 +90,10 @@ pub struct LogAudit {
     /// rerunable; `false` opts a failure out, `true` opts another status in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rerunable: Option<bool>,
+    /// `true` when the audit is a rerun's outcome, logged under the id of the audit
+    /// the rerun reruns ([`crate::rerun`]): its attempt says so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerun: Option<bool>,
     /// The trace, `{id}:{stage}`; the invocation's X-Ray trace id when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<String>,
@@ -120,6 +124,7 @@ impl LogAudit {
             resources: None,
             message: None,
             rerunable: None,
+            rerun: None,
             trace: None,
             event: None,
             error: None,

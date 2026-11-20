@@ -456,6 +456,8 @@ export type RerunOf = z.output<typeof RerunOfSchema>;
  * @returns The audit the event's `resources` name, or undefined
  */
 export function getRerunOf(record: SQSRecord): RerunOf | undefined {
+  // Most messages aren't reruns: parse only one that may be
+  if (!record.body?.includes(RERUN_RESOURCE_PREFIX)) return undefined;
   const resources: unknown = parseBody(record.body)?.resources;
   if (!Array.isArray(resources)) return undefined;
 
@@ -470,13 +472,17 @@ export function getRerunOf(record: SQSRecord): RerunOf | undefined {
 /**
  * The id an audit of an SQS message takes when the message's event reruns its
  * audit (`rerun_audit_id` in the Rust crate): the rerun audit's, when the audit
- * has the same tenant, target and operation. Logged under it, the outcome is an
- * attempt of that audit, so a successful rerun leaves it a success, no longer
- * rerunable. A rerun fires every rule the event matches; the other rules' audits
- * don't match, and keep their own ids.
+ * has the same tenant, target and operation. Logged under it with `rerun: true`,
+ * the outcome is an attempt of that audit tagged `rerun`, so a successful rerun
+ * leaves it a success, no longer rerunable. A rerun fires every rule the event
+ * matches; the other rules' audits don't match, and keep their own ids.
  *
  * An empty tenant or resource id is none, and ids compare as strings, so `1` is
- * `"1"`.
+ * `"1"`. The target's id is compared only when the rerun audit's target has one:
+ * an audit logged before its resource existed, such as a failed create, matches
+ * its rerun's audit, which names the created resource. Two handlers that log the
+ * same operation on the same target can't be told apart: both log under the
+ * rerun audit's id.
  *
  * `AuditBatchProcessor` uses it for SQS records; call it when logging a
  * message's audit yourself.
@@ -487,9 +493,11 @@ export function getRerunOf(record: SQSRecord): RerunOf | undefined {
  *
  * @example
  * ```typescript
+ * const rerunId = getRerunAuditId(record, audit);
  * audits.addAudit({
  *   ...audit,
- *   id: getRerunAuditId(record, audit) ?? record.messageId,
+ *   id: rerunId ?? record.messageId,
+ *   rerun: rerunId !== undefined || undefined,
  * });
  * ```
  */
@@ -505,7 +513,7 @@ export function getRerunAuditId(
     (rerun.tenantId || "") === (audit.tenantId || "") &&
     rerun.target.app === audit.target.app &&
     rerun.target.type === audit.target.type &&
-    resourceId(rerun.target.id) === resourceId(audit.target.id)
+    (!resourceId(rerun.target.id) || resourceId(rerun.target.id) === resourceId(audit.target.id))
     ? rerun.id
     : undefined;
 }

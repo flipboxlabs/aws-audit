@@ -72,6 +72,20 @@
       "line": "{\"_audit\":{\"id\":\"audit-1\",\"operation\":\"createOrder\",\"tenantId\":\"tenant-1\",\"tier\":3,\"status\":\"fail\",\"target\":{\"app\":\"App1\",\"type\":\"Order\",\"id\":42},\"source\":{\"app\":\"TestApp\",\"type\":\"User\"},\"context\":{\"attempt\":2,\"ok\":false,\"nested\":{\"b\":\"1\",\"a\":2.5}},\"resources\":[{\"app\":\"TestApp\",\"type\":\"User\",\"id\":7},{\"app\":\"TestApp\",\"type\":\"User\",\"id\":1.5},{\"app\":\"App1\",\"type\":\"Unknown\"}],\"message\":\"Order failed\",\"trace\":\"batch-1:2\",\"event\":{\"source\":\"orders\",\"detail-type\":\"OrderCreated\",\"detail\":\"{\\\"orderId\\\":7,\\\"nested\\\":{\\\"ok\\\":true}}\"},\"error\":\"Boom\"}}\n"
     },
     {
+      "name": "rerun",
+      "input": {
+        "id": "audit-1",
+        "operation": "createOrder",
+        "target": {
+          "app": "App1",
+          "type": "Order",
+          "id": "order-1"
+        },
+        "rerun": true
+      },
+      "line": "{\"_audit\":{\"id\":\"audit-1\",\"operation\":\"createOrder\",\"tier\":2,\"status\":\"success\",\"target\":{\"app\":\"App1\",\"type\":\"Order\",\"id\":\"order-1\"},\"rerun\":true,\"trace\":\"1-5759e988-bd862e3fe1be46a994272793\"}}\n"
+    },
+    {
       "name": "empty trace",
       "input": {
         "operation": "createOrder",

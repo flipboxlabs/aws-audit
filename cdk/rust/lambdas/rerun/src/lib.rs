@@ -153,18 +153,22 @@ async fn rerun(state: Arc<State>, request: HttpRequest) -> http::Result {
         })?,
     };
 
-    let resources = match RerunOf::of(&audit).to_resource() {
+    let resources = match RerunOf::of(&audit).to_resource_for(event) {
         Some(resource) => vec![resource],
         None => {
             // The outcome is logged as its own audit, as before
             tracing::warn!(
                 id = %audit.id,
-                "The audit is too long to name in the rerun's resources"
+                "The audit can't be named in the rerun's resources: too long for PutEvents"
             );
             Vec::new()
         }
     };
-    match state.events.resend(bus, event, resources).await {
+    match state
+        .events
+        .resend_with_resources(bus, event, resources)
+        .await
+    {
         Ok(_) => Ok(http::no_content()),
         Err(error) => {
             log_unsent(&error);

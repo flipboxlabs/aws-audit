@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::log::{Audits, LogAudit};
 use crate::model::{EventBridgeEvent, Status};
-use crate::rerun::RerunOf;
+use crate::rerun::{RESOURCE_PREFIX, RerunOf};
 use crate::trace::increment_trace_stage;
 
 /// How many times the message has been delivered (`ApproximateReceiveCount`): 1 on
@@ -66,18 +66,36 @@ pub fn rerun_of(message: &SqsMessage) -> Option<RerunOf> {
         resources: Option<Vec<Value>>,
     }
 
-    let body: Body = serde_json::from_str(message.body.as_deref()?).ok()?;
+    // Most messages aren't reruns: parse only one that may be
+    let body = message.body.as_deref()?;
+    if !body.contains(RESOURCE_PREFIX) {
+        return None;
+    }
+    let body: Body = serde_json::from_str(body).ok()?;
     RerunOf::from_resources(body.resources?.iter().filter_map(Value::as_str))
 }
 
 /// The id `audit` takes when the message's event reruns its audit: the rerun
 /// audit's, when `audit` has the same tenant, target and operation. Logged under
-/// it, the outcome is an attempt of that audit. The event's other rules' audits
-/// don't match, and keep their own ids.
+/// it, and with [`LogAudit::rerun`] set, the outcome is an attempt of that audit
+/// tagged `rerun`. The event's other rules' audits don't match, and keep their
+/// own ids.
 pub fn rerun_audit_id(message: &SqsMessage, audit: &LogAudit) -> Option<String> {
-    rerun_of(message)
+    rerun_id(rerun_of(message).as_ref(), audit)
+}
+
+fn rerun_id(rerun: Option<&RerunOf>, audit: &LogAudit) -> Option<String> {
+    rerun
         .filter(|rerun| rerun.matches(audit.tenant_id.as_deref(), &audit.target, &audit.operation))
-        .map(|rerun| rerun.id)
+        .map(|rerun| rerun.id.clone())
+}
+
+/// Gives an audit without an id of its own the rerun audit's when it matches,
+/// tagged `rerun`, or else the message's.
+fn assign_id(message: &SqsMessage, rerun: Option<&RerunOf>, audit: &mut LogAudit) {
+    let id = rerun_id(rerun, audit);
+    audit.rerun = id.is_some().then_some(true);
+    audit.id = id.or_else(|| message.message_id.clone());
 }
 
 /// `audit`, continuing the message's trace when it has none of its own
@@ -106,7 +124,9 @@ pub fn audit_for(message: &SqsMessage, mut audit: LogAudit) -> LogAudit {
 /// An audit without an id takes the message id, so a retried message adds an
 /// attempt to the same audit; or, when the message's event reruns an audit it
 /// matches ([`rerun_audit_id`]), that audit's id, so the rerun's outcome is an
-/// attempt of it. Enable `ReportBatchItemFailures` on the event source
+/// attempt of it, tagged `rerun`. The handler sees the id the audit takes, and
+/// the audit is matched again as the handler leaves it, unless the handler set
+/// an id itself. Enable `ReportBatchItemFailures` on the event source
 /// mapping for SQS to act on the response.
 ///
 /// A failure's event records no bus, so a rerun sends it to the audit event bus;
@@ -142,22 +162,21 @@ async fn process<E: fmt::Display>(
     handler: impl AsyncFn(&SqsMessage, &mut LogAudit) -> Result<(), E>,
 ) -> SqsBatchResponse {
     let handled = join_all(batch.records.iter().map(|message| {
+        let rerun = rerun_of(message);
         let mut item = audit(message);
         item.status = Status::Success;
         let own_id = item.id.is_some();
         if !own_id {
-            item.id.clone_from(&message.message_id);
+            assign_id(message, rerun.as_ref(), &mut item);
         }
 
         let handler = &handler;
         async move {
+            let assigned = item.id.clone();
             let result = handler(message, &mut item).await;
-            // Matched as the handler left the audit, unless it gave its own id
-            if !own_id
-                && item.id == message.message_id
-                && let Some(id) = rerun_audit_id(message, &item)
-            {
-                item.id = Some(id);
+            // Matched again as the handler left the audit, unless it set an id
+            if !own_id && item.id == assigned {
+                assign_id(message, rerun.as_ref(), &mut item);
             }
             (message, item, result)
         }
@@ -458,25 +477,41 @@ mod tests {
             message("m-1", rerun_body(json!([RERUN])), "1"),
             message("m-2", rerun_body(json!([RERUN])), "1"),
             message("m-3", event_body(None), "1"),
+            message("m-4", rerun_body(json!([RERUN])), "1"),
+            message("m-5", rerun_body(json!([RERUN])), "1"),
         ];
+        let seen = Mutex::new(Vec::new());
 
         let response = process_batch(
             &mut audits,
             &batch,
             |message| {
-                let audit = LogAudit::new(
-                    "processOrder",
-                    ResourceReference::new("App1", "Order").with_id("order-1"),
-                );
+                let order = ResourceReference::new("App1", "Order");
                 match message.message_id.as_deref() {
                     // Its own id stays
-                    Some("m-2") => audit.with_id("own"),
-                    _ => audit,
+                    Some("m-2") => {
+                        LogAudit::new("processOrder", order.with_id("order-1")).with_id("own")
+                    }
+                    // Its resource is known once handled
+                    Some("m-4") => LogAudit::new("processOrder", order),
+                    _ => LogAudit::new("processOrder", order.with_id("order-1")),
                 }
             },
-            async |message: &SqsMessage, _: &mut LogAudit| match message.message_id.as_deref() {
-                Some("m-1") => Err("Boom"),
-                _ => Ok(()),
+            async |message: &SqsMessage, audit: &mut LogAudit| {
+                seen.lock().unwrap().push(audit.id.clone());
+                match message.message_id.as_deref() {
+                    Some("m-1") => Err("Boom"),
+                    Some("m-4") => {
+                        audit.target.id = Some("order-1".into());
+                        Ok(())
+                    }
+                    // Another operation than the rerun audit's
+                    Some("m-5") => {
+                        audit.operation = "summarize".to_owned();
+                        Ok(())
+                    }
+                    _ => Ok(()),
+                }
             },
         )
         .await;
@@ -484,12 +519,27 @@ mod tests {
 
         // SQS retries the message by its own id
         assert_eq!(response.batch_item_failures[0].item_identifier, "m-1");
-        let ids: Vec<Value> = String::from_utf8(out.0.lock().unwrap().clone())
+        // The handler sees the id the audit takes, as far as it's known
+        let seen: Vec<_> = seen.into_inner().unwrap().into_iter().flatten().collect();
+        assert_eq!(seen, ["audit-1", "own", "m-3", "m-4", "audit-1"]);
+        let lines: Vec<Value> = String::from_utf8(out.0.lock().unwrap().clone())
             .unwrap()
             .lines()
-            .map(|line| serde_json::from_str::<Value>(line).unwrap()["_audit"]["id"].clone())
+            .map(|line| {
+                let audit = &serde_json::from_str::<Value>(line).unwrap()["_audit"];
+                json!([audit["id"], audit.get("rerun")])
+            })
             .collect();
-        assert_eq!(ids, [json!("audit-1"), json!("own"), json!("m-3")]);
+        assert_eq!(
+            lines,
+            [
+                json!(["audit-1", true]),
+                json!(["own", null]),
+                json!(["m-3", null]),
+                json!(["audit-1", true]),
+                json!(["m-5", null]),
+            ]
+        );
     }
 
     #[tokio::test]

@@ -58,6 +58,10 @@ pub struct UpsertAudit {
     /// Whether the event can be re-sent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rerunable: Option<bool>,
+    /// `true` when the audit is a rerun's outcome; its attempt says so. Not stored
+    /// on the audit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerun: Option<bool>,
     /// Earlier attempts. The store keeps its own list, so these are ignored there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempts: Option<Vec<Attempt>>,

@@ -5,17 +5,26 @@
 //! by [`RerunOf`] as JSON. A target that gets the whole event (an SQS queue without
 //! an input transformer) receives it in `resources`. A rerun fires every rule the
 //! event matches, so only the handler whose audit [`matches`](RerunOf::matches) the
-//! original's logs its outcome under the original's id, as an attempt of it.
+//! original's logs its outcome under the original's id, as an attempt of it,
+//! tagged `rerun`.
+//!
+//! The match is by tenant, target and operation, so two handlers that log the same
+//! operation on the same target can't be told apart: both log under the original's
+//! id, and the later outcome is its status.
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Audit, ResourceId, ResourceReference};
+use crate::model::{Audit, EventBridgeEvent, ResourceId, ResourceReference};
 
 /// What starts the `Resources` entry naming the audit a rerun reruns.
 pub const RESOURCE_PREFIX: &str = "aws-audit:rerun:";
 
 /// The longest `Resources` entry `PutEvents` takes.
 pub const RESOURCE_MAX_LENGTH: usize = 2048;
+
+/// The largest `PutEvents` entry, in bytes: its source, detail type, detail and
+/// resources together.
+pub const ENTRY_MAX_BYTES: usize = 256 * 1024;
 
 /// The audit a rerun's event reruns: its id, and what tells its handler's audits
 /// from those of the event's other rules.
@@ -54,6 +63,20 @@ impl RerunOf {
         (resource.len() <= RESOURCE_MAX_LENGTH).then_some(resource)
     }
 
+    /// The `Resources` entry naming the audit in a rerun of `event`, or none when
+    /// `PutEvents` wouldn't take it ([`to_resource`](Self::to_resource)), or the
+    /// entry with it would be larger than `PutEvents` takes: an event sent once
+    /// is always sent again.
+    pub fn to_resource_for(&self, event: &EventBridgeEvent) -> Option<String> {
+        let size = [&event.source, &event.detail_type, &event.detail]
+            .into_iter()
+            .flatten()
+            .map(String::len)
+            .sum::<usize>();
+        self.to_resource()
+            .filter(|resource| size + resource.len() <= ENTRY_MAX_BYTES)
+    }
+
     /// The audit a `Resources` entry names, if it's one.
     pub fn from_resource(resource: &str) -> Option<Self> {
         serde_json::from_str(resource.strip_prefix(RESOURCE_PREFIX)?).ok()
@@ -66,7 +89,9 @@ impl RerunOf {
 
     /// Whether an audit of `operation` on `target` for `tenant_id` is the rerun
     /// audit's: an empty tenant or resource id is none, and ids compare as keys,
-    /// so `1` is `"1"`.
+    /// so `1` is `"1"`. The target's id is compared only when the rerun audit's
+    /// target has one: an audit logged before its resource existed, such as a
+    /// failed create, matches its rerun's audit, which names the created resource.
     pub fn matches(
         &self,
         tenant_id: Option<&str>,
@@ -88,7 +113,7 @@ impl RerunOf {
             && tenant(self.tenant_id.as_deref()) == tenant(tenant_id)
             && self.target.app == target.app
             && self.target.resource_type == target.resource_type
-            && id(&self.target) == id(target)
+            && id(&self.target).is_none_or(|rerun_id| Some(rerun_id) == id(target))
     }
 }
 
@@ -133,6 +158,22 @@ mod tests {
     }
 
     #[test]
+    fn names_none_in_an_entry_put_events_refuses() {
+        let event = |detail: usize| EventBridgeEvent {
+            source: Some("orders".to_owned()),
+            detail_type: Some("OrderCreated".to_owned()),
+            detail: Some(format!("{{\"a\":\"{}\"}}", "x".repeat(detail))),
+            event_bus_name: None,
+        };
+        let resource = rerun().to_resource().unwrap();
+        // Source, detail type and the detail's 8 bytes of JSON around its string
+        let room = ENTRY_MAX_BYTES - "orders".len() - "OrderCreated".len() - 8 - resource.len();
+
+        assert_eq!(rerun().to_resource_for(&event(room)), Some(resource));
+        assert_eq!(rerun().to_resource_for(&event(room + 1)), None);
+    }
+
+    #[test]
     fn matches_only_the_audits_tenant_target_and_operation() {
         let rerun = rerun();
         let target = ResourceReference::new("App1", "Order").with_id("order-1");
@@ -156,6 +197,19 @@ mod tests {
             &ResourceReference::new("App1", "Order"),
             "createOrder"
         ));
+
+        // One logged before its resource existed matches the resource it created
+        let created = RerunOf {
+            target: ResourceReference::new("App1", "Order"),
+            ..rerun.clone()
+        };
+        assert!(created.matches(None, &target, "createOrder"));
+        assert!(created.matches(
+            None,
+            &ResourceReference::new("App1", "Order"),
+            "createOrder"
+        ));
+        assert!(!created.matches(None, &target, "summarize"));
 
         let numbered: RerunOf = serde_json::from_value(json!({
             "id": "audit-1",

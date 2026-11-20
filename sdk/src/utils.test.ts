@@ -596,6 +596,20 @@ describe("utils", () => {
         expect(getRerunAuditId(createMockSQSRecord({}), audit())).toBeUndefined();
       });
 
+      it("should match any target id when the rerun audit's target had none", () => {
+        const created = createMockSQSRecord({
+          resources: [
+            'aws-audit:rerun:{"id":"audit-1","target":{"app":"App1","type":"Order"},"operation":"createOrder"}',
+          ],
+        });
+
+        expect(getRerunAuditId(created, audit())).toBe("audit-1");
+        expect(
+          getRerunAuditId(created, audit({ target: { app: App.App1, type: ResourceType.ORDER } })),
+        ).toBe("audit-1");
+        expect(getRerunAuditId(created, audit({ operation: "summarize" }))).toBeUndefined();
+      });
+
       it("should compare ids as strings", () => {
         const numbered = createMockSQSRecord({
           resources: [

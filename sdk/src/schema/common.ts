@@ -138,6 +138,8 @@ export const AttemptSchema = z.object({
   error: ErrorSchema,
   /** ISO timestamp when this attempt occurred */
   at: DateTimeStringSchema.default(() => new Date().toISOString()),
+  /** `true` when the attempt is a rerun's outcome, logged by the handler of the event the rerun route sent again */
+  rerun: z.boolean().optional(),
 });
 export type Attempt = z.output<typeof AttemptSchema>;
 
