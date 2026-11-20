@@ -10,7 +10,8 @@
 //!
 //! The match is by tenant, target and operation, so two handlers that log the same
 //! operation on the same target can't be told apart: both log under the original's
-//! id, and the later outcome is its status.
+//! id. Their attempts are stored concurrently, so either outcome may end up as
+//! its status.
 
 use serde::{Deserialize, Serialize};
 

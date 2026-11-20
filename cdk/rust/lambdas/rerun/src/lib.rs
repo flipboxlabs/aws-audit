@@ -10,14 +10,17 @@
 //!
 //! The entry names the audit in its `Resources` ([`RerunOf`]), so the handler
 //! whose audit it is logs the rerun's outcome as an attempt of it: a successful
-//! rerun leaves the audit a success, no longer rerunable.
+//! rerun leaves the audit a success, no longer rerunable. When `PutEvents`
+//! refuses the entry as invalid, the event is sent once more without it, and the
+//! outcome is its own audit, as before.
 //!
 //! [`Audit::is_rerunable`]: aws_audit::Audit::is_rerunable
 //!
 //! In order: a 422 for an invalid path, a 404 when the audit is missing or
 //! belongs to another item, a 400 when it isn't rerunable or its bus isn't
-//! allowed, then one `PutEvents`, answered with a 204, or a logged 500 when the
-//! event wasn't sent.
+//! allowed, then one `PutEvents` (a second, without the audit, when the first
+//! is refused as invalid), answered with a 204, or a logged 500 when the event
+//! wasn't sent.
 
 use std::sync::Arc;
 
@@ -164,11 +167,23 @@ async fn rerun(state: Arc<State>, request: HttpRequest) -> http::Result {
             Vec::new()
         }
     };
-    match state
+    let sent = match state
         .events
-        .resend_with_resources(bus, event, resources)
+        .resend_with_resources(bus, event, resources.clone())
         .await
     {
+        // The resources may be what it refused: an event sent once is sent again
+        Err(error) if !resources.is_empty() && error.is_invalid() => {
+            tracing::warn!(
+                id = %audit.id,
+                error = %ErrorChain(&error),
+                "PutEvents refused the rerun naming its audit; rerunning without it"
+            );
+            state.events.resend(bus, event).await
+        }
+        sent => sent,
+    };
+    match sent {
         Ok(_) => Ok(http::no_content()),
         Err(error) => {
             log_unsent(&error);

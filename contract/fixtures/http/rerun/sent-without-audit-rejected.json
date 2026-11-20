@@ -1,0 +1,135 @@
+{
+  "description": "An entry naming the audit that's rejected as invalid is sent again without it, once; 204",
+  "route": "POST /apps/{app}/objects/{object}/{item}/{audit}/rerun",
+  "request": {
+    "method": "POST",
+    "path": "/apps/App1/objects/Order/order-1/audit-1/rerun"
+  },
+  "calls": [
+    {
+      "service": "DynamoDB",
+      "command": "GetItem",
+      "input": {
+        "TableName": "TEST-Contract-Audit-v2",
+        "Key": {
+          "PK": {
+            "S": "-#App1#Order#audit-1"
+          },
+          "SK": {
+            "S": "audit"
+          }
+        }
+      },
+      "output": {
+        "Item": {
+          "PK": {
+            "S": "-#App1#Order#audit-1"
+          },
+          "SK": {
+            "S": "audit"
+          },
+          "id": {
+            "S": "audit-1"
+          },
+          "operation": {
+            "S": "createOrder"
+          },
+          "status": {
+            "S": "fail"
+          },
+          "tier": {
+            "N": "2"
+          },
+          "target": {
+            "M": {
+              "app": {
+                "S": "App1"
+              },
+              "type": {
+                "S": "Order"
+              },
+              "id": {
+                "S": "order-1"
+              }
+            }
+          },
+          "createdAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "updatedAt": {
+            "S": "2026-01-02T03:04:05.678Z"
+          },
+          "rerunable": {
+            "BOOL": true
+          },
+          "event": {
+            "M": {
+              "source": {
+                "S": "orders"
+              },
+              "detail-type": {
+                "S": "OrderCreated"
+              },
+              "detail": {
+                "S": "{\"orderId\":\"order-1\", \"n\":1.0}"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "service": "EventBridge",
+      "command": "PutEvents",
+      "input": {
+        "Entries": [
+          {
+            "Source": "orders",
+            "EventBusName": "TEST-Contract-Audit",
+            "Detail": "{\"orderId\":\"order-1\", \"n\":1.0}",
+            "DetailType": "OrderCreated",
+            "Resources": [
+              "aws-audit:rerun:{\"id\":\"audit-1\",\"target\":{\"app\":\"App1\",\"id\":\"order-1\",\"type\":\"Order\"},\"operation\":\"createOrder\"}"
+            ]
+          }
+        ]
+      },
+      "output": {
+        "FailedEntryCount": 1,
+        "Entries": [
+          {
+            "ErrorCode": "InvalidArgument",
+            "ErrorMessage": "Parameter Resources is not valid."
+          }
+        ]
+      }
+    },
+    {
+      "service": "EventBridge",
+      "command": "PutEvents",
+      "input": {
+        "Entries": [
+          {
+            "Source": "orders",
+            "EventBusName": "TEST-Contract-Audit",
+            "Detail": "{\"orderId\":\"order-1\", \"n\":1.0}",
+            "DetailType": "OrderCreated"
+          }
+        ]
+      },
+      "output": {
+        "FailedEntryCount": 0,
+        "Entries": [
+          {
+            "EventId": "event-1"
+          }
+        ]
+      }
+    }
+  ],
+  "response": {
+    "statusCode": 204,
+    "contentType": null,
+    "body": null
+  }
+}

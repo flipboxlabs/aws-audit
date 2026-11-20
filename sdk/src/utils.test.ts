@@ -556,6 +556,21 @@ describe("utils", () => {
       });
     });
 
+    it("should read the audit from the event a Lambda target receives", () => {
+      expect(getRerunOf({ resources: [RERUN] })?.id).toBe("audit-1");
+      expect(getRerunOf({ resources: ["arn:aws:s3:::bucket"] })).toBeUndefined();
+      expect(getRerunOf({})).toBeUndefined();
+      expect(
+        getRerunAuditId(
+          { resources: [RERUN] },
+          {
+            operation: "createOrder",
+            target: { app: App.App1, type: ResourceType.ORDER, id: "order-1" },
+          },
+        ),
+      ).toBe("audit-1");
+    });
+
     it("should read none from an event that names no audit", () => {
       for (const body of [
         {},

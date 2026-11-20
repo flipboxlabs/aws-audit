@@ -23,4 +23,5 @@ export {
   normalizeEventBridgetInput,
   RERUN_RESOURCE_PREFIX,
   type RerunOf,
+  type RerunSource,
 } from "./utils.js";

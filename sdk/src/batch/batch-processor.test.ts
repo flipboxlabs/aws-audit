@@ -419,6 +419,28 @@ describe("AuditBatchProcessor", () => {
         ]);
       });
 
+      it("should leave the factory's audit as it built it", () => {
+        // One object for every record
+        const shared: LogAuditInput = {
+          operation: "processMessage",
+          target: { app: App.App1, type: ResourceType.UNKNOWN, id: "test-message-id" },
+        };
+        const sharing = new AuditBatchProcessor(EventType.SQS, mockAudits, () => shared);
+
+        sharing.successHandler(
+          createMockSQSRecord({ resources: [rerunOf("processMessage")] }),
+          "Success",
+        );
+        sharing.successHandler({ ...createMockSQSRecord({}), messageId: "m-2" }, "Success");
+
+        expect(shared).not.toHaveProperty("id");
+        expect(shared).not.toHaveProperty("rerun");
+        expect(calls().map(([audit]) => [audit.id, audit.rerun])).toEqual([
+          ["audit-1", true],
+          ["m-2", undefined],
+        ]);
+      });
+
       it("should match the audit as the handler's result leaves it", () => {
         const record = createMockSQSRecord({ resources: [rerunOf("processMessage")] });
 

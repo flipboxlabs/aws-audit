@@ -90,12 +90,15 @@ fn rerun_id(rerun: Option<&RerunOf>, audit: &LogAudit) -> Option<String> {
         .map(|rerun| rerun.id.clone())
 }
 
-/// Gives an audit without an id of its own the rerun audit's when it matches,
-/// tagged `rerun`, or else the message's.
-fn assign_id(message: &SqsMessage, rerun: Option<&RerunOf>, audit: &mut LogAudit) {
-    let id = rerun_id(rerun, audit);
-    audit.rerun = id.is_some().then_some(true);
-    audit.id = id.or_else(|| message.message_id.clone());
+/// Gives an audit the rerun audit's id, tagged `rerun`, when it matches; whether
+/// it did.
+fn adopt_rerun_id(rerun: Option<&RerunOf>, audit: &mut LogAudit) -> bool {
+    let Some(id) = rerun_id(rerun, audit) else {
+        return false;
+    };
+    audit.id = Some(id);
+    audit.rerun = Some(true);
+    true
 }
 
 /// `audit`, continuing the message's trace when it has none of its own
@@ -124,9 +127,11 @@ pub fn audit_for(message: &SqsMessage, mut audit: LogAudit) -> LogAudit {
 /// An audit without an id takes the message id, so a retried message adds an
 /// attempt to the same audit; or, when the message's event reruns an audit it
 /// matches ([`rerun_audit_id`]), that audit's id, so the rerun's outcome is an
-/// attempt of it, tagged `rerun`. The handler sees the id the audit takes, and
-/// the audit is matched again as the handler leaves it, unless the handler set
-/// an id itself. Enable `ReportBatchItemFailures` on the event source
+/// attempt of it, tagged `rerun`. The handler sees that id when the audit
+/// matches as `audit` built it, and keeps it whatever the handler changes. One
+/// that doesn't is matched again as the handler leaves it, unless the handler set
+/// an id itself, so a handler that names the target's resource links it too. A
+/// `rerun` the audit gives is kept unless it's linked. Enable `ReportBatchItemFailures` on the event source
 /// mapping for SQS to act on the response.
 ///
 /// A failure's event records no bus, so a rerun sends it to the audit event bus;
@@ -166,17 +171,19 @@ async fn process<E: fmt::Display>(
         let mut item = audit(message);
         item.status = Status::Success;
         let own_id = item.id.is_some();
-        if !own_id {
-            assign_id(message, rerun.as_ref(), &mut item);
+        let adopted = !own_id && adopt_rerun_id(rerun.as_ref(), &mut item);
+        if !own_id && !adopted {
+            item.id.clone_from(&message.message_id);
         }
 
         let handler = &handler;
         async move {
             let assigned = item.id.clone();
             let result = handler(message, &mut item).await;
-            // Matched again as the handler left the audit, unless it set an id
-            if !own_id && item.id == assigned {
-                assign_id(message, rerun.as_ref(), &mut item);
+            // Matching as the handler left the audit links it too, unless it set an
+            // id; one the handler saw linked stays linked
+            if !own_id && !adopted && item.id == assigned {
+                adopt_rerun_id(rerun.as_ref(), &mut item);
             }
             (message, item, result)
         }
@@ -505,9 +512,14 @@ mod tests {
                         audit.target.id = Some("order-1".into());
                         Ok(())
                     }
-                    // Another operation than the rerun audit's
+                    // A linked audit stays linked
                     Some("m-5") => {
                         audit.operation = "summarize".to_owned();
+                        Ok(())
+                    }
+                    // Not a rerun: the handler's tag is its own
+                    Some("m-3") => {
+                        audit.rerun = Some(false);
                         Ok(())
                     }
                     _ => Ok(()),
@@ -535,9 +547,9 @@ mod tests {
             [
                 json!(["audit-1", true]),
                 json!(["own", null]),
-                json!(["m-3", null]),
+                json!(["m-3", false]),
                 json!(["audit-1", true]),
-                json!(["m-5", null]),
+                json!(["audit-1", true]),
             ]
         );
     }

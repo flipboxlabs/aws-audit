@@ -450,15 +450,35 @@ const RerunOfSchema = z.object({
 export type RerunOf = z.output<typeof RerunOfSchema>;
 
 /**
- * The audit an SQS message's event reruns, when the rerun route sent it.
- *
- * @param record - The SQS record
- * @returns The audit the event's `resources` name, or undefined
+ * What a rerun's event reaches a handler as: an SQS record whose body holds the
+ * event, or the event itself, as a Lambda an EventBridge rule targets receives it.
  */
-export function getRerunOf(record: SQSRecord): RerunOf | undefined {
-  // Most messages aren't reruns: parse only one that may be
-  if (!record.body?.includes(RERUN_RESOURCE_PREFIX)) return undefined;
-  const resources: unknown = parseBody(record.body)?.resources;
+export type RerunSource = SQSRecord | { resources?: unknown };
+
+/**
+ * The audit an event reruns, when the rerun route sent it (`RerunOf::from_resources`
+ * in the Rust crate).
+ *
+ * @param source - The SQS record holding the event, or the event
+ * @returns The audit the event's `resources` name, or undefined
+ *
+ * @example
+ * ```typescript
+ * // A Lambda an EventBridge rule targets
+ * export const handler = async (event: EventBridgeEvent<string, unknown>) => {
+ *   const rerun = getRerunOf(event);
+ * };
+ * ```
+ */
+export function getRerunOf(source: RerunSource): RerunOf | undefined {
+  let resources: unknown;
+  if ("body" in source && typeof source.body === "string") {
+    // Most messages aren't reruns: parse only one that may be
+    if (!source.body.includes(RERUN_RESOURCE_PREFIX)) return undefined;
+    resources = parseBody(source.body)?.resources;
+  } else if ("resources" in source) {
+    resources = source.resources;
+  }
   if (!Array.isArray(resources)) return undefined;
 
   for (const resource of resources) {
@@ -470,8 +490,8 @@ export function getRerunOf(record: SQSRecord): RerunOf | undefined {
 }
 
 /**
- * The id an audit of an SQS message takes when the message's event reruns its
- * audit (`rerun_audit_id` in the Rust crate): the rerun audit's, when the audit
+ * The id an audit of an event takes when the event reruns its audit
+ * (`rerun_audit_id` in the Rust crate): the rerun audit's, when the audit
  * has the same tenant, target and operation. Logged under it with `rerun: true`,
  * the outcome is an attempt of that audit tagged `rerun`, so a successful rerun
  * leaves it a success, no longer rerunable. A rerun fires every rule the event
@@ -482,13 +502,13 @@ export function getRerunOf(record: SQSRecord): RerunOf | undefined {
  * an audit logged before its resource existed, such as a failed create, matches
  * its rerun's audit, which names the created resource. Two handlers that log the
  * same operation on the same target can't be told apart: both log under the
- * rerun audit's id.
+ * rerun audit's id, and either outcome may end up as its status.
  *
- * `AuditBatchProcessor` uses it for SQS records; call it when logging a
- * message's audit yourself.
+ * `AuditBatchProcessor` uses it for SQS records; call it when logging an event's
+ * audit yourself, from an SQS record or the event a Lambda target receives.
  *
- * @param record - The SQS record
- * @param audit - The audit of the message
+ * @param source - The SQS record holding the event, or the event
+ * @param audit - The audit of the event
  * @returns The rerun audit's id, or undefined
  *
  * @example
@@ -502,10 +522,10 @@ export function getRerunOf(record: SQSRecord): RerunOf | undefined {
  * ```
  */
 export function getRerunAuditId(
-  record: SQSRecord,
+  source: RerunSource,
   audit: Pick<LogAuditInput, "tenantId" | "target" | "operation">,
 ): string | undefined {
-  const rerun = getRerunOf(record);
+  const rerun = getRerunOf(source);
   const resourceId = (id: string | number | undefined) => (hasResourceId(id) ? String(id) : "");
 
   return rerun &&

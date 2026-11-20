@@ -107,12 +107,10 @@ export class AuditBatchProcessor<Record extends EventSourceDataClassTypes> exten
       ...extractOverridesFromBatchProcessor(result),
     });
 
-    if (!auditItem.id) {
-      Object.assign(auditItem, this.correlate(record, auditItem));
-    }
-
+    // A copy: a factory may return one object for every record
     this.audit.addAudit({
       ...auditItem,
+      ...(auditItem.id ? {} : this.correlate(record, auditItem)),
       event: undefined, // Don't store event when successful
     });
 
@@ -142,12 +140,9 @@ export class AuditBatchProcessor<Record extends EventSourceDataClassTypes> exten
       message: error.message,
     });
 
-    if (!auditItem.id) {
-      Object.assign(auditItem, this.correlate(record, auditItem));
-    }
-
     this.audit.addAudit({
       ...auditItem,
+      ...(auditItem.id ? {} : this.correlate(record, auditItem)),
       error,
     });
 
