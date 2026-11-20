@@ -13,8 +13,14 @@ type Props = {
   table: dynamodb.ITable;
   eventBus: events.IEventBus;
   /**
+   * The bus a rerun sends an event that recorded none to, such as the apps' own
+   * global bus, instead of the audit event bus. A handler overrides it by
+   * recording its bus with the event (`AuditBatchProcessor`'s `eventBusName`).
+   */
+  defaultRerunEventBus?: events.IEventBus;
+  /**
    * Buses a rerun may send an event to when the event recorded one, besides the
-   * audit event bus (an event that recorded none goes to that).
+   * audit event bus and `defaultRerunEventBus`.
    */
   rerunEventBuses?: events.IEventBus[];
   /** Lambda configuration */
@@ -52,9 +58,14 @@ export default class extends Construct {
     // Audit (it reads the audit, then sends its event)
     props.table.grantReadData(lambdaFn);
 
-    // Put events: on the audit bus, and on any bus an event recorded, which must be
-    // one of these (the Lambda resolves a recorded bus against RERUN_EVENT_BUSES)
-    const rerunEventBuses = props.rerunEventBuses ?? [];
+    // Put events: on the audit bus, the default rerun bus, and on any bus an event
+    // recorded, which must be one of these (the Lambda resolves a recorded bus against
+    // RERUN_EVENT_BUSES)
+    const { defaultRerunEventBus } = props;
+    const rerunEventBuses = [
+      ...(defaultRerunEventBus ? [defaultRerunEventBus] : []),
+      ...(props.rerunEventBuses ?? []),
+    ];
     const buses = [props.eventBus, ...rerunEventBuses];
     // PutEvents doesn't reach another region's bus; the Lambda would refuse it anyway
     const { account, region } = cdk.Stack.of(this);
@@ -66,7 +77,7 @@ export default class extends Construct {
         busRegion !== region
       ) {
         throw new Error(
-          `rerunEventBuses: ${bus.eventBusArn} is in ${busRegion}, not the stack's region ${region}; a rerun can only put events on a bus in its own region`,
+          `Rerun event bus ${bus.eventBusArn} is in ${busRegion}, not the stack's region ${region}; a rerun can only put events on a bus in its own region`,
         );
       }
     }
@@ -76,6 +87,10 @@ export default class extends Construct {
     lambdaFn.addEnvironment("RERUN_EVENT_BUSES", buses.map((bus) => bus.eventBusArn).join(","));
     // A bus recorded by name is in the account the stack deploys to, as PutEvents reads it
     lambdaFn.addEnvironment("RERUN_EVENT_BUS_ACCOUNT", account);
+    // An event that recorded no bus goes to it, or to the audit bus without one
+    if (defaultRerunEventBus) {
+      lambdaFn.addEnvironment("RERUN_DEFAULT_EVENT_BUS", defaultRerunEventBus.eventBusArn);
+    }
 
     // Integration
     const integration = new apigateway.LambdaIntegration(lambdaFn);

@@ -1,6 +1,7 @@
 //! Replays the fixtures in `contract/fixtures/http/rerun`: the stored event must
 //! be sent again exactly as stored, once, to the bus it recorded or the audit
-//! event bus, and only for a rerunable audit of the addressed item.
+//! event bus, and only for a rerunable audit of the addressed item. The tests
+//! after them send to a default rerun bus instead of the audit event bus.
 
 use std::sync::Arc;
 
@@ -33,6 +34,18 @@ fn contract_buses() -> RerunBuses {
             "arn:aws:events:us-east-1:210987654321:event-bus/TEST-Shared",
         ],
     )
+}
+
+const DEFAULT_BUS: &str = "arn:aws:events:us-east-1:123456789012:event-bus/TEST-Global";
+
+/// The fixtures' router with a default rerun bus, as `defaultRerunEventBus` gives.
+fn default_bus_router(recorder: &Arc<Recorder>) -> Router<State> {
+    router(State {
+        config: Arc::new(contract_config()),
+        service: contract_service(recorder),
+        events: contract_event_bus(recorder),
+        buses: contract_buses().with_default(DEFAULT_BUS),
+    })
 }
 
 fn fixture(name: &str) -> Value {
@@ -70,6 +83,30 @@ fn resolves_an_allowed_bus_by_name_in_its_own_account_or_by_arn() {
     let buses = RerunBuses::new("123456789012", "us-east-1", [other_region]);
     assert_eq!(buses.resolve(other_region), None);
     assert_eq!(buses.resolve("TEST-Global"), None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn sends_an_event_that_recorded_no_bus_to_the_default_bus() {
+    let mut fixture = fixture("sent");
+    fixture["calls"][1]["input"]["Entries"][0]["EventBusName"] = json!(DEFAULT_BUS);
+
+    let replay = replay("sent-to-default-bus", &fixture, default_bus_router).await;
+
+    assert!(replay.failures.is_empty(), "{:?}", replay.failures);
+}
+
+#[tokio::test(start_paused = true)]
+async fn sends_an_event_that_recorded_a_bus_to_it_over_the_default() {
+    // The recorded bus, the audit event bus by name, and a refused one: as without one
+    for name in [
+        "sent-to-recorded-bus-arn",
+        "sent-to-audit-bus",
+        "bus-not-allowed",
+    ] {
+        let replay = replay(name, &fixture(name), default_bus_router).await;
+
+        assert!(replay.failures.is_empty(), "{name}: {:?}", replay.failures);
+    }
 }
 
 #[tokio::test(start_paused = true)]
