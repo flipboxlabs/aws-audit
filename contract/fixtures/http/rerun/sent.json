@@ -1,5 +1,5 @@
 {
-  "description": "The stored event is re-sent with its detail string as stored; 204",
+  "description": "The stored event is re-sent with its detail string as stored, naming the audit in its resources; 204",
   "route": "POST /apps/{app}/objects/{object}/{item}/{audit}/rerun",
   "request": {
     "method": "POST",
@@ -87,7 +87,10 @@
             "Source": "orders",
             "EventBusName": "TEST-Contract-Audit",
             "Detail": "{\"orderId\":\"order-1\", \"n\":1.0}",
-            "DetailType": "OrderCreated"
+            "DetailType": "OrderCreated",
+            "Resources": [
+              "aws-audit:rerun:{\"id\":\"audit-1\",\"target\":{\"app\":\"App1\",\"id\":\"order-1\",\"type\":\"Order\"},\"operation\":\"createOrder\"}"
+            ]
           }
         ]
       },

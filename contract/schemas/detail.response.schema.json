@@ -158,6 +158,9 @@
           },
           "at": {
             "default": "2026-01-02T03:04:05.678Z"
+          },
+          "rerun": {
+            "type": "boolean"
           }
         },
         "required": [

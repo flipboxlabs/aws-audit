@@ -620,6 +620,14 @@ const CASES: Case[] = [
     ],
   },
   {
+    name: "upsert/rerun",
+    description:
+      "A rerun's outcome, logged under the audit it reruns with rerun: true, is an attempt tagged rerun; rerun isn't stored on the audit",
+    operation: "upsertItem",
+    args: [upsertInput({ rerun: true })],
+    replies: [attempts(2, "2026-01-01T00:00:00.000Z"), { output: {} }, { output: {} }, accepted()],
+  },
+  {
     name: "upsert/retry-keeps-opt-out",
     description:
       "A retry that fails without an event or a flag leaves the flag an earlier attempt stored, so an opt-out stays: the follow-up UpdateItem only numbers its attempt",
@@ -1089,6 +1097,15 @@ describe("contract fixtures", () => {
           tenantId: "tenant-1",
           operation: "createOrder",
           id: "audit-1",
+        },
+      },
+      {
+        name: "rerun",
+        input: {
+          id: "audit-1",
+          operation: "createOrder",
+          target: { app: "App1", type: "Order", id: "order-1" },
+          rerun: true,
         },
       },
       {

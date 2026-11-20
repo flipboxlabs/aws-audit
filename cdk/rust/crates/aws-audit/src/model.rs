@@ -436,6 +436,10 @@ pub struct Attempt {
     pub error: Option<Value>,
     /// When the attempt happened.
     pub at: Timestamp,
+    /// `true` when the attempt is a rerun's outcome: it was logged by the handler
+    /// of the event the rerun route sent again ([`crate::rerun`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerun: Option<bool>,
 }
 
 fn attempt_number<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {

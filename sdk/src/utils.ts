@@ -5,7 +5,8 @@ import type { DynamoDBRecord, KinesisStreamRecord, SQSRecord } from "aws-lambda"
 import KSUID from "ksuid";
 import merge from "lodash.merge";
 import type { MessageWithAuditOverride } from "./batch/batch-processor.js";
-import { type LogAuditInput, Status } from "./schema/log.js";
+import { type LogAuditInput, ResourceReferenceSchema, Status } from "./schema/log.js";
+import * as z from "zod/v4";
 import { type EventBridgeEvent, EventBridgeEventSchema } from "./schema/model.js";
 
 /**
@@ -421,6 +422,120 @@ export function getRecordId(
     default:
       return undefined;
   }
+}
+
+/**
+ * What starts the `Resources` entry naming the audit a rerun reruns
+ * (`RESOURCE_PREFIX` in the Rust crate).
+ *
+ * The rerun route sends an audit's event again with its `detail` as stored, and
+ * names the audit in one of the entry's `Resources`: this prefix followed by a
+ * {@link RerunOf} as JSON. A target that gets the whole event (an SQS queue
+ * without an input transformer) receives it in `resources`.
+ */
+export const RERUN_RESOURCE_PREFIX = "aws-audit:rerun:";
+
+/** The audit a rerun reruns, as its `Resources` entry names it */
+const RerunOfSchema = z.object({
+  id: z.string(),
+  tenantId: z.string().optional(),
+  target: ResourceReferenceSchema,
+  operation: z.string(),
+});
+
+/**
+ * The audit a rerun's event reruns: its id, and what tells its handler's audits
+ * from those of the event's other rules.
+ */
+export type RerunOf = z.output<typeof RerunOfSchema>;
+
+/**
+ * What a rerun's event reaches a handler as: an SQS record whose body holds the
+ * event, or the event itself, as a Lambda an EventBridge rule targets receives it.
+ */
+export type RerunSource = SQSRecord | { resources?: unknown };
+
+/**
+ * The audit an event reruns, when the rerun route sent it (`RerunOf::from_resources`
+ * in the Rust crate).
+ *
+ * @param source - The SQS record holding the event, or the event
+ * @returns The audit the event's `resources` name, or undefined
+ *
+ * @example
+ * ```typescript
+ * // A Lambda an EventBridge rule targets
+ * export const handler = async (event: EventBridgeEvent<string, unknown>) => {
+ *   const rerun = getRerunOf(event);
+ * };
+ * ```
+ */
+export function getRerunOf(source: RerunSource): RerunOf | undefined {
+  let resources: unknown;
+  if ("body" in source && typeof source.body === "string") {
+    // Most messages aren't reruns: parse only one that may be
+    if (!source.body.includes(RERUN_RESOURCE_PREFIX)) return undefined;
+    resources = parseBody(source.body)?.resources;
+  } else if ("resources" in source) {
+    resources = source.resources;
+  }
+  if (!Array.isArray(resources)) return undefined;
+
+  for (const resource of resources) {
+    if (typeof resource !== "string" || !resource.startsWith(RERUN_RESOURCE_PREFIX)) continue;
+    const rerun = RerunOfSchema.safeParse(parseBody(resource.slice(RERUN_RESOURCE_PREFIX.length)));
+    if (rerun.success) return rerun.data;
+  }
+  return undefined;
+}
+
+/**
+ * The id an audit of an event takes when the event reruns its audit
+ * (`rerun_audit_id` in the Rust crate): the rerun audit's, when the audit
+ * has the same tenant, target and operation. Logged under it with `rerun: true`,
+ * the outcome is an attempt of that audit tagged `rerun`, so a successful rerun
+ * leaves it a success, no longer rerunable. A rerun fires every rule the event
+ * matches; the other rules' audits don't match, and keep their own ids.
+ *
+ * An empty tenant or resource id is none, and ids compare as strings, so `1` is
+ * `"1"`. The target's id is compared only when the rerun audit's target has one:
+ * an audit logged before its resource existed, such as a failed create, matches
+ * its rerun's audit, which names the created resource. Two handlers that log the
+ * same operation on the same target can't be told apart: both log under the
+ * rerun audit's id, and either outcome may end up as its status.
+ *
+ * `AuditBatchProcessor` uses it for SQS records; call it when logging an event's
+ * audit yourself, from an SQS record or the event a Lambda target receives.
+ *
+ * @param source - The SQS record holding the event, or the event
+ * @param audit - The audit of the event
+ * @returns The rerun audit's id, or undefined
+ *
+ * @example
+ * ```typescript
+ * const rerunId = getRerunAuditId(record, audit);
+ * audits.addAudit({
+ *   ...audit,
+ *   id: rerunId ?? record.messageId,
+ *   rerun: rerunId !== undefined || undefined,
+ * });
+ * ```
+ */
+export function getRerunAuditId(
+  source: RerunSource,
+  audit: Pick<LogAuditInput, "tenantId" | "target" | "operation">,
+): string | undefined {
+  const rerun = getRerunOf(source);
+  const resourceId = (id: string | number | undefined) => (hasResourceId(id) ? String(id) : "");
+
+  return rerun &&
+    rerun.operation === audit.operation &&
+    (rerun.tenantId || "") === (audit.tenantId || "") &&
+    rerun.target.app === audit.target.app &&
+    rerun.target.type === audit.target.type &&
+    (!resourceId(rerun.target.id) || resourceId(rerun.target.id) === resourceId(audit.target.id))
+    ? rerun.id
+    : undefined;
 }
 
 /**

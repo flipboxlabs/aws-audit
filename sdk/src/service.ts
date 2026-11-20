@@ -178,6 +178,7 @@ export class AuditService<C extends AuditConfig> {
       status: item.status,
       error: item.error,
       at: now,
+      ...(item.rerun ? { rerun: true } : {}),
     };
 
     // Upsert main item with atomic attempt tracking

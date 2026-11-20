@@ -87,7 +87,10 @@
             "Source": "orders",
             "EventBusName": "TEST-Contract-Audit",
             "Detail": "{\"orderId\":\"order-1\", \"n\":1.0}",
-            "DetailType": "OrderCreated"
+            "DetailType": "OrderCreated",
+            "Resources": [
+              "aws-audit:rerun:{\"id\":\"audit-1\",\"target\":{\"app\":\"App1\",\"id\":\"order-1\",\"type\":\"Order\"},\"operation\":\"createOrder\"}"
+            ]
           }
         ]
       },

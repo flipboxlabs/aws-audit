@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use aws_sdk_eventbridge::Client;
+use aws_sdk_eventbridge::error::ProvideErrorMetadata;
 use aws_sdk_eventbridge::types::{PutEventsRequestEntry, PutEventsResultEntry};
 use lambda_kit::retry::{Backoff, Jitter, RandomJitter};
 use serde_json::json;
@@ -43,6 +44,25 @@ pub struct PutEventsError {
     /// are large.
     #[source]
     pub cause: Option<Box<aws_sdk_eventbridge::Error>>,
+}
+
+impl PutEventsError {
+    /// Whether EventBridge refused the request as invalid, so nothing was published
+    /// and the same request would be refused again: a `ValidationException`, or
+    /// entries rejected with codes not worth resending.
+    pub fn is_invalid(&self) -> bool {
+        match &self.cause {
+            Some(cause) => cause.code() == Some("ValidationException"),
+            None => {
+                !self.failed_entries.is_empty()
+                    && self.failed_entries.iter().all(|entry| {
+                        entry
+                            .error_code()
+                            .is_some_and(|code| !RETRYABLE_ERROR_CODES.contains(&code))
+                    })
+            }
+        }
+    }
 }
 
 /// Publishes audit events.
@@ -111,11 +131,23 @@ impl AuditEventBus {
         bus: &str,
         event: &EventBridgeEvent,
     ) -> Result<PutEventsResultEntry, PutEventsError> {
+        self.resend_with_resources(bus, event, Vec::new()).await
+    }
+
+    /// [`resend`](Self::resend), with `resources` as the entry's `Resources`, left
+    /// out when empty: a rerun names its audit there ([`crate::rerun`]).
+    pub async fn resend_with_resources(
+        &self,
+        bus: &str,
+        event: &EventBridgeEvent,
+        resources: Vec<String>,
+    ) -> Result<PutEventsResultEntry, PutEventsError> {
         let entry = PutEventsRequestEntry::builder()
             .set_source(event.source.clone())
             .event_bus_name(bus)
             .set_detail(event.detail.clone())
             .set_detail_type(event.detail_type.clone())
+            .set_resources((!resources.is_empty()).then_some(resources))
             .build();
 
         let output = self

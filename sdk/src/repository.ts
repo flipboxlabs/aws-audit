@@ -654,6 +654,7 @@ export class AuditRepository<C extends AuditConfig> {
       status: string;
       error?: unknown;
       at: string;
+      rerun?: boolean;
     },
   ): Promise<{ attemptNumber: number; audit: AuditStorage }> {
     const now = new Date();
