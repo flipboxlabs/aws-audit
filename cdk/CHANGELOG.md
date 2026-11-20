@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v2.1.0...cdk-v2.2.0) (2026-11-20)
+
+
+### Features
+
+* default rerun event bus on the REST API ([0b995a4](https://github.com/flipboxlabs/aws-audit/commit/0b995a42dac3bd386bea45aa62a05c350a52841a))
+* send reruns of events that recorded no bus to a default rerun bus ([ed3bba2](https://github.com/flipboxlabs/aws-audit/commit/ed3bba2bd18b6c0572997439cf53ea51f4ffd666)), closes [#155](https://github.com/flipboxlabs/aws-audit/issues/155)
+
 ## [2.1.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v2.0.0...cdk-v2.1.0) (2026-11-20)
 
 
