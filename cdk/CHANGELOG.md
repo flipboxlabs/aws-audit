@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.1.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v2.0.0...cdk-v2.1.0) (2026-11-20)
+
+
+### Features
+
+* rerun an event on the bus it was put on ([9b6e475](https://github.com/flipboxlabs/aws-audit/commit/9b6e47595f2e41fa8a6927f7bec13bd081c2a816)), closes [#152](https://github.com/flipboxlabs/aws-audit/issues/152)
+
+
+### Bug Fixes
+
+* decide an event-less attempt's rerunable flag from the event the audit kept ([67f2d7c](https://github.com/flipboxlabs/aws-audit/commit/67f2d7cec6badd2fd4a2b29d52a80f1ea0141143)), closes [#152](https://github.com/flipboxlabs/aws-audit/issues/152)
+* let logged audits set rerunable, and keep a failure's flag without an event ([5062201](https://github.com/flipboxlabs/aws-audit/commit/50622016354fa67c9cfa0d488600c89f3bd654c5)), closes [#152](https://github.com/flipboxlabs/aws-audit/issues/152)
+* make SDK-logged audits rerunable, on the bus their event came from ([fa3504e](https://github.com/flipboxlabs/aws-audit/commit/fa3504efc58cf2e6112f2771dbb5c6dfd7975ca3))
+* rerun an audit that recorded an event without a rerunable flag ([86548a3](https://github.com/flipboxlabs/aws-audit/commit/86548a3d3a270ab7d621e9927f8f32dffe4d45d4)), closes [#152](https://github.com/flipboxlabs/aws-audit/issues/152)
+* store the rerunable flag from what an upsert logged, without a follow-up write ([37540cd](https://github.com/flipboxlabs/aws-audit/commit/37540cd3d1ecc98c0878c95e6c0b5cfb5dd16639)), closes [#152](https://github.com/flipboxlabs/aws-audit/issues/152)
+* store whether an audit is rerunable, and only rerun a failure's event ([3d63ad5](https://github.com/flipboxlabs/aws-audit/commit/3d63ad532ccad8ef398c9e8b446181963a3118f9)), closes [#152](https://github.com/flipboxlabs/aws-audit/issues/152)
+
 ## [2.0.0](https://github.com/flipboxlabs/aws-audit/compare/cdk-v1.10.1...cdk-v2.0.0) (2026-11-19)
 
 
