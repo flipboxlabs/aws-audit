@@ -25,6 +25,7 @@ pub mod model;
 pub mod names;
 #[cfg(feature = "service")]
 pub mod pagination;
+pub mod rerun;
 #[cfg(feature = "service")]
 pub mod service;
 #[cfg(feature = "sqs")]

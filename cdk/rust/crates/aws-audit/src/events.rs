@@ -103,19 +103,22 @@ impl AuditEventBus {
     /// Sends an audit's recorded event again, to `bus` (a name or ARN), in one
     /// `PutEvents` without retries (`putEventsOrThrow` in the TypeScript rerun
     /// handler): a rerun answers its caller, who can retry. The detail is sent as
-    /// stored, byte for byte, and left out when there's none.
+    /// stored, byte for byte, and left out when there's none. `resources` are the
+    /// entry's `Resources`, left out when empty: a rerun names its audit there.
     ///
     /// Fails when the call fails, or the entry comes back rejected or not at all.
     pub async fn resend(
         &self,
         bus: &str,
         event: &EventBridgeEvent,
+        resources: Vec<String>,
     ) -> Result<PutEventsResultEntry, PutEventsError> {
         let entry = PutEventsRequestEntry::builder()
             .set_source(event.source.clone())
             .event_bus_name(bus)
             .set_detail(event.detail.clone())
             .set_detail_type(event.detail_type.clone())
+            .set_resources((!resources.is_empty()).then_some(resources))
             .build();
 
         let output = self

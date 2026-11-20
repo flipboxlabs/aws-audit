@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { EventType } from "@aws-lambda-powertools/batch";
 import type { DynamoDBRecord, KinesisStreamRecord, SQSRecord } from "aws-lambda";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -10,6 +11,8 @@ import {
   generateAuditId,
   getReceiveCount,
   getRecordId,
+  getRerunAuditId,
+  getRerunOf,
   getTraceParts,
   isRerunable,
   isRetry,
@@ -531,6 +534,86 @@ describe("utils", () => {
         expect(getTraceParts(trace)).toEqual({ id: trace, stage: 0 });
       },
     );
+  });
+
+  describe("getRerunOf", () => {
+    /** The resource the rerun Lambda names the audit in, as its contract fixture sends it */
+    const sent = JSON.parse(
+      readFileSync(
+        new URL("../../contract/fixtures/http/rerun/sent.json", import.meta.url),
+        "utf8",
+      ),
+    );
+    const RERUN: string = sent.calls[1].input.Entries[0].Resources[0];
+
+    it("should read the audit the rerun Lambda names in the event's resources", () => {
+      const record = createMockSQSRecord({ resources: ["arn:aws:s3:::bucket", RERUN] });
+
+      expect(getRerunOf(record)).toEqual({
+        id: "audit-1",
+        target: { app: "App1", type: "Order", id: "order-1" },
+        operation: "createOrder",
+      });
+    });
+
+    it("should read none from an event that names no audit", () => {
+      for (const body of [
+        {},
+        { resources: "text" },
+        { resources: [1, "arn:aws:s3:::bucket"] },
+        { resources: ["aws-audit:rerun:{}"] },
+        { resources: ["aws-audit:rerun:not json"] },
+      ]) {
+        expect(getRerunOf(createMockSQSRecord(body))).toBeUndefined();
+      }
+      expect(getRerunOf({ ...createMockSQSRecord(), body: "text" })).toBeUndefined();
+    });
+
+    describe("getRerunAuditId", () => {
+      const record = createMockSQSRecord({ resources: [RERUN] });
+      const audit = (overrides: Partial<LogAuditInput> = {}) =>
+        createAuditItem({
+          operation: "createOrder",
+          target: { app: App.App1, type: ResourceType.ORDER, id: "order-1" },
+          ...overrides,
+        });
+
+      it("should give the rerun audit's id to an audit of its tenant, target and operation", () => {
+        expect(getRerunAuditId(record, audit())).toBe("audit-1");
+        expect(getRerunAuditId(record, audit({ tenantId: "" }))).toBe("audit-1");
+      });
+
+      it("should give none to another rule's audit of the event", () => {
+        for (const other of [
+          audit({ operation: "summarize" }),
+          audit({ tenantId: "tenant-1" }),
+          audit({ target: { app: App.App1, type: ResourceType.USER, id: "order-1" } }),
+          audit({ target: { app: App.App1, type: ResourceType.ORDER, id: "order-2" } }),
+          audit({ target: { app: App.App1, type: ResourceType.ORDER } }),
+        ]) {
+          expect(getRerunAuditId(record, other)).toBeUndefined();
+        }
+        expect(getRerunAuditId(createMockSQSRecord({}), audit())).toBeUndefined();
+      });
+
+      it("should compare ids as strings", () => {
+        const numbered = createMockSQSRecord({
+          resources: [
+            'aws-audit:rerun:{"id":"audit-1","tenantId":"tenant-1","target":{"app":"App1","id":1,"type":"Order"},"operation":"createOrder"}',
+          ],
+        });
+
+        expect(
+          getRerunAuditId(
+            numbered,
+            audit({
+              tenantId: "tenant-1",
+              target: { app: App.App1, type: ResourceType.ORDER, id: "1" },
+            }),
+          ),
+        ).toBe("audit-1");
+      });
+    });
   });
 
   describe("getRecordId", () => {

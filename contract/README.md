@@ -103,6 +103,7 @@ The Lambda receives `{"awslogs": {"data": ...}}`, where `data` is `logs` as gzip
 - **Compare JSON as values, not text.** Object key order isn't part of the contract. Expression strings (`UpdateExpression`, `KeyConditionExpression`, `FilterExpression`, `ProjectionExpression`) are, so compare them exactly.
 - **The Upserted event's `Detail`** is a JSON string. Compare it parsed.
 - **A rerun `Detail`** must be the stored string byte for byte. `rerun/sent` stores one with a space and `1.0` to catch any re-serialization.
+- **A rerun's `Resources`** name its audit, `aws-audit:rerun:` and JSON, which the SDK's batch processor reads back: `sdk/src/utils.test.ts` parses the one `rerun/sent` sends.
 - **422 bodies** are compared whole. Issue messages are zod's (`Invalid option: expected one of "App1"|"TestApp"`), which the Rust Lambdas reproduce.
 - **Error names** (`AuditNotFoundError`, `InvalidNextTokenError`, `PutEventsError`) are the TypeScript classes. Map them to the Rust error they correspond to.
 - **Error bodies** are `{statusCode, error, message}`, with the TypeScript error class's name in `error` (`NotFoundError`, `BadRequestError`, `RequestValidationError`, `InternalServerError`). 422s add `details.issues`.

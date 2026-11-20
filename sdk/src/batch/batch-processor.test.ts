@@ -9,8 +9,9 @@ import { App, ResourceType } from "../test-config.js";
 // Import from index.ts to ensure barrel file coverage
 import { AuditBatchProcessor, type MessageWithAuditOverride } from "./index.js";
 
-// Mock the utils module
-vi.mock("../utils.js", () => ({
+// Mock the utils module, but match reruns for real
+vi.mock("../utils.js", async (importOriginal) => ({
+  getRerunAuditId: (await importOriginal<typeof import("../utils.js")>()).getRerunAuditId,
   extractOverridesFromBatchProcessor: vi.fn((result) => {
     if (result && typeof result === "object") {
       if ("_audit" in result) {
@@ -395,6 +396,49 @@ describe("AuditBatchProcessor", () => {
 
       const auditCall = (mockAudits.addAudit as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(auditCall.id).toBe("custom-audit-id");
+    });
+
+    describe("a rerun", () => {
+      const rerunOf = (operation: string) =>
+        `aws-audit:rerun:${JSON.stringify({
+          id: "audit-1",
+          target: { app: App.App1, id: "test-message-id", type: ResourceType.UNKNOWN },
+          operation,
+        })}`;
+      const calls = () => (mockAudits.addAudit as ReturnType<typeof vi.fn>).mock.calls;
+
+      it("should log its outcome under the audit it reruns", () => {
+        const record = createMockSQSRecord({ resources: [rerunOf("processMessage")] });
+
+        processor.successHandler(record, "Success");
+        processor.failureHandler(record, new Error("Failed"));
+
+        expect(calls().map(([audit]) => audit.id)).toEqual(["audit-1", "audit-1"]);
+      });
+
+      it("should leave another rule's audit of the event under the messageId", () => {
+        const record = createMockSQSRecord({ resources: [rerunOf("summarize")] });
+
+        processor.successHandler(record, "Success");
+
+        expect(calls()[0][0].id).toBe("test-message-id");
+      });
+
+      it("should not match a Kinesis record", () => {
+        const kinesis = new AuditBatchProcessor(
+          EventType.KinesisDataStreams,
+          mockAudits,
+          createAuditItem as never,
+        );
+        const record = {
+          ...createMockSQSRecord({ resources: [rerunOf("processMessage")] }),
+          eventID: "kinesis-event-1",
+        };
+
+        kinesis.successHandler(record as never, "Success");
+
+        expect(calls()[0][0].id).toBe("kinesis-event-1");
+      });
     });
 
     it("should use same messageId for retry correlation", () => {

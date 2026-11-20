@@ -1,16 +1,19 @@
-//! Auditing SQS messages: retries, the trace an EventBridge event carries, and a
-//! batch handler that records an audit per message (`AuditBatchProcessor`,
-//! `buildAuditFromSQSRecord`, `isRetry` and `getReceiveCount` in the TypeScript
-//! SDK). Enabled by the `sqs` feature.
+//! Auditing SQS messages: retries, the trace an EventBridge event carries, the
+//! audit a rerun's event reruns, and a batch handler that records an audit per
+//! message (`AuditBatchProcessor`, `buildAuditFromSQSRecord`, `getRerunAuditId`,
+//! `isRetry` and `getReceiveCount` in the TypeScript SDK). Enabled by the `sqs`
+//! feature.
 
 use std::fmt;
 
 use aws_lambda_events::event::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent, SqsMessage};
 use futures_util::future::join_all;
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::log::{Audits, LogAudit};
 use crate::model::{EventBridgeEvent, Status};
+use crate::rerun::RerunOf;
 use crate::trace::increment_trace_stage;
 
 /// How many times the message has been delivered (`ApproximateReceiveCount`): 1 on
@@ -55,6 +58,28 @@ pub fn trace(message: &SqsMessage) -> Option<String> {
     (!trace.is_empty()).then(|| increment_trace_stage(&trace))
 }
 
+/// The audit the message's event reruns, when the rerun Lambda sent it: named in
+/// the event's `resources`.
+pub fn rerun_of(message: &SqsMessage) -> Option<RerunOf> {
+    #[derive(Deserialize)]
+    struct Body {
+        resources: Option<Vec<Value>>,
+    }
+
+    let body: Body = serde_json::from_str(message.body.as_deref()?).ok()?;
+    RerunOf::from_resources(body.resources?.iter().filter_map(Value::as_str))
+}
+
+/// The id `audit` takes when the message's event reruns its audit: the rerun
+/// audit's, when `audit` has the same tenant, target and operation. Logged under
+/// it, the outcome is an attempt of that audit. The event's other rules' audits
+/// don't match, and keep their own ids.
+pub fn rerun_audit_id(message: &SqsMessage, audit: &LogAudit) -> Option<String> {
+    rerun_of(message)
+        .filter(|rerun| rerun.matches(audit.tenant_id.as_deref(), &audit.target, &audit.operation))
+        .map(|rerun| rerun.id)
+}
+
 /// `audit`, continuing the message's trace when it has none of its own
 /// (`buildAuditFromSQSRecord`).
 pub fn audit_for(message: &SqsMessage, mut audit: LogAudit) -> LogAudit {
@@ -79,7 +104,9 @@ pub fn audit_for(message: &SqsMessage, mut audit: LogAudit) -> LogAudit {
 ///   the error appended to the message, and the error.
 ///
 /// An audit without an id takes the message id, so a retried message adds an
-/// attempt to the same audit. Enable `ReportBatchItemFailures` on the event source
+/// attempt to the same audit; or, when the message's event reruns an audit it
+/// matches ([`rerun_audit_id`]), that audit's id, so the rerun's outcome is an
+/// attempt of it. Enable `ReportBatchItemFailures` on the event source
 /// mapping for SQS to act on the response.
 ///
 /// A failure's event records no bus, so a rerun sends it to the audit event bus;
@@ -117,13 +144,21 @@ async fn process<E: fmt::Display>(
     let handled = join_all(batch.records.iter().map(|message| {
         let mut item = audit(message);
         item.status = Status::Success;
-        if item.id.is_none() {
+        let own_id = item.id.is_some();
+        if !own_id {
             item.id.clone_from(&message.message_id);
         }
 
         let handler = &handler;
         async move {
             let result = handler(message, &mut item).await;
+            // Matched as the handler left the audit, unless it gave its own id
+            if !own_id
+                && item.id == message.message_id
+                && let Some(id) = rerun_audit_id(message, &item)
+            {
+                item.id = Some(id);
+            }
             (message, item, result)
         }
     }))
@@ -370,6 +405,91 @@ mod tests {
         assert_eq!(lines[1]["event"]["source"], "orders");
         assert_eq!(lines[3]["event"]["source"], "orders");
         assert_eq!(lines[3]["event"].get("eventBusName"), None);
+    }
+
+    fn rerun_body(resources: Value) -> Value {
+        let mut body = event_body(None);
+        body["resources"] = resources;
+        body
+    }
+
+    const RERUN: &str = r#"aws-audit:rerun:{"id":"audit-1","target":{"app":"App1","type":"Order","id":"order-1"},"operation":"processOrder"}"#;
+
+    #[test]
+    fn reads_the_audit_a_rerun_reruns() {
+        let rerun = message(
+            "m-1",
+            rerun_body(json!(["arn:aws:s3:::bucket", RERUN])),
+            "1",
+        );
+        let order = |id: &str| ResourceReference::new("App1", "Order").with_id(id);
+
+        assert_eq!(rerun_of(&rerun).unwrap().id, "audit-1");
+        assert_eq!(
+            rerun_audit_id(&rerun, &LogAudit::new("processOrder", order("order-1"))).as_deref(),
+            Some("audit-1")
+        );
+        // Another rule's audit of the same event
+        assert_eq!(
+            rerun_audit_id(&rerun, &LogAudit::new("summarize", order("order-1"))),
+            None
+        );
+        assert_eq!(
+            rerun_audit_id(&rerun, &LogAudit::new("processOrder", order("order-2"))),
+            None
+        );
+        for body in [
+            event_body(None),
+            rerun_body(json!("text")),
+            rerun_body(json!([1])),
+        ] {
+            assert_eq!(rerun_of(&message("m-2", body.clone(), "1")), None, "{body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn logs_a_reruns_outcome_under_the_audit_it_reruns() {
+        let out = Captured::default();
+        let mut audits = Audits::new(Arc::new(AuditConfig::new([("App1", ["Order"])])))
+            .with_writer(out.clone())
+            .with_disabled(false);
+        let mut batch = SqsEvent::default();
+        batch.records = vec![
+            message("m-1", rerun_body(json!([RERUN])), "1"),
+            message("m-2", rerun_body(json!([RERUN])), "1"),
+            message("m-3", event_body(None), "1"),
+        ];
+
+        let response = process_batch(
+            &mut audits,
+            &batch,
+            |message| {
+                let audit = LogAudit::new(
+                    "processOrder",
+                    ResourceReference::new("App1", "Order").with_id("order-1"),
+                );
+                match message.message_id.as_deref() {
+                    // Its own id stays
+                    Some("m-2") => audit.with_id("own"),
+                    _ => audit,
+                }
+            },
+            async |message: &SqsMessage, _: &mut LogAudit| match message.message_id.as_deref() {
+                Some("m-1") => Err("Boom"),
+                _ => Ok(()),
+            },
+        )
+        .await;
+        audits.publish();
+
+        // SQS retries the message by its own id
+        assert_eq!(response.batch_item_failures[0].item_identifier, "m-1");
+        let ids: Vec<Value> = String::from_utf8(out.0.lock().unwrap().clone())
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap()["_audit"]["id"].clone())
+            .collect();
+        assert_eq!(ids, [json!("audit-1"), json!("own"), json!("m-3")]);
     }
 
     #[tokio::test]

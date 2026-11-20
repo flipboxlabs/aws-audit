@@ -8,6 +8,10 @@
 //! the default rerun bus, when the REST API has one, or else to the audit event
 //! bus.
 //!
+//! The entry names the audit in its `Resources` ([`RerunOf`]), so the handler
+//! whose audit it is logs the rerun's outcome as an attempt of it: a successful
+//! rerun leaves the audit a success, no longer rerunable.
+//!
 //! [`Audit::is_rerunable`]: aws_audit::Audit::is_rerunable
 //!
 //! In order: a 422 for an invalid path, a 404 when the audit is missing or
@@ -19,6 +23,7 @@ use std::sync::Arc;
 
 use aws_audit::AuditConfig;
 use aws_audit::events::{AuditEventBus, PutEventsError};
+use aws_audit::rerun::RerunOf;
 use aws_audit::service::AuditService;
 use aws_audit_http::{ObjectPath, audit_of_item};
 use lambda_kit::http::{self, HttpError, HttpRequest, Issues, Router, StatusCode};
@@ -148,7 +153,18 @@ async fn rerun(state: Arc<State>, request: HttpRequest) -> http::Result {
         })?,
     };
 
-    match state.events.resend(bus, event).await {
+    let resources = match RerunOf::of(&audit).to_resource() {
+        Some(resource) => vec![resource],
+        None => {
+            // The outcome is logged as its own audit, as before
+            tracing::warn!(
+                id = %audit.id,
+                "The audit is too long to name in the rerun's resources"
+            );
+            Vec::new()
+        }
+    };
+    match state.events.resend(bus, event, resources).await {
         Ok(_) => Ok(http::no_content()),
         Err(error) => {
             log_unsent(&error);
